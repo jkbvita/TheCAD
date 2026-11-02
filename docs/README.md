@@ -13,3 +13,8 @@ implementation, appropriate tests, fixes, a commit, and a push to a dedicated
 feature branch. Report the result and limitations. Seek explicit owner approval
 for major architecture or functional behavior choices, and present options and
 trade-offs when requirements are unclear. Do not merge into main automatically.
+
+## Development guides
+
+- [Windows build and run](build-windows.md)
+- [Dependencies and licenses](dependencies.md)

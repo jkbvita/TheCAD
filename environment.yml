@@ -1,0 +1,9 @@
+name: thecad-prototype
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - qt6-main=6.8.4
+  - occt=7.9.3=novtk*
+  - cmake>=3.28,<4
+  - ninja

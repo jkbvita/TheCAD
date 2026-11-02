@@ -3,6 +3,7 @@
 ## Owner-stated direction
 
 Build TheCAD as a free, open-source parametric mechanical CAD application.
+TheCAD is a standalone application, not a FreeCAD fork.
 The eventual scope includes:
 
 - Part modeling.

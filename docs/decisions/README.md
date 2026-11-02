@@ -22,7 +22,7 @@ Discuss these individually, in an order agreed with the owner:
 
 - Initial user workflow and first milestone: users, scope, behavior, and acceptance
   criteria.
-- Target operating systems and deployment expectations.
+- Target platforms beyond the initial Windows prototype and release packaging expectations.
 - License selection or confirmation: the existing root `LICENSE` contains GPL v3
   text and remains unchanged.
 - CAD engine, framework, and architecture, after requirements and constraints
@@ -32,4 +32,5 @@ Discuss these individually, in an order agreed with the owner:
 
 ## Records
 
-No individual technical or functional decision records have been approved yet.
+- [0001: Provisional Windows prototype choices](0001-provisional-windows-prototype.md)
+  - Approved for the initial prototype only.

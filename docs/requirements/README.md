@@ -13,4 +13,4 @@ For future feature requirements, record:
 - Links to relevant decision records and explicit approval evidence.
 
 Do not treat a proposal or an item in the long-term vision as implementation
-approval. No detailed feature specification is approved by this setup.
+approval. Approval is limited to the scopes explicitly documented here.
