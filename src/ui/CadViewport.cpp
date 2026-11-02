@@ -76,13 +76,10 @@ void CadViewport::initialize()
             Quantity_Color(0.28, 0.34, 0.42, Quantity_TOC_RGB), Aspect_GFM_VER);
         m_view->TriedronDisplay(Aspect_TOTP_LEFT_LOWER, Quantity_NOC_WHITE, 0.08, V3d_ZBUFFER);
 
-        Handle(AIS_Shape) presentation = new AIS_Shape(m_shape);
-        presentation->SetColor(Quantity_Color(0.32, 0.62, 0.88, Quantity_TOC_RGB));
-        presentation->Attributes()->SetFaceBoundaryDraw(Standard_True);
         m_context->SetDisplayMode(AIS_Shaded, Standard_False);
-        m_context->Display(presentation, Standard_False);
-        m_view->MustBeResized();
-        resetView();
+        if (!setShape(m_shape)) {
+            Standard_Failure::Raise(m_error.toUtf8().constData());
+        }
     } catch (const Standard_Failure& failure) {
         m_error = QString::fromUtf8(failure.GetMessageString());
         if (m_error.isEmpty()) {
@@ -93,9 +90,17 @@ void CadViewport::initialize()
     }
 }
 
+void CadViewport::releaseGraphics()
+{
+    releaseViewer();
+    m_attemptedInitialization = false;
+}
+
 void CadViewport::releaseViewer()
 {
+    m_presentation.Nullify();
     m_context.Nullify();
+    m_renderSize = {};
     if (!m_view.IsNull()) {
         m_view->Remove();
         m_view.Nullify();
@@ -106,14 +111,18 @@ void CadViewport::releaseViewer()
 void CadViewport::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
-    if (!m_attemptedInitialization) {
-        initialize();
-    }
+    // A child's show/resize event can precede the final HWND client geometry.
+    // Initialize and synchronize at paint time, after Qt has laid out the window.
+    update();
 }
 
 void CadViewport::paintEvent(QPaintEvent*)
 {
+    if (!m_attemptedInitialization) {
+        initialize();
+    }
     if (isReady()) {
+        synchronizeSurface();
         m_view->Redraw();
     }
 }
@@ -122,11 +131,64 @@ void CadViewport::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
     if (isReady()) {
-        m_view->MustBeResized();
         update();
     }
 }
 
+void CadViewport::synchronizeSurface()
+{
+    if (!isReady()) {
+        return;
+    }
+    // WNT_Window::Size reads GetClientRect: physical client pixels, not Qt DIPs.
+    // resizeEvent can run before Qt updates this native child. Checking again at
+    // paint time avoids OCCT retaining the initial minimum-size OpenGL viewport.
+    Standard_Integer width = 0, height = 0;
+    m_view->Window()->Size(width, height);
+    const QSize pixels(width, height);
+    if (width > 0 && height > 0 && pixels != m_renderSize) {
+        m_view->MustBeResized();
+        m_view->Invalidate();
+        m_renderSize = pixels;
+    }
+}
+
+bool CadViewport::setShape(const TopoDS_Shape& shape)
+{
+    if (shape.IsNull()) {
+        m_error = "Cannot display an empty shape.";
+        return false;
+    }
+    if (!isReady()) {
+        m_shape = shape;
+        return true;
+    }
+    Handle(AIS_Shape) candidate = new AIS_Shape(shape);
+    try {
+        candidate->SetColor(Quantity_Color(0.32, 0.62, 0.88, Quantity_TOC_RGB));
+        candidate->Attributes()->SetFaceBoundaryDraw(Standard_True);
+        m_context->Display(candidate, Standard_False);
+        if (!m_presentation.IsNull()) {
+            m_context->Erase(m_presentation, Standard_False);
+        }
+        resetView();
+    } catch (const Standard_Failure& failure) {
+        m_context->Remove(candidate, Standard_False);
+        if (!m_presentation.IsNull()) {
+            m_context->Display(m_presentation, Standard_False);
+        }
+        m_error = QString::fromUtf8(failure.GetMessageString());
+        update();
+        return false;
+    }
+    if (!m_presentation.IsNull()) {
+        m_context->Remove(m_presentation, Standard_False);
+    }
+    m_presentation = candidate;
+    m_shape = shape;
+    m_error.clear();
+    return true;
+}
 QPoint CadViewport::nativePosition(const QPointF& position) const
 {
     // Qt events use device-independent coordinates; OCCT uses native pixels.
@@ -184,6 +246,10 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* event)
 
 bool CadViewport::event(QEvent* event)
 {
+    if (event->type() == QEvent::DevicePixelRatioChange || event->type() == QEvent::ScreenChangeInternal) {
+        m_renderSize = {};
+        update();
+    }
     if (event->type() == QEvent::UngrabMouse || event->type() == QEvent::WindowDeactivate) {
         m_navigation = Navigation::None;
         m_navigationButton = Qt::NoButton;
@@ -219,6 +285,7 @@ void CadViewport::keyPressEvent(QKeyEvent* event)
 void CadViewport::fitAll()
 {
     if (isReady()) {
+        synchronizeSurface();
         m_view->FitAll(0.1, Standard_False);
         m_view->ZFitAll();
         update();

@@ -6,5 +6,5 @@ $executable = Join-Path (Split-Path $PSScriptRoot) 'build\windows\Release\TheCAD
 if (-not (Test-Path -LiteralPath $executable)) {
     throw 'TheCAD has not been built. Run scripts/build.ps1 first.'
 }
-$applicationProcess = Start-Process -FilePath $executable -PassThru -Wait -WindowStyle Hidden
+$applicationProcess = Start-Process -FilePath $executable -PassThru -Wait
 if ($applicationProcess.ExitCode -ne 0) { throw "TheCAD exited with code $($applicationProcess.ExitCode)." }

@@ -2,6 +2,9 @@
 #include "ui/CadViewport.h"
 
 #include <Graphic3d_Camera.hxx>
+#include <OpenGl_View.hxx>
+#include <OpenGl_Window.hxx>
+#include <QMainWindow>
 #include <QApplication>
 #include <QDir>
 #include <QImage>
@@ -18,7 +21,21 @@ class CadViewportTest final : public QObject {
     Q_OBJECT
 
 private:
+    std::unique_ptr<QMainWindow> host;
     std::unique_ptr<CadViewport> viewport;
+
+    void verifyNativeSurface()
+    {
+        const auto glView = Handle(OpenGl_View)::DownCast(viewport->m_view->View());
+        QVERIFY(!glView.IsNull());
+        const auto& surface = glView->GlWindow();
+        const QSize expected(qRound(viewport->width() * viewport->devicePixelRatioF()),
+                             qRound(viewport->height() * viewport->devicePixelRatioF()));
+        QTRY_COMPARE(surface->Width(), expected.width());
+        QTRY_COMPARE(surface->Height(), expected.height());
+        QVERIFY(std::abs(viewport->m_view->Camera()->Aspect()
+                - double(expected.width()) / expected.height()) < 0.01);
+    }
 
     void drag(Qt::MouseButton button, const QPoint& start, const QPoint& end)
     {
@@ -34,14 +51,48 @@ private slots:
     void initTestCase()
     {
         viewport = std::make_unique<CadViewport>(modeling::makeBox(100, 70, 40));
-        viewport->resize(800, 600);
+        host = std::make_unique<QMainWindow>();
+        host->setCentralWidget(viewport.get());
+        host->resize(1200, 800);
         QSignalSpy failure(viewport.get(), &CadViewport::initializationFailed);
-        viewport->show();
-        QVERIFY(QTest::qWaitForWindowExposed(viewport.get()));
+        host->showMaximized();
+        QVERIFY(QTest::qWaitForWindowExposed(host.get()));
+        QTRY_VERIFY(viewport->isReady());
         QVERIFY2(viewport->isReady(), qPrintable(viewport->initializationError()));
         QCOMPARE(failure.count(), 0);
     }
 
+    void startupMaximizeRestoreResize()
+    {
+        QVERIFY(host->isMaximized());
+        QVERIFY(!host->isFullScreen());
+        verifyNativeSurface();
+        host->showNormal();
+        QTRY_VERIFY(!host->isMaximized());
+        verifyNativeSurface();
+        for (const QSize size : {QSize(1024, 768), QSize(700, 500), QSize(1300, 850)}) {
+            host->resize(size);
+            QTest::qWait(50);
+            verifyNativeSurface();
+        }
+        host->showMaximized();
+        QTest::qWait(50);
+        verifyNativeSurface();
+        host->showNormal();
+        host->resize(1000, 750);
+        QTest::qWait(50);
+        verifyNativeSurface();
+    }
+
+    void replacingShapeUpdatesPresentation()
+    {
+        QVERIFY(viewport->setShape(modeling::makeBox(32.5, 16.0, 8.25)));
+        QVERIFY(viewport->m_presentation->Shape().IsSame(viewport->m_shape));
+        const auto previousShape = viewport->m_shape;
+        QVERIFY(!viewport->setShape(TopoDS_Shape()));
+        QVERIFY(viewport->m_shape.IsSame(previousShape));
+        QVERIFY(viewport->setShape(modeling::makeBox(100, 70, 40)));
+    }
     void orbitChangesDirection()
     {
         viewport->resetView();
@@ -89,10 +140,11 @@ private slots:
 
     void resizeAndFitRenderSolid()
     {
-        viewport->resize(960, 640);
+        host->resize(960, 700);
         QApplication::processEvents();
         viewport->resetView();
         QTest::keyClick(viewport.get(), Qt::Key_F);
+        verifyNativeSurface();
         viewport->m_view->Redraw();
         const QString directory = qEnvironmentVariable("THECAD_TEST_ARTIFACT_DIR",
                                                        QDir::tempPath() + "/TheCAD-tests");
@@ -109,6 +161,7 @@ private slots:
     void cleanupTestCase()
     {
         viewport.reset(); // Exercise graphics teardown while QApplication still exists.
+        host.reset();
     }
 };
 

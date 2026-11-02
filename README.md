@@ -11,7 +11,10 @@ implementation choices, not permanent architecture commitments.
 
 It displays a rectangular solid (100 x 70 x 40 prototype millimeters) in an
 OpenGL CAD viewport with orbit, pan, zoom, fit, and isometric view controls.
-There are no sketches, extrusions, assemblies, drawings, or project saving yet.
+The window starts maximized and has native File commands for New, Open, Save,
+Save As, and Exit. Parts save as versioned `.tcpart` feature recipes that rebuild
+the solid and preserve its dimensions. There are no sketches, extrusion tools,
+assemblies, or drawings yet.
 
 See [Windows build and run instructions](docs/build-windows.md).
 With dependencies installed, run these commands from the repository root:
@@ -26,6 +29,7 @@ With dependencies installed, run these commands from the repository root:
 ```text
 src/main.cpp       Application startup and demo composition
 src/modeling/      OCCT geometry construction; no Qt dependency
+src/document/      Part data, validation, and atomic native file storage; Qt Core
 src/ui/            Qt main window and native OCCT viewport
 scripts/           Windows development environment, build, and run helpers
 tests/             Geometry tests and optional desktop/OpenGL navigation tests
@@ -41,6 +45,8 @@ docs/decisions/    Owner approvals, proposals, and decision template
 - [Prototype requirements](docs/requirements/windows-prototype.md)
 - [Provisional technology approval](docs/decisions/0001-provisional-windows-prototype.md)
 - [Dependencies and licenses](docs/dependencies.md)
+- [Native document formats](docs/file-formats.md)
+- [Window and document milestone](docs/requirements/part-documents-viewport.md)
 
 Major architecture and functional behavior decisions require explicit approval
 from the project owner before implementation.

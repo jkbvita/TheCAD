@@ -5,6 +5,7 @@
 #include <QWidget>
 
 #include <AIS_InteractiveContext.hxx>
+#include <AIS_Shape.hxx>
 #include <TopoDS_Shape.hxx>
 #include <V3d_View.hxx>
 #include <V3d_Viewer.hxx>
@@ -22,6 +23,8 @@ public:
 
     bool isReady() const;
     QString initializationError() const;
+    bool setShape(const TopoDS_Shape& shape);
+    void releaseGraphics();
     void fitAll();
     void resetView();
 
@@ -45,12 +48,15 @@ private:
     enum class Navigation { None, Orbit, Pan };
     void initialize();
     void releaseViewer();
+    void synchronizeSurface();
     QPoint nativePosition(const QPointF& position) const;
 
     TopoDS_Shape m_shape;
     Handle(V3d_Viewer) m_viewer;
     Handle(V3d_View) m_view;
     Handle(AIS_InteractiveContext) m_context;
+    Handle(AIS_Shape) m_presentation;
+    QSize m_renderSize;
     QString m_error;
     Navigation m_navigation = Navigation::None;
     Qt::MouseButton m_navigationButton = Qt::NoButton;

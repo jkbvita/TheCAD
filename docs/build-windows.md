@@ -53,7 +53,7 @@ From the repository root:
 ```
 
 This configures a Visual Studio x64 build in `build/windows/`, compiles Release,
-and runs the geometry tests. To also test the actual native viewport and camera
+and runs the geometry and part-document tests. To also test the actual native viewport and camera
 navigation on a desktop with OpenGL:
 
 ```powershell
@@ -62,7 +62,9 @@ navigation on a desktop with OpenGL:
 
 The GUI test briefly opens a window and writes
 `build/windows/test-artifacts/viewport.png`. It verifies initialization,
-orbit, pan, wheel zoom, resize/fit, and rendered image content. It is opt-in
+orbit, pan, wheel zoom, native render-surface dimensions across maximize/restore/
+resize, and rendered image content. A second run uses 150% DPI. The document UI
+suite checks File actions, Save/Save As, dirty prompts, and error handling. It is opt-in
 because unattended machines may have no graphics context.
 
 If script execution is blocked, use a process-local policy when permitted:
@@ -107,3 +109,10 @@ DLL/plugin/resource paths yourself. Use MSVC-compatible x64 Release libraries.
 - Viewport initialization failure: check the graphics driver and availability of
   desktop OpenGL. The application reports an initialization error dialog.
 - Debug builds are not covered by this prebuilt Release SDK setup.
+
+## Native part documents
+
+The application starts maximized with standard Windows controls. Use File > New,
+Open, Save, Save As, or Exit and the standard shortcuts. Native Windows dialogs
+accept .tcpart files. Read the [file format and lifecycle guide](file-formats.md).
+Only parts are implemented; .tcasmb and .tcdrw are reserved names.

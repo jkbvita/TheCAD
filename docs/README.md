@@ -18,3 +18,7 @@ trade-offs when requirements are unclear. Do not merge into main automatically.
 
 - [Windows build and run](build-windows.md)
 - [Dependencies and licenses](dependencies.md)
+
+- [Native document formats](file-formats.md)
+
+- [Window and part-document verification](verification/part-documents-viewport.md)

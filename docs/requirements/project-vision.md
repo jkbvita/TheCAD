@@ -33,5 +33,7 @@ criteria require separate agreement with the project owner.
 
 ## Current boundaries
 
-This setup introduces documentation only. It selects no CAD engine, framework,
-architecture, or license and implements no CAD functionality.
+The owner approved a Windows prototype using C++, OCCT, Qt 6, and CMake as
+provisional choices, followed by [native part documents and viewport fixes](part-documents-viewport.md).
+Permanent architecture and future feature behavior still require individual
+owner approval. The existing root LICENSE remains unchanged.
