@@ -1,6 +1,7 @@
 #include "ui/MainWindow.h"
 #include "ui/CadViewport.h"
 #include "modeling/Sketch.h"
+#include "modeling/ReferencePlanes.h"
 
 #include <QAction>
 #include <QCheckBox>
@@ -141,7 +142,7 @@ MainWindow::MainWindow(QWidget* parent)
     m_extrude = modelingAction(featureButtons, "Extrude", "actionExtrude", [this] { extrude(false); });
     m_cut = modelingAction(featureButtons, "Extruded Cut", "actionExtrudedCut", [this] { extrude(true); });
     featureButtons->addStretch();
-    m_createSketch = modelingAction(sketchButtons, "Create Sketch", "actionCreateSketch", [this] { createSketch(); });
+    m_createSketch = modelingAction(sketchButtons, "Sketch", "actionCreateSketch", [this] { createSketch(); });
     m_line = modelingAction(sketchButtons, "Line", "actionLine", [this] { m_viewport->setSketchTool(modeling::EntityKind::Line); });
     m_rectangle = modelingAction(sketchButtons, "Rectangle", "actionRectangle", [this] { m_viewport->setSketchTool(modeling::EntityKind::Rectangle); });
     m_circle = modelingAction(sketchButtons, "Circle", "actionCircle", [this] { m_viewport->setSketchTool(modeling::EntityKind::Circle); });
@@ -193,12 +194,15 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_entities, &QListWidget::itemSelectionChanged, this, [this] { updateActions(); });
     connect(m_viewport, &CadViewport::sketchEntityCreated, this, [this](const modeling::SketchEntity& entity) { addSketchEntity(entity); });
     connect(m_viewport, &CadViewport::sketchRegionClicked, this, [this](modeling::Point2 point) { operationRegionClicked(point); });
+    connect(m_viewport, &CadViewport::referencePlaneSelected, this, [this](modeling::SketchPlane plane) { referencePlaneSelected(plane); });
+    connect(m_viewport, &CadViewport::planeSelectionCanceled, this, [this] { planeSelectionCanceled(); });
 
     statusBar()->showMessage("Orbit: left drag | Pan: middle / right drag | Zoom: wheel | Fit: F");
     m_dimensions = new QLabel(this);
     statusBar()->addPermanentWidget(m_dimensions);
     setWindowModified(true);
     updateDocumentUi();
+    m_viewport->showReferencePlanes(true);
     connect(m_viewport, &CadViewport::initializationFailed, this, [this](const QString& message) {
         QTimer::singleShot(0, this, [this, message] { reportError(message + "\nCheck your graphics driver and OpenGL support."); });
     });
@@ -247,25 +251,6 @@ MainWindow::UnsavedChoice MainWindow::confirmUnsaved()
 }
 
 void MainWindow::reportError(const QString& message) { QMessageBox::critical(this, "TheCAD", message); }
-
-bool MainWindow::chooseSketchPlane(modeling::SketchPlane& plane)
-{
-    QDialog dialog(this);
-    dialog.setWindowTitle("Create Sketch");
-    dialog.setObjectName("sketchPlaneDialog");
-    auto* layout = new QVBoxLayout(&dialog);
-    auto* form = new QFormLayout;
-    auto* planes = new QComboBox;
-    planes->setObjectName("sketchPlane");
-    planes->addItems({"XY (+Z normal)", "XZ (-Y normal)", "YZ (+X normal)"});
-    form->addRow("Origin plane", planes);
-    layout->addLayout(form);
-    dialogButtons(dialog, layout);
-    dialog.findChild<QDialogButtonBox*>()->setObjectName("sketchPlaneButtons");
-    if (dialog.exec() != QDialog::Accepted) return false;
-    plane = static_cast<modeling::SketchPlane>(planes->currentIndex());
-    return true;
-}
 
 bool MainWindow::chooseFeatureParameters(document::Feature& feature)
 {
@@ -405,6 +390,10 @@ bool MainWindow::replaceDocument(document::PartDocument candidate, const QString
         reportError("The part could not be displayed. The current document has been retained.");
         return false;
     }
+    m_selectingPlane = false;
+    m_selectedPlane.reset();
+    m_viewport->cancelPlaneSelection();
+    m_viewport->setSelectedReferencePlane({});
     m_viewport->endSketch();
     m_editSketch.reset();
     m_editSketchId.clear();
@@ -412,6 +401,7 @@ bool MainWindow::replaceDocument(document::PartDocument candidate, const QString
     m_document = std::move(candidate);
     m_path = path;
     updateDocumentUi();
+    m_viewport->showReferencePlanes(m_document.features().empty());
     return true;
 }
 
@@ -446,16 +436,33 @@ void MainWindow::selectFeature(const std::string& id)
 void MainWindow::selectionChanged()
 {
     const auto* item = m_tree->currentItem();
-    m_selectedId = item ? item->data(0, Qt::UserRole).toString().toStdString() : std::string{};
-    if (!m_editSketch) {
-        const auto* feature = selectedFeature();
-        m_viewport->endSketch();
-        if (feature && feature->kind == document::FeatureKind::Sketch) m_viewport->setSketch(feature->sketch);
+    const QString selection = item ? item->data(0, Qt::UserRole).toString() : QString{};
+    if (!m_editSketch && !m_operation && selection.startsWith("origin:")) {
+        const QString suffix = selection.mid(7);
+        if (suffix == "XY") m_selectedPlane = modeling::SketchPlane::XY;
+        else if (suffix == "XZ") m_selectedPlane = modeling::SketchPlane::XZ;
+        else if (suffix == "YZ") m_selectedPlane = modeling::SketchPlane::YZ;
+        else m_selectedPlane.reset();
+        m_selectedId.clear();
+        m_viewport->setSelectedReferencePlane(m_selectedPlane);
+        m_viewport->showReferencePlanes(true);
+        statusBar()->showMessage(m_selectedPlane
+            ? QString("%1 selected. Click Sketch to begin on this reference plane.").arg(modeling::referencePlaneName(*m_selectedPlane))
+            : QString("Select Front, Top or Right in the viewport, then click Sketch."));
+    } else {
+        m_selectedId = selection.toStdString();
+        m_selectedPlane.reset();
+        m_viewport->setSelectedReferencePlane({});
+        if (!m_editSketch) {
+            const auto* feature = selectedFeature();
+            m_viewport->endSketch();
+            m_viewport->showReferencePlanes(false);
+            if (feature && feature->kind == document::FeatureKind::Sketch) m_viewport->setSketch(feature->sketch);
+        }
     }
     updateEntityList();
     updateActions();
 }
-
 void MainWindow::updateDocumentUi()
 {
     const QString name = m_path.isEmpty() ? "Untitled.thepart" : QFileInfo(m_path).fileName();
@@ -473,6 +480,17 @@ void MainWindow::updateDocumentUi()
             if (feature.id == m_selectedId) m_tree->setCurrentItem(item);
         }
         part->setExpanded(true);
+        auto* origin = new QTreeWidgetItem(m_tree, {"Origin"});
+        origin->setData(0, Qt::UserRole, "origin:");
+        for (const auto plane : {modeling::SketchPlane::XY, modeling::SketchPlane::XZ, modeling::SketchPlane::YZ}) {
+            const QString key = plane == modeling::SketchPlane::XY ? "origin:XY"
+                : plane == modeling::SketchPlane::XZ ? "origin:XZ" : "origin:YZ";
+            auto* reference = new QTreeWidgetItem(origin, {modeling::referencePlaneName(plane)});
+            reference->setData(0, Qt::UserRole, key);
+            reference->setToolTip(0, QString("%1 origin reference plane").arg(modeling::referencePlaneName(plane)));
+            if (m_selectedPlane && *m_selectedPlane == plane) m_tree->setCurrentItem(reference);
+        }
+        origin->setExpanded(true);
     }
     updateEntityList();
     updateActions();
@@ -494,22 +512,23 @@ void MainWindow::updateActions()
 {
     const bool operation = bool(m_operation);
     const bool editing = m_editSketch.has_value();
+    const bool selecting = m_selectingPlane;
     m_tabs->setEnabled(!operation);
-    m_tree->setEnabled(!operation && !editing);
+    m_tree->setEnabled(!operation && !editing && !selecting);
     for (const auto* name : {"actionNew", "actionOpen", "actionSave", "actionSaveAs"}) {
-        if (auto* action = findChild<QAction*>(name)) action->setEnabled(!operation);
+        if (auto* action = findChild<QAction*>(name)) action->setEnabled(!operation && !selecting);
     }
-    m_createSketch->setEnabled(!editing && !operation);
+    m_createSketch->setEnabled(!editing && !operation && !selecting);
     m_line->setEnabled(editing && !operation);
     m_rectangle->setEnabled(editing && !operation);
     m_circle->setEnabled(editing && !operation);
     m_finishSketch->setEnabled(editing && !operation);
     const auto* selected = selectedFeature();
-    m_editFeature->setEnabled(!editing && !operation && selected);
+    m_editFeature->setEnabled(!editing && !operation && !selecting && selected);
     m_editEntity->setEnabled(editing && !operation && m_entities->currentRow() >= 0);
     m_deleteEntity->setEnabled(editing && !operation && m_entities->currentRow() >= 0);
     bool profile = false;
-    if (!editing && !operation) {
+    if (!editing && !operation && !selecting) {
         for (const auto& feature : m_document.features()) {
             if (feature.kind != document::FeatureKind::Sketch) continue;
             try { profile = !modeling::closedContours(feature.sketch).empty(); }
@@ -522,18 +541,60 @@ void MainWindow::updateActions()
 }
 void MainWindow::createSketch()
 {
+    if (m_editSketch || m_operation || m_selectingPlane) return;
+    if (m_selectedPlane) {
+        createSketchOnPlane(*m_selectedPlane);
+        return;
+    }
+    m_selectingPlane = true;
+    m_viewport->beginPlaneSelection();
+    updateActions();
+    statusBar()->showMessage("Select Front, Top or Right in the viewport. Drag to orbit; Esc cancels.");
+}
+
+void MainWindow::createSketchOnPlane(modeling::SketchPlane plane)
+{
     modeling::Sketch sketch;
-    if (!chooseSketchPlane(sketch.plane)) return;
+    sketch.plane = plane;
     try {
         auto candidate = m_document;
         const auto id = candidate.addSketch(sketch);
+        m_selectingPlane = false;
+        m_selectedPlane.reset();
         if (!applyModel(std::move(candidate), id)) return;
         startSketchEditing(*selectedFeature());
     } catch (const std::exception& error) { reportError(QString::fromUtf8(error.what())); }
 }
 
+void MainWindow::referencePlaneSelected(modeling::SketchPlane plane)
+{
+    if (m_editSketch || m_operation) return;
+    if (m_selectingPlane) {
+        createSketchOnPlane(plane);
+        return;
+    }
+    m_selectedPlane = plane;
+    m_viewport->setSelectedReferencePlane(plane);
+    m_selectedId.clear();
+    // Rebuilding the tree under a signal blocker preserves the current camera.
+    updateDocumentUi();
+    statusBar()->showMessage(QString("%1 selected. Click Sketch to begin on this plane.").arg(modeling::referencePlaneName(plane)));
+}
+
+void MainWindow::planeSelectionCanceled()
+{
+    if (!m_selectingPlane) return;
+    m_selectingPlane = false;
+    m_selectedPlane.reset();
+    m_viewport->setSelectedReferencePlane({});
+    updateActions();
+    statusBar()->showMessage("Sketch plane selection canceled. The part is unchanged.");
+}
 void MainWindow::startSketchEditing(const document::Feature& feature)
 {
+    m_selectingPlane = false;
+    m_selectedPlane.reset();
+    m_viewport->setSelectedReferencePlane({});
     m_editSketch = feature.sketch;
     m_editSketchId = feature.id;
     m_selectedId = feature.id;
@@ -848,6 +909,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
         event->ignore();
         return;
     }
+    if (m_selectingPlane) m_viewport->cancelPlaneSelection();
     if (maybeSave()) { m_viewport->releaseGraphics(); event->accept(); }
     else event->ignore();
 }

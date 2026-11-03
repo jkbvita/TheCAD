@@ -32,7 +32,6 @@ protected:
     virtual QString chooseSavePath();
     virtual UnsavedChoice confirmUnsaved();
     virtual void reportError(const QString& message);
-    virtual bool chooseSketchPlane(modeling::SketchPlane& plane);
     virtual bool chooseFeatureParameters(document::Feature& feature);
     virtual bool chooseEntityParameters(modeling::SketchEntity& entity);
     void closeEvent(QCloseEvent* event) override;
@@ -53,6 +52,9 @@ private:
     void selectFeature(const std::string& id);
     void selectionChanged();
     void createSketch();
+    void createSketchOnPlane(modeling::SketchPlane plane);
+    void referencePlaneSelected(modeling::SketchPlane plane);
+    void planeSelectionCanceled();
     void editSelectedFeature();
     void startSketchEditing(const document::Feature& feature);
     bool finishSketch();
@@ -83,6 +85,8 @@ private:
     QAction* m_line = nullptr;
     QAction* m_rectangle = nullptr;
     QAction* m_circle = nullptr;
+    std::optional<modeling::SketchPlane> m_selectedPlane;
+    bool m_selectingPlane = false;
     std::optional<modeling::Sketch> m_editSketch;
     std::string m_editSketchId;
     std::string m_selectedId;

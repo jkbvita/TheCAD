@@ -361,6 +361,97 @@ private slots:
         QVERIFY(window.document().shape().IsNull());
         QVERIFY(!window.isWindowModified());
     }
+    void graphicalSketchFirstDoesNotMutateBeforeSelectionAndCancelRestoresUi()
+    {
+        TestWindow window;
+        window.setWindowModified(false);
+        auto* viewport = window.findChild<CadViewport*>();
+        QVERIFY(viewport);
+        QCOMPARE(window.findChild<QAction*>("actionCreateSketch")->text(), QString("Sketch"));
+        window.trigger("actionCreateSketch");
+        QVERIFY(window.document().features().empty());
+        QVERIFY(!window.isWindowModified());
+        QVERIFY(!window.findChild<QAction*>("actionFinishSketch")->isEnabled());
+        QVERIFY(!window.findChild<QAction*>("actionOpen")->isEnabled());
+        QVERIFY(window.findChild<QDialog*>("sketchPlaneDialog") == nullptr);
+        // The viewport handles Esc; its cancellation signal must not create data.
+        viewport->cancelPlaneSelection();
+        QVERIFY(window.document().features().empty());
+        QVERIFY(!window.isWindowModified());
+        QVERIFY(window.findChild<QAction*>("actionCreateSketch")->isEnabled());
+        QVERIFY(window.findChild<QAction*>("actionOpen")->isEnabled());
+        window.trigger("actionCreateSketch");
+        viewport->referencePlaneSelected(modeling::SketchPlane::XZ);
+        QCOMPARE(window.document().features().size(), std::size_t(1));
+        QCOMPARE(window.document().features().front().sketch.plane, modeling::SketchPlane::XZ);
+        QVERIFY(window.findChild<QAction*>("actionFinishSketch")->isEnabled());
+        QVERIFY(window.findChild<QAction*>("actionLine")->isEnabled());
+        QVERIFY(window.isWindowModified());
+        window.trigger("actionFinishSketch");
+        QCOMPARE(window.errors.size(), 0);
+    }
+
+    void referenceTreePlaneFirstStartsImmediatelyAndPersistsAllPlanes()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        TestWindow window;
+        window.setWindowModified(false);
+        auto* tree = window.findChild<QTreeWidget*>("featureTree");
+        QVERIFY(tree);
+        QCOMPARE(tree->topLevelItemCount(), 2);
+        QCOMPARE(tree->topLevelItem(0)->text(0), QString("Part"));
+        QCOMPARE(tree->topLevelItem(1)->text(0), QString("Origin"));
+        const QStringList names{"Front", "Top", "Right"};
+        const modeling::SketchPlane planes[] = {modeling::SketchPlane::XY,
+            modeling::SketchPlane::XZ, modeling::SketchPlane::YZ};
+        for (int index = 0; index < 3; ++index) {
+            auto* reference = tree->topLevelItem(1)->child(index);
+            QCOMPARE(reference->text(0), names[index]);
+            const auto before = window.document().features().size();
+            tree->setCurrentItem(reference);
+            QCOMPARE(window.document().features().size(), before);
+            if (index == 0) QVERIFY(!window.isWindowModified());
+            window.trigger("actionCreateSketch");
+            QCOMPARE(window.document().features().size(), before + 1);
+            QCOMPARE(window.document().features().back().sketch.plane, planes[index]);
+            QVERIFY(window.findChild<QAction*>("actionFinishSketch")->isEnabled());
+            QVERIFY(window.findChild<QDialog*>("sketchPlaneDialog") == nullptr);
+            window.trigger("actionFinishSketch");
+        }
+        QCOMPARE(tree->topLevelItem(0)->childCount(), 3);
+        window.savePath = directory.filePath("three-planes.thepart");
+        window.trigger("actionSave");
+        QVERIFY(!window.isWindowModified());
+        window.trigger("actionNew");
+        QVERIFY(window.document().features().empty());
+        window.openPath = window.savePath;
+        window.trigger("actionOpen");
+        QCOMPARE(window.document().features().size(), std::size_t(3));
+        for (int index = 0; index < 3; ++index) {
+            QCOMPARE(window.document().features().at(index).sketch.plane, planes[index]);
+        }
+        QCOMPARE(tree->topLevelItem(0)->childCount(), 3);
+        QCOMPARE(tree->topLevelItem(1)->childCount(), 3);
+        QCOMPARE(window.errors.size(), 0);
+    }
+
+    void viewportPreselectionDoesNotCreateUntilSketchCommand()
+    {
+        TestWindow window;
+        window.setWindowModified(false);
+        auto* viewport = window.findChild<CadViewport*>();
+        QVERIFY(viewport);
+        viewport->referencePlaneSelected(modeling::SketchPlane::YZ);
+        QVERIFY(window.document().features().empty());
+        QVERIFY(!window.isWindowModified());
+        auto* tree = window.findChild<QTreeWidget*>("featureTree");
+        QCOMPARE(tree->currentItem()->text(0), QString("Right"));
+        window.trigger("actionCreateSketch");
+        QCOMPARE(window.document().features().size(), std::size_t(1));
+        QCOMPARE(window.document().features().front().sketch.plane, modeling::SketchPlane::YZ);
+        QVERIFY(window.findChild<QAction*>("actionFinishSketch")->isEnabled());
+    }
     void legacyBoxConversionDoesNotOverwriteOriginal()
     {
         QTemporaryDir directory;

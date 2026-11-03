@@ -18,7 +18,7 @@ find_package(OpenCASCADE 7.9.3 EXACT REQUIRED COMPONENTS
 add_library(thecad_occt INTERFACE)
 target_include_directories(thecad_occt SYSTEM INTERFACE "${OpenCASCADE_INCLUDE_DIR}")
 
-add_library(thecad_modeling STATIC src/modeling/Box.cpp src/modeling/Sketch.cpp)
+add_library(thecad_modeling STATIC src/modeling/Box.cpp src/modeling/Sketch.cpp src/modeling/ReferencePlanes.cpp)
 set_target_properties(thecad_modeling PROPERTIES AUTOMOC OFF)
 target_include_directories(thecad_modeling PUBLIC src)
 target_link_libraries(thecad_modeling PUBLIC thecad_occt TKPrim TKTopAlgo TKBRep TKBO TKBool TKShHealing)
@@ -57,6 +57,11 @@ if(BUILD_TESTING)
     target_link_libraries(thecad_sketch_tests PRIVATE thecad_modeling)
     add_test(NAME modeling.sketch COMMAND thecad_sketch_tests)
 
+    add_executable(thecad_reference_plane_tests tests/ReferencePlaneTests.cpp)
+    set_target_properties(thecad_reference_plane_tests PROPERTIES AUTOMOC OFF)
+    target_link_libraries(thecad_reference_plane_tests PRIVATE thecad_modeling)
+    add_test(NAME modeling.reference-planes COMMAND thecad_reference_plane_tests)
+
     add_executable(thecad_document_tests tests/PartDocumentTests.cpp)
     set_target_properties(thecad_document_tests PROPERTIES AUTOMOC OFF)
     target_link_libraries(thecad_document_tests PRIVATE thecad_document)
@@ -82,6 +87,16 @@ if(BUILD_TESTING)
             -o "${CMAKE_BINARY_DIR}/modeling-workflow-results.txt,txt")
         set_tests_properties(ui.modeling-workflow PROPERTIES TIMEOUT 120 LABELS "gui;modeling" RUN_SERIAL TRUE
             ENVIRONMENT "THECAD_TEST_ARTIFACT_DIR=${CMAKE_BINARY_DIR}/test-artifacts")
+        add_executable(thecad_plane_workflow_tests tests/GraphicalPlaneWorkflowTests.cpp)
+        target_link_libraries(thecad_plane_workflow_tests PRIVATE thecad_ui Qt6::Test)
+        add_test(NAME ui.graphical-planes COMMAND thecad_plane_workflow_tests
+            -o "${CMAKE_BINARY_DIR}/graphical-planes-results.txt,txt")
+        set_tests_properties(ui.graphical-planes PROPERTIES TIMEOUT 120 LABELS "gui;planes" RUN_SERIAL TRUE
+            ENVIRONMENT "THECAD_TEST_ARTIFACT_DIR=${CMAKE_BINARY_DIR}/test-artifacts")
+        add_test(NAME ui.graphical-planes.hidpi COMMAND thecad_plane_workflow_tests
+            -o "${CMAKE_BINARY_DIR}/graphical-planes-hidpi-results.txt,txt")
+        set_tests_properties(ui.graphical-planes.hidpi PROPERTIES TIMEOUT 120 LABELS "gui;planes;hidpi" RUN_SERIAL TRUE
+            ENVIRONMENT "QT_SCALE_FACTOR=1.5;THECAD_TEST_ARTIFACT_DIR=${CMAKE_BINARY_DIR}/test-artifacts/hidpi")
         # Desktop tests must not race for focus or native windows.
         set_tests_properties(ui.viewport ui.viewport.hidpi ui.documents PROPERTIES RUN_SERIAL TRUE)
         set_tests_properties(ui.viewport PROPERTIES

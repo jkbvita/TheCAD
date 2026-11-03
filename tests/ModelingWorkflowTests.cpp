@@ -64,17 +64,24 @@ private:
     void createSketch(WorkflowWindow& window)
     {
         window.findChild<QTabWidget*>("modelingTabs")->setCurrentIndex(1);
-        bool visitedDialog = false;
-        QTimer::singleShot(0, &window, [&] {
-            auto* dialog = window.findChild<QDialog*>("sketchPlaneDialog");
-            if (!dialog) return;
-            visitedDialog = true;
-            dialog->findChild<QComboBox*>("sketchPlane")->setCurrentIndex(0);
-            auto* box = dialog->findChild<QDialogButtonBox*>();
-            QTest::mouseClick(box->button(QDialogButtonBox::Ok), Qt::LeftButton);
-        });
         command(window, "actionCreateSketch");
-        QVERIFY(visitedDialog);
+        auto* viewport = window.findChild<CadViewport*>("cadViewport");
+        if (!window.findChild<QAction*>("actionFinishSketch")->isEnabled()) {
+            bool picked = false;
+            for (const double u : {-0.8, -0.4, 0.4, 0.8}) {
+                for (const double v : {-0.8, -0.4, 0.4, 0.8}) {
+                    const auto pixel = point(viewport, {u * viewport->m_planeHalfExtent, v * viewport->m_planeHalfExtent});
+                    const auto hit = viewport->planeAt(pixel);
+                    if (hit && hit->plane == modeling::SketchPlane::XY) {
+                        QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, pixel);
+                        picked = true;
+                        break;
+                    }
+                }
+                if (picked) break;
+            }
+            QVERIFY(picked);
+        }
         QVERIFY(window.findChild<QAction*>("actionFinishSketch")->isEnabled());
     }
     void editEntity(WorkflowWindow& window, modeling::EntityKind kind,

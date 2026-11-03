@@ -4,7 +4,19 @@ TheCAD is a standalone, open-source mechanical CAD application under development
 not a FreeCAD fork. The Windows prototype uses C++, Qt 6, Open CASCADE Technology
 (OCCT), and CMake as owner-approved provisional choices.
 
-## Current modeling milestone
+## Current sketch-creation workflow
+
+Click **Sketch** in the SKETCH tab, hover a labeled Front, Top, or Right plane
+in the viewport, then click it to enter normal-view sketch editing. Alternatively,
+select a visible plane or its Origin tree reference first, then click Sketch.
+Esc cancels a pending plane choice without creating a sketch. No plane-selection
+dropdown or confirmation dialog is used.
+
+Front = XY, Top = XZ, and Right = YZ, preserving the existing saved sketch frames.
+The finite reference graphics do not limit the infinite sketching plane. See the
+[coordinate mapping and interaction rules](docs/requirements/graphical-plane-selection.md).
+
+## Preserved modeling foundation
 
 - Empty parts and editable origin-plane sketches on XY, XZ, and YZ.
 - Model-coordinate lines, rectangles, and circles with numeric editing.
@@ -20,9 +32,11 @@ The window starts maximized with standard Windows controls. The full CAD viewpor
 retains orbit, pan, zoom, Fit All, and Isometric navigation. Native File commands
 provide New, Open, Save, Save As, and Exit with unsaved-change handling.
 
-The selected SolidWorks-style workflows are an owner-approved initial baseline;
-redesigns require individual approval. This is a compact implementation of the
-approved operations, not a complete reproduction of SolidWorks.
+The short-term goal is to reproduce the fundamental SolidWorks modeling workflows
+as faithfully as possible before developing alternatives; redesigns require
+individual approval. The current task is limited to graphical sketch creation.
+The existing prototype implements the approved operations without attempting to
+reproduce the entire SolidWorks interface.
 
 See [Windows build, run, and modeling tutorial](docs/build-windows.md).
 With dependencies installed, run from the repository root:
@@ -50,6 +64,8 @@ docs/decisions/    Approval records and unresolved decisions
 - [Development rules](AGENTS.md)
 - [Documentation guide](docs/README.md)
 - [Project vision and principles](docs/requirements/project-vision.md)
+- [Graphical sketch-plane requirements](docs/requirements/graphical-plane-selection.md)
+- [Graphical plane-selection decision](docs/decisions/0004-graphical-origin-planes.md)
 - [Parametric modeling requirements](docs/requirements/parametric-modeling.md)
 - [Provisional technology approval](docs/decisions/0001-provisional-windows-prototype.md)
 - [Current workflow and native-format approval](docs/decisions/0003-parametric-sketch-features.md)

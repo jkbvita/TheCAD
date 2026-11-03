@@ -93,6 +93,16 @@ private slots:
         QVERIFY(viewport->m_shape.IsNull());
         QVERIFY(viewport->setShape(modeling::makeBox(100, 70, 40)));
     }
+    void referenceGraphicsHandleLargeValidPart()
+    {
+        QVERIFY(viewport->setShape(modeling::makeBox(1e9, 10, 20)));
+        viewport->showReferencePlanes(true);
+        QVERIFY(viewport->m_planeHalfExtent <= 1e9);
+        QVERIFY(!viewport->m_referencePlanes[0].IsNull());
+        viewport->showReferencePlanes(false);
+        QVERIFY(viewport->setShape(modeling::makeBox(100, 70, 40)));
+    }
+
     void sketchMouseInputUsesModelCoordinates()
     {
         QVERIFY(viewport->setShape({}));

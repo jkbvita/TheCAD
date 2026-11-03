@@ -114,5 +114,44 @@ DLL/plugin/resource paths yourself. Use MSVC-compatible x64 Release libraries.
 
 The application starts maximized with standard Windows controls. Use File > New,
 Open, Save, Save As, or Exit and the standard shortcuts. Native Windows dialogs
-accept .tcpart files. Read the [file format and lifecycle guide](file-formats.md).
-Only parts are implemented; .tcasmb and .tcdrw are reserved names.
+save `.thepart` files and can open legacy `.tcpart` input. Saving a legacy part
+requests a separate `.thepart` destination and leaves its original file unchanged.
+Only parts are implemented; `.theasmb` and `.thedrw` are reserved. See the
+[file format and compatibility guide](file-formats.md).
+
+## Graphical sketch creation
+
+Start from an empty part or keep the current part open. In the SKETCH tab, click
+**Sketch**. Front, Top, and Right appear as translucent reference planes in the
+viewport. Move the pointer to highlight a plane, then click it. The camera turns
+normal to that plane and sketch editing begins without another dialog. The
+selection graphics disappear; the sketch origin and local axes remain visible.
+
+For the plane-first workflow, select a visible plane in the viewport or one of
+the Origin references in the left tree, then click Sketch. The selected reference
+is used immediately. Front stores XY, Top stores XZ, and Right stores YZ. Their
+precise coordinate frames are documented in the
+[graphical-plane requirements](requirements/graphical-plane-selection.md).
+
+While choosing a plane, left-drag still orbits, middle/right-drag pans, the wheel
+zooms, and F fits the visible references/model. A short left click selects; an
+orbit drag does not. Clicking empty space creates nothing. Esc cancels a pending
+choice, leaving the document unchanged. If projections overlap, the nearest
+forward geometric hit wins, with Front/Top/Right as the equal-depth tie order.
+Labels are not hit targets.
+
+Use Line, Rectangle, or Circle in sketch mode. Click two model points to create a
+line or rectangle, or a circle center and radius point. Edit supported numeric
+values through the sketch geometry list. Finish Sketch returns to normal modeling
+mode; reference-plane selection graphics are normally hidden. The displayed plane
+boundaries are only guides: sketching is not confined to them.
+
+The existing Extrude, Extruded Cut, feature editing, and file workflows are
+preserved. Save the part as `.thepart`; reopening restores each sketch's stored
+plane reference and coordinates. Arbitrary planar-face attachment is not part of
+this task.
+
+This guide describes intended/current controls, not evidence of completed manual
+testing. Consult the verification report for the interactions actually exercised.
+
+See the [graphical-plane verification report](verification/graphical-plane-selection.md) for completed automated and manual checks.

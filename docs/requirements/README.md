@@ -1,19 +1,19 @@
 # Requirements
 
-[Project vision and principles](project-vision.md) captures the owner's stated
-project direction. The [Windows prototype](windows-prototype.md) and
-[native part milestone](part-documents-viewport.md) have owner-approved scope.
-Future modeling behavior and acceptance criteria remain to be agreed individually.
+[Project vision and principles](project-vision.md) captures the owner's direction.
+The current task is [graphical origin-plane sketch creation](graphical-plane-selection.md).
+It improves the existing [parametric modeling foundation](parametric-modeling.md)
+without expanding modeling scope. Future workflow and architecture decisions
+remain subject to individual owner approval.
 
-For future feature requirements, record:
+For each future requirement, record the user problem, intended behavior, scope,
+exclusions, acceptance criteria, open questions, proposed/approved status, and
+links to its decision record and explicit approval evidence. A vision item or
+proposal does not constitute implementation approval.
 
-- User problem and intended outcome.
-- Proposed behavior, scope, and exclusions.
-- Acceptance criteria and open questions.
-- Status: proposed or owner-approved.
-- Links to relevant decision records and explicit approval evidence.
+## Approved milestones
 
-Do not treat a proposal or an item in the long-term vision as implementation
-approval. Approval is limited to the scopes explicitly documented here.
-
-- [Window, viewport, and part documents](part-documents-viewport.md) - owner-approved milestone.
+- [Graphical origin-plane sketch creation](graphical-plane-selection.md) — current focus.
+- [Parametric sketch and feature foundation](parametric-modeling.md).
+- [Window, viewport, and native part documents](part-documents-viewport.md) — historical names/schema.
+- [Initial Windows prototype](windows-prototype.md).
