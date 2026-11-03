@@ -33,10 +33,17 @@ struct SketchRelation {
     SketchPointRef first;
     SketchPointRef second;
 };
+struct FaceAttachment {
+    std::string sourceFeature;
+    int faceIndex = 0; // One-based OCCT face map in the strictly validated source body.
+    std::string sourceSignature;
+    gp_Ax3 frame;
+};
 struct Sketch {
     SketchPlane plane = SketchPlane::XY;
     std::vector<SketchEntity> entities;
     std::vector<SketchRelation> relations;
+    std::optional<FaceAttachment> attachment;
 };
 // Point references address the immutable local origin or stable entity IDs.
 Point2 sketchPointValue(const Sketch& sketch, const SketchPointRef& reference);
@@ -61,6 +68,9 @@ struct Contour {
 
 // Right-handed planes: XY=(X,Y,+Z), XZ=(X,Z,-Y), YZ=(Y,Z,+X).
 gp_Ax3 sketchAxes(SketchPlane plane);
+gp_Ax3 sketchAxes(const Sketch& sketch);
+gp_Ax3 planarFaceAxes(const TopoDS_Face& face);
+gp_Pnt sketchPoint(const Sketch& sketch, Point2 point);
 gp_Pnt sketchPoint(SketchPlane plane, Point2 point);
 
 // Open geometry is displayable. Extrusion requires one simple, closed profile.
@@ -69,6 +79,7 @@ void validateClosedProfile(const Sketch& sketch);
 std::vector<Contour> closedContours(const Sketch& sketch);
 Sketch selectContour(const Sketch& sketch, const std::vector<std::string>& entityIds);
 bool contourContains(const Contour& contour, SketchPlane plane, Point2 point);
+bool contourContains(const Contour& contour, const Sketch& sketch, Point2 point);
 TopoDS_Shape makeExtrusion(const Sketch& sketch, double length, Direction direction,
                           const TopoDS_Shape& base = {});
 TopoDS_Shape makeCut(const TopoDS_Shape& base, const Sketch& sketch, double depth,

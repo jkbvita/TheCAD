@@ -1,3 +1,7 @@
+#include <StdSelect_BRepOwner.hxx>
+#include <TopExp.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
+#include <TopoDS.hxx>
 #include "ui/CadViewport.h"
 #include "modeling/SketchSnapping.h"
 
@@ -94,6 +98,7 @@ void CadViewport::initialize()
         for (int candidate = 2; candidate <= std::min(4, maximumSamples); candidate *= 2) samples = candidate;
         m_view->ChangeRenderingParams().NbMsaaSamples = samples;
         m_view->ChangeRenderingParams().IsAntialiasingEnabled = Standard_True;
+        m_view->ChangeRenderingParams().TransparencyMethod = Graphic3d_RTM_BLEND_OIT;
         if (!window->IsMapped()) {
             window->Map();
         }
@@ -132,6 +137,8 @@ void CadViewport::releaseViewer()
     for (auto& label : m_planeLabels) { label.Nullify(); }
     for (auto& axis : m_sketchAxes) { axis.Nullify(); }
     m_sketchOrigin.Nullify();
+    for(auto& axis:m_globalAxes) axis.Nullify();
+    for(auto& label:m_globalAxisLabels) label.Nullify();
     m_pointPresentations.clear();
     m_interactionLabel.Nullify();
     m_inferenceGuides.clear();
@@ -214,6 +221,8 @@ bool CadViewport::setShape(const TopoDS_Shape& shape)
         candidate->SetColor(Quantity_Color(0.32, 0.62, 0.88, Quantity_TOC_RGB));
         candidate->Attributes()->SetFaceBoundaryDraw(Standard_True);
         m_context->Display(candidate, Standard_False);
+        m_context->Deactivate(candidate);
+        m_context->Activate(candidate,AIS_Shape::SelectionMode(TopAbs_FACE),Standard_False);
         if (!m_presentation.IsNull()) {
             m_context->Erase(m_presentation, Standard_False);
         }
@@ -273,6 +282,7 @@ void CadViewport::setSelectedReferencePlane(std::optional<modeling::SketchPlane>
 
 void CadViewport::updateReferencePlanes()
 {
+    updateGlobalAxes();
     if (!isReady()) { return; }
     for (auto& plane : m_referencePlanes) {
         if (!plane.IsNull()) { m_context->Remove(plane, Standard_False); plane.Nullify(); }
@@ -325,9 +335,9 @@ void CadViewport::updatePlaneStyles()
         const bool hovered = m_hoveredPlane && *m_hoveredPlane == type;
         const Quantity_Color color = selected ? Quantity_Color(0.20, 0.95, 0.45, Quantity_TOC_RGB)
             : hovered ? Quantity_Color(1.0, 0.65, 0.10, Quantity_TOC_RGB)
-                      : Quantity_Color(0.25, 0.55, 1.0, Quantity_TOC_RGB);
+                      : (i==0 ? Quantity_Color(0.45,0.65,0.92,Quantity_TOC_RGB) : i==1 ? Quantity_Color(0.50,0.78,0.58,Quantity_TOC_RGB) : Quantity_Color(0.78,0.58,0.82,Quantity_TOC_RGB));
         plane->SetColor(color);
-        plane->SetTransparency(selected ? 0.40 : hovered ? 0.50 : 0.80);
+        plane->SetTransparency(selected ? 0.35 : hovered ? 0.45 : 0.62);
         plane->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(color, Aspect_TOL_SOLID, selected ? 3.0 : 2.0));
         m_context->Redisplay(plane, Standard_False);
         if (!m_planeLabels[std::size_t(i)].IsNull()) {
@@ -336,6 +346,19 @@ void CadViewport::updatePlaneStyles()
         }
     }
     update();
+}
+
+int CadViewport::faceAt(const QPointF& position)
+{
+    if(!isReady() || m_presentation.IsNull()) return 0;
+    const auto pixel=nativePosition(position);
+    m_context->MoveTo(pixel.x(),pixel.y(),m_view,Standard_False);
+    update();
+    if(!m_context->HasDetected() || m_context->DetectedInteractive()!=m_presentation)return 0;
+    const auto owner=Handle(StdSelect_BRepOwner)::DownCast(m_context->DetectedOwner());
+    if(owner.IsNull() || !owner->HasShape())return 0;
+    const auto face=owner->Shape();if(face.ShapeType()!=TopAbs_FACE)return 0;
+    TopTools_IndexedMapOfShape faces;TopExp::MapShapes(m_shape,TopAbs_FACE,faces);return faces.FindIndex(face);
 }
 
 std::optional<modeling::ReferencePlaneHit> CadViewport::planeAt(const QPointF& position)
@@ -355,15 +378,38 @@ std::optional<modeling::ReferencePlaneHit> CadViewport::planeAt(const QPointF& p
     return modeling::pickReferencePlane(gp_Lin(origin, direction), m_planeHalfExtent);
 }
 
+void CadViewport::updateGlobalAxes()
+{
+    if(!isReady()) return;
+    for(auto& axis:m_globalAxes) {if(!axis.IsNull()) m_context->Remove(axis,Standard_False);axis.Nullify();}
+    for(auto& label:m_globalAxisLabels) {if(!label.IsNull())m_context->Remove(label,Standard_False);label.Nullify();}
+    if(m_sketchEditing) return;
+    const double length=std::max(5.0,m_planeHalfExtent*0.25);
+    for(int i=0;i<3;++i) {
+        const gp_Vec direction(i==0?1:0,i==1?1:0,i==2?1:0);
+        m_globalAxes[i]=new AIS_Shape(BRepBuilderAPI_MakeEdge(gp_Pnt(0,0,0),gp_Pnt(0,0,0).Translated(direction*length)).Shape());
+        m_globalAxes[i]->SetColor(i==0?Quantity_NOC_RED:i==1?Quantity_NOC_GREEN:Quantity_NOC_BLUE);
+        m_globalAxes[i]->SetWidth(2.0*devicePixelRatioF());m_globalAxes[i]->SetInfiniteState(Standard_True);
+        m_context->Display(m_globalAxes[i],AIS_WireFrame,-1,Standard_False);
+        m_globalAxisLabels[i]=new AIS_TextLabel;
+        m_globalAxisLabels[i]->SetText(TCollection_ExtendedString(i==0?"+X":i==1?"+Y":"+Z"));
+        m_globalAxisLabels[i]->SetPosition(gp_Pnt(0,0,0).Translated(direction*length));
+        m_globalAxisLabels[i]->SetColor(i==0?Quantity_NOC_RED:i==1?Quantity_NOC_GREEN:Quantity_NOC_BLUE);
+        m_globalAxisLabels[i]->SetHeight(13.0*devicePixelRatioF());m_globalAxisLabels[i]->SetInfiniteState(Standard_True);
+        m_context->Display(m_globalAxisLabels[i],0,-1,Standard_False);
+    }
+}
+
 void CadViewport::updateSketchAxes()
 {
     if (!isReady()) { return; }
+    updateGlobalAxes();
     for (auto& axis : m_sketchAxes) {
         if (!axis.IsNull()) { m_context->Remove(axis, Standard_False); axis.Nullify(); }
     }
     if (!m_sketchOrigin.IsNull()) { m_context->Remove(m_sketchOrigin, Standard_False); m_sketchOrigin.Nullify(); }
     if (m_sketchEditing && m_sketch) {
-        const auto axes = modeling::sketchAxes(m_sketch->plane);
+        const auto axes = modeling::sketchAxes(*m_sketch);
         const double span = std::max(m_view->Camera()->Scale(), 1.0);
         for (int i = 0; i < 2; ++i) {
             const gp_Vec direction(i == 0 ? axes.XDirection() : axes.YDirection());
@@ -517,13 +563,13 @@ void CadViewport::setSketch(const modeling::Sketch& sketch)
 void CadViewport::orientSketch()
 {
     if (!isReady() || !m_sketch) { return; }
-    const auto axes = modeling::sketchAxes(m_sketch->plane);
+    const auto axes = modeling::sketchAxes(*m_sketch);
     const auto normal = axes.Direction();
     const auto up = axes.YDirection();
     m_view->Camera()->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);
     // Changing the target also changes OCCT's view direction. Center first,
     // then set the final normal/up frame, including when a body is off-origin.
-    m_view->SetAt(0.0, 0.0, 0.0);
+    m_view->SetAt(axes.Location().X(),axes.Location().Y(),axes.Location().Z());
     m_view->SetProj(normal.X(), normal.Y(), normal.Z());
     m_view->SetUp(up.X(), up.Y(), up.Z());
     double span = 75.0;
@@ -580,7 +626,7 @@ std::string sketchId() { return QUuid::createUuid().toString(QUuid::WithoutBrace
 
 QPointF CadViewport::screenPoint(modeling::Point2 point) const
 {
-    const auto world = modeling::sketchPoint(m_sketch->plane, point);
+    const auto world = modeling::sketchPoint(*m_sketch, point);
     int x, y; m_view->Convert(world.X(), world.Y(), world.Z(), x, y);
     return {x / devicePixelRatioF(), y / devicePixelRatioF()};
 }
@@ -698,7 +744,7 @@ void CadViewport::updatePointPresentation()
                 return entity.id==entry.first.entityId && entity.kind==modeling::EntityKind::Line;
             });
             if(!origin && !hovered && !selected && !lineEndpoint && entry.first.entityId!=m_selectedEntity) continue;
-            Handle(AIS_Point) marker=new AIS_Point(new Geom_CartesianPoint(modeling::sketchPoint(m_sketch->plane,entry.second)));
+            Handle(AIS_Point) marker=new AIS_Point(new Geom_CartesianPoint(modeling::sketchPoint(*m_sketch,entry.second)));
             const Quantity_Color color(selected ? Quantity_NOC_GREEN4 : hovered ? Quantity_NOC_ORANGE : origin ? Quantity_NOC_RED3 : Quantity_NOC_BLUE3);
             marker->SetZLayer(Graphic3d_ZLayerId_Topmost);
             marker->Attributes()->SetPointAspect(new Prs3d_PointAspect(origin ? Aspect_TOM_O_PLUS : Aspect_TOM_O_POINT,
@@ -709,7 +755,7 @@ void CadViewport::updatePointPresentation()
             m_pointPresentations.push_back(marker);
         }
         for(const auto& entity:m_sketch->entities) if(entity.id==m_selectedEntity) {
-            modeling::Sketch only; only.plane=m_sketch->plane; only.entities.push_back(entity);
+            modeling::Sketch only; only.plane=m_sketch->plane; only.attachment=m_sketch->attachment; only.entities.push_back(entity);
             m_selectedEntityPresentation=new AIS_Shape(modeling::sketchShape(only));
             m_selectedEntityPresentation->SetZLayer(Graphic3d_ZLayerId_Topmost);
             m_selectedEntityPresentation->SetColor(Quantity_NOC_GREEN4); m_selectedEntityPresentation->SetWidth(2.5 * devicePixelRatioF());
@@ -747,7 +793,7 @@ void CadViewport::updateInteractionPresentation()
         else if(m_pointDrag->target) {text="Coincident";point=modeling::sketchPointValue(*m_sketch,*m_pointDrag->target);}
     } else if(m_sketchEditing && m_sketchTool && m_firstPoint) {
         for(const auto& line:m_inference.guides) {
-            Handle(AIS_Shape) guide=new AIS_Shape(BRepBuilderAPI_MakeEdge(modeling::sketchPoint(m_sketch->plane,line.first),modeling::sketchPoint(m_sketch->plane,line.second)).Shape());
+            Handle(AIS_Shape) guide=new AIS_Shape(BRepBuilderAPI_MakeEdge(modeling::sketchPoint(*m_sketch,line.first),modeling::sketchPoint(*m_sketch,line.second)).Shape());
             const Quantity_Color color(0.65,0.48,0.06,Quantity_TOC_RGB);
             const Handle(Prs3d_LineAspect) aspect=new Prs3d_LineAspect(color,Aspect_TOL_DASH,devicePixelRatioF());
             guide->Attributes()->SetWireAspect(aspect);guide->Attributes()->SetLineAspect(aspect);
@@ -762,7 +808,7 @@ void CadViewport::updateInteractionPresentation()
     const auto labelPoint=sketchPosition(screenPoint(point)+QPointF(12,-16)).value_or(point);
     m_interactionLabel=new AIS_TextLabel;
     m_interactionLabel->SetText(TCollection_ExtendedString(text.toUtf8().constData(),Standard_True));
-    m_interactionLabel->SetPosition(modeling::sketchPoint(m_sketch->plane,labelPoint));
+    m_interactionLabel->SetPosition(modeling::sketchPoint(*m_sketch,labelPoint));
     m_interactionLabel->SetHeight(12.0*devicePixelRatioF());
     m_interactionLabel->SetColor(invalid ? Quantity_NOC_RED3 : Quantity_NOC_DARKGOLDENROD);
     m_interactionLabel->SetZLayer(Graphic3d_ZLayerId_Topmost);
@@ -887,7 +933,7 @@ std::optional<modeling::Point2> CadViewport::sketchPosition(const QPointF& posit
     const QPoint pixel = nativePosition(position);
     double x, y, z, dx, dy, dz;
     m_view->ConvertWithProj(pixel.x(), pixel.y(), x, y, z, dx, dy, dz);
-    const auto axes = modeling::sketchAxes(m_sketch->plane);
+    const auto axes = modeling::sketchAxes(*m_sketch);
     const gp_Vec normal(axes.Direction());
     const gp_Vec ray(dx, dy, dz);
     const double divisor = ray.Dot(normal);
@@ -948,7 +994,7 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
         return;
     }
     if (event->button() == Qt::LeftButton) {
-        m_planeClickCandidate = m_planesVisible;
+        m_planeClickCandidate = !m_sketchEditing && !m_regionSelecting;
         m_planePressPosition = event->position();
         m_navigation = Navigation::Orbit;
         const QPoint position = nativePosition(event->position());
@@ -970,8 +1016,9 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
 void CadViewport::mouseMoveEvent(QMouseEvent* event)
 {
     if(m_pointDrag) { updatePointDrag(event->position()); event->accept(); return; }
-    if (m_planesVisible && m_navigation == Navigation::None) {
-        const auto hit = planeAt(event->position());
+    if(!m_sketchEditing && !m_regionSelecting && m_navigation==Navigation::None) {
+        const int face=faceAt(event->position());
+        const auto hit = face ? std::optional<modeling::ReferencePlaneHit>{} : planeAt(event->position());
         const std::optional<modeling::SketchPlane> hovered = hit ? std::optional<modeling::SketchPlane>(hit->plane) : std::nullopt;
         if (hovered != m_hoveredPlane) {
             m_hoveredPlane = hovered;
@@ -1030,6 +1077,10 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* event)
         if(regionClick && m_regionSelecting) {
             const auto point=sketchPosition(event->position());if(point) emit sketchRegionClicked(*point);
         } else if (click) {
+            const int face=faceAt(event->position());
+            if(face) {m_context->SelectDetected();emit solidFaceSelected(face);update();event->accept();return;}
+            m_context->ClearSelected(Standard_False);
+            emit solidFaceSelected(0);
             const auto hit = planeAt(event->position());
             if (hit) {
                 setSelectedReferencePlane(hit->plane);

@@ -171,10 +171,19 @@ returns to sketch editing without losing completed geometry. Open or invalid
 profiles stay editable with a clear error. Completed sketch and feature editing
 workflows remain available; Cut retains Through All. The viewport stays usable
 for orbit, pan and zoom while the panel is open. There is no Update Preview step. Save the part as `.thepart`; reopening restores each sketch's stored
-plane reference and coordinates. Arbitrary planar-face attachment is not part of
-this task.
+plane reference and coordinates. Planar-face sketching is described below.
 
 This guide describes intended/current controls, not evidence of completed manual
 testing. Consult the verification report for the interactions actually exercised.
 
 See the [current sketcher/feature workflow checks](verification/sketcher-feature-workflow.md) and the earlier [sketch and desktop verification report](verification/sketch-relations-desktop.md) for this milestone, and the [graphical-plane report](verification/graphical-plane-selection.md) for earlier checks.
+
+## Sketching on solid faces
+
+In normal part mode, select a planar face and click Sketch, or click Sketch first
+and then select the face. Draw in its local frame and use Extrude/Cut as usual.
+Faces take picking priority over origin-plane graphics. Curved faces are rejected.
+Saving a face-supported part writes version 4. Changing its upstream support may
+reject rather than reattach; see the documented conservative reference strategy.
+Valid closed line profiles can be selected even with attached dangling lines.
+General crossings, shared boundaries and nested regions remain unsupported.

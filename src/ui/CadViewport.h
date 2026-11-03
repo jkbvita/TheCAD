@@ -59,6 +59,7 @@ signals:
     void sketchRegionClicked(thecad::modeling::Point2 point);
     void referencePlaneSelected(thecad::modeling::SketchPlane plane);
     void planeSelectionCanceled();
+    void solidFaceSelected(int index);
 
 protected:
     QPaintEngine* paintEngine() const override;
@@ -85,6 +86,8 @@ private:
     void updateReferencePlanes();
     void updatePlaneStyles();
     void updateSketchAxes();
+    void updateGlobalAxes();
+    int faceAt(const QPointF& position);
     std::optional<modeling::ReferencePlaneHit> planeAt(const QPointF& position);
     void updateSketchPresentation(const std::optional<modeling::SketchEntity>& preview = {});
     std::optional<modeling::Point2> sketchPosition(const QPointF& position);
@@ -146,6 +149,8 @@ private:
     std::array<Handle(AIS_Shape), 3> m_referencePlanes;
     std::array<Handle(AIS_TextLabel), 3> m_planeLabels;
     std::array<Handle(AIS_Shape), 2> m_sketchAxes;
+    std::array<Handle(AIS_Shape), 3> m_globalAxes;
+    std::array<Handle(AIS_TextLabel), 3> m_globalAxisLabels;
     Handle(AIS_TextLabel) m_sketchOrigin;
     std::optional<modeling::SketchPlane> m_hoveredPlane;
     std::optional<modeling::SketchPlane> m_selectedPlane;

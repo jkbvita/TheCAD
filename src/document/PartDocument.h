@@ -24,7 +24,7 @@ struct Feature {
     std::vector<std::string> dependencies;
 };
 
-// Sequential prototype feature history. No UI dependency or topology naming.
+// Sequential prototype feature history. No UI widgets or permanent topology naming.
 // Every edit regenerates a candidate history before changing this document.
 class PartDocument final {
 public:
@@ -36,6 +36,7 @@ public:
     const BoxParameters& parameters() const { return m_parameters; }
     const TopoDS_Shape& shape() const { return m_shape; }
     const std::vector<Feature>& features() const { return m_features; }
+    modeling::Sketch sketchOnFace(int faceIndex) const;
     std::string addSketch(const modeling::Sketch& sketch);
     std::string addExtrude(const std::string& sketchId, const std::vector<std::string>& contour, double length, modeling::Direction direction);
     std::string addCut(const std::string& sketchId, const std::vector<std::string>& contour, double depth, bool throughAll, modeling::Direction direction);

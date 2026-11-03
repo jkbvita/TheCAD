@@ -17,6 +17,10 @@ automatically.
 
 ## Current guides
 
+- [Reference faces and contour verification](verification/reference-faces-contours.md)
+- [Face attachment and contour decision](decisions/0008-reference-face-attachments.md)
+- [Smart Dimension proposal, pending approval](requirements/smart-dimension-proposal.md)
+
 - [Sketcher interaction and feature workflow](requirements/sketcher-feature-workflow.md)
 - [Workflow state and PropertyManager decision](decisions/0007-sketcher-feature-workflow.md)
 - [Independent Windows launch and packaging](windows-deployment.md)

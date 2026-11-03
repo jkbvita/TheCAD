@@ -1,3 +1,9 @@
+#include <BRepTools.hxx>
+#include <TopExp.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
+#include <TopoDS.hxx>
+#include <QCryptographicHash>
+#include <sstream>
 #include "document/PartDocument.h"
 #include "modeling/Box.h"
 
@@ -195,6 +201,15 @@ BoxParameters readBox(const QJsonValue& value)
     return {number(object.value("width"), "Box width"), number(object.value("depth"), "Box depth"),
             number(object.value("height"), "Box height")};
 }
+std::string bodySignature(const TopoDS_Shape& body) {
+    std::ostringstream stream;BRepTools::Write(body,stream,Standard_False,Standard_False,TopTools_FormatVersion_CURRENT);
+    return QCryptographicHash::hash(QByteArray::fromStdString(stream.str()),QCryptographicHash::Sha256).toHex().toStdString();
+}
+gp_Ax3 faceFrame(const TopoDS_Shape& body,int index) {
+    TopTools_IndexedMapOfShape faces;TopExp::MapShapes(body,TopAbs_FACE,faces);
+    if(index<1 || index>faces.Extent()) fail("The attached face is unavailable. Reselect its support explicitly.");
+    return modeling::planarFaceAxes(TopoDS::Face(faces(index)));
+}
 void validSketch(const modeling::Sketch& sketch)
 {
     (void)planeName(sketch.plane);
@@ -237,6 +252,7 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
     BoxParameters boxParameters{0, 0, 0};
     std::string bodyId;
     std::map<std::string, modeling::Sketch> sketches;
+    std::map<std::string,TopoDS_Shape> bodies;
     std::set<std::string> ids;
     try {
         for (auto& feature : features) {
@@ -284,6 +300,17 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
                         reservedIds.insert(candidate);
                     }
                 }
+                if(feature.sketch.attachment) {
+                    const auto& attachment=*feature.sketch.attachment;
+                    const auto source=bodies.find(attachment.sourceFeature);
+                    if(source==bodies.end() || bodySignature(source->second)!=attachment.sourceSignature)
+                        fail("Sketch face support changed or is missing. Automatic reattachment is disabled; undo the upstream change or recreate the sketch on the intended face.");
+                    const auto actual=faceFrame(source->second,attachment.faceIndex);
+                    if(actual.Location().Distance(attachment.frame.Location())>1e-7 ||
+                       !actual.Direction().IsEqual(attachment.frame.Direction(),1e-9) ||
+                       !actual.XDirection().IsEqual(attachment.frame.XDirection(),1e-9)) fail("Stored sketch frame does not match its supporting face.");
+                    expected.push_back(attachment.sourceFeature);
+                }
                 validSketch(feature.sketch);
                 sketches.emplace(feature.id, feature.sketch);
             } else if (feature.kind == FeatureKind::Extrude || feature.kind == FeatureKind::Cut) {
@@ -305,6 +332,7 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
             if (validateDependencies && feature.dependencies != expected)
                 fail("Invalid dependencies or feature order for " + q(feature.id));
             feature.dependencies = std::move(expected);
+            if(feature.kind!=FeatureKind::Sketch) bodies[feature.id]=body;
         }
     } catch (const Standard_Failure& error) {
         fail("Cannot regenerate part geometry: " + QString::fromUtf8(error.GetMessageString()));
@@ -324,6 +352,14 @@ std::string PartDocument::nextId(FeatureKind kind) const
         if (std::none_of(m_features.begin(), m_features.end(), [&](const Feature& f) { return f.id == candidate; })) return candidate;
     }
     fail("Cannot allocate another feature ID.");
+}
+
+modeling::Sketch PartDocument::sketchOnFace(int index) const {
+    if(m_shape.IsNull()) fail("A planar face sketch requires an existing solid.");
+    modeling::Sketch sketch;modeling::FaceAttachment attachment;
+    for(const auto& feature:m_features) if(feature.kind!=FeatureKind::Sketch) attachment.sourceFeature=feature.id;
+    attachment.faceIndex=index;attachment.sourceSignature=bodySignature(m_shape);attachment.frame=faceFrame(m_shape,index);
+    sketch.attachment=attachment;return sketch;
 }
 
 std::string PartDocument::addSketch(const modeling::Sketch& sketch)
@@ -400,7 +436,7 @@ PartDocument PartDocument::load(const QString& path)
     if (root.value("format") != QJsonValue("TheCAD.Part")) fail("Unsupported document format; expected TheCAD.Part.");
     if (root.value("units") != QJsonValue("mm")) fail("Unsupported units; this prototype supports millimeters only.");
     const auto versionValue = root.value("version");
-    if (!versionValue.isDouble() || (versionValue.toDouble() != 1 && versionValue.toDouble() != 2 && versionValue.toDouble() != 3)) fail("Unsupported part document version; expected 1, 2, or 3.");
+    if (!versionValue.isDouble() || (versionValue.toDouble() != 1 && versionValue.toDouble() != 2 && versionValue.toDouble() != 3 && versionValue.toDouble() != 4)) fail("Unsupported part document version; expected 1, 2, 3, or 4.");
     const int version = versionValue.toInt();
     if (!root.value("features").isArray()) fail("Part features must be an ordered array.");
     const auto array = root.value("features").toArray();
@@ -427,9 +463,22 @@ PartDocument PartDocument::load(const QString& path)
             } else if (type == "sketch") {
                 QSet<QString> expected{"id", "name", "type", "plane", "entities", "dependencies"};
                 if (version >= 3) expected.insert("relations");
+                if(version>=4 && object.contains("attachment")) expected.insert("attachment");
                 fields(object, expected, "Sketch feature");
                 feature.kind = FeatureKind::Sketch;
                 feature.sketch.plane = readPlane(object.value("plane"));
+                if(object.contains("attachment")) {
+                    if(!object.value("attachment").isObject()) fail("Invalid face attachment.");
+                    const auto a=object.value("attachment").toObject();fields(a,{"source","face","signature","frame"},"Face attachment");
+                    modeling::FaceAttachment attachment;attachment.sourceFeature=stringValue(a.value("source"),"Face source").toStdString();
+                    const double index=number(a.value("face"),"Face index");if(index<1 || index>100000 || index!=std::floor(index))fail("Invalid face index.");attachment.faceIndex=int(index);
+                    attachment.sourceSignature=stringValue(a.value("signature"),"Support signature").toStdString();
+                    if(!a.value("frame").isArray() || a.value("frame").toArray().size()!=9)fail("Invalid face frame.");
+                    auto frame=a.value("frame").toArray();double v[9];for(int i=0;i<9;++i)v[i]=number(frame[i],"Frame coordinate");
+                    gp_Vec n(v[3],v[4],v[5]),x(v[6],v[7],v[8]);
+                    if(std::abs(n.Magnitude()-1)>1e-9 || std::abs(x.Magnitude()-1)>1e-9 || std::abs(n.Dot(x))>1e-9)fail("Face frame must be orthonormal.");
+                    attachment.frame=gp_Ax3(gp_Pnt(v[0],v[1],v[2]),gp_Dir(n),gp_Dir(x));feature.sketch.attachment=attachment;
+                }
                 if (!object.value("entities").isArray() || object.value("entities").toArray().size() > int(maximumEntities))
                     fail("Sketch entities must be an array of no more than 1000 elements.");
                 for (const auto& entity : object.value("entities").toArray()) feature.sketch.entities.push_back(readEntity(entity));
@@ -481,6 +530,11 @@ void PartDocument::save(const QString& path) const
             object["parameters"] = writeBox(feature.box);
         } else if (feature.kind == FeatureKind::Sketch) {
             object["plane"] = planeName(feature.sketch.plane);
+            if(feature.sketch.attachment) {
+                const auto& a=*feature.sketch.attachment;const auto& f=a.frame;const auto p=f.Location();const auto n=f.Direction();const auto x=f.XDirection();
+                object["attachment"]=QJsonObject{{"source",q(a.sourceFeature)},{"face",a.faceIndex},{"signature",q(a.sourceSignature)},
+                    {"frame",QJsonArray{p.X(),p.Y(),p.Z(),n.X(),n.Y(),n.Z(),x.X(),x.Y(),x.Z()}}};
+            }
             QJsonArray entities;
             for (const auto& entity : feature.sketch.entities) entities.append(writeEntity(entity));
             object["entities"] = entities;
@@ -499,7 +553,8 @@ void PartDocument::save(const QString& path) const
         if (feature.kind != FeatureKind::Sketch) resultId = feature.id;
         features.append(object);
     }
-    const QJsonObject root{{"format", "TheCAD.Part"}, {"version", 3}, {"units", "mm"}, {"features", features}, {"resultFeature", q(resultId)}};
+    const bool attached=std::any_of(m_features.begin(),m_features.end(),[](const auto& f){return f.kind==FeatureKind::Sketch && f.sketch.attachment.has_value();});
+    const QJsonObject root{{"format", "TheCAD.Part"}, {"version", attached?4:3}, {"units", "mm"}, {"features", features}, {"resultFeature", q(resultId)}};
     const auto bytes = QJsonDocument(root).toJson(QJsonDocument::Indented);
     if (bytes.size() > maximumDocumentBytes) fail("Part document exceeds the 1 MiB prototype size limit.");
     QSaveFile file(path);

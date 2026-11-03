@@ -1,3 +1,5 @@
+#include <functional>
+#include <BRepAdaptor_Surface.hxx>
 #include "modeling/Sketch.h"
 
 #include <BRep_Builder.hxx>
@@ -75,7 +77,7 @@ bool samePoint(Point2 first, Point2 second)
 
 void validate(const Sketch& sketch)
 {
-    (void)sketchAxes(sketch.plane);
+    (void)sketchAxes(sketch);
     validateSketchRelations(sketch);
     if (sketch.entities.size() > maximumEntities) {
         fail("This prototype supports at most 1000 entities per sketch.");
@@ -115,7 +117,7 @@ std::vector<Point2> rectanglePoints(const SketchEntity& entity)
     return {{xmin, ymin}, {xmax, ymin}, {xmax, ymax}, {xmin, ymax}};
 }
 
-TopoDS_Edge lineEdge(SketchPlane plane, Point2 first, Point2 second)
+TopoDS_Edge lineEdge(const Sketch& plane, Point2 first, Point2 second)
 {
     BRepBuilderAPI_MakeEdge builder(sketchPoint(plane, first), sketchPoint(plane, second));
     if (!builder.IsDone()) {
@@ -124,7 +126,7 @@ TopoDS_Edge lineEdge(SketchPlane plane, Point2 first, Point2 second)
     return builder.Edge();
 }
 
-TopoDS_Edge circleEdge(SketchPlane plane, const SketchEntity& entity)
+TopoDS_Edge circleEdge(const Sketch& plane, const SketchEntity& entity)
 {
     const auto axes = sketchAxes(plane);
     const gp_Ax2 circleAxes(sketchPoint(plane, entity.first), axes.Direction(), axes.XDirection());
@@ -255,19 +257,19 @@ TopoDS_Face profileFace(const Sketch& sketch)
     }
     BRepBuilderAPI_MakeWire wire;
     if (sketch.entities.size() == 1 && sketch.entities.front().kind == EntityKind::Circle) {
-        wire.Add(circleEdge(sketch.plane, sketch.entities.front()));
+        wire.Add(circleEdge(sketch, sketch.entities.front()));
     } else {
         const auto points = sketch.entities.size() == 1
                 && sketch.entities.front().kind == EntityKind::Rectangle
             ? rectanglePoints(sketch.entities.front()) : orderedLineLoop(sketch);
         for (std::size_t index = 0; index < points.size(); ++index) {
-            wire.Add(lineEdge(sketch.plane, points[index], points[(index + 1) % points.size()]));
+            wire.Add(lineEdge(sketch, points[index], points[(index + 1) % points.size()]));
         }
     }
     if (!wire.IsDone()) {
         fail("The sketch boundary could not be assembled into a closed wire.");
     }
-    BRepBuilderAPI_MakeFace face(gp_Pln(sketchAxes(sketch.plane)), wire.Wire(), Standard_True);
+    BRepBuilderAPI_MakeFace face(gp_Pln(sketchAxes(sketch)), wire.Wire(), Standard_True);
     if (!face.IsDone() || !BRepCheck_Analyzer(face.Face()).IsValid()) {
         fail("The sketch does not form a valid closed planar profile.");
     }
@@ -295,7 +297,7 @@ void requireSolid(const TopoDS_Shape& shape, const char* explanation)
     }
 }
 
-gp_Vec sweepVector(SketchPlane plane, double length, Direction direction)
+gp_Vec sweepVector(const Sketch& plane, double length, Direction direction)
 {
     if (direction != Direction::Positive && direction != Direction::Negative) {
         fail("Unsupported extrusion direction.");
@@ -305,7 +307,7 @@ gp_Vec sweepVector(SketchPlane plane, double length, Direction direction)
 
 TopoDS_Shape prism(const Sketch& sketch, double length, Direction direction)
 {
-    BRepPrimAPI_MakePrism builder(profileFace(sketch), sweepVector(sketch.plane, length, direction), Standard_True);
+    BRepPrimAPI_MakePrism builder(profileFace(sketch), sweepVector(sketch, length, direction), Standard_True);
     if (!builder.IsDone()) {
         fail("Open CASCADE could not create the extrusion.");
     }
@@ -314,7 +316,7 @@ TopoDS_Shape prism(const Sketch& sketch, double length, Direction direction)
     return result;
 }
 
-double throughLength(const TopoDS_Shape& base, SketchPlane plane, Direction direction)
+double throughLength(const TopoDS_Shape& base, const Sketch& plane, Direction direction)
 {
     Bnd_Box box;
     BRepBndLib::Add(base, box);
@@ -325,7 +327,7 @@ double throughLength(const TopoDS_Shape& base, SketchPlane plane, Direction dire
     for (const double x : {xmin, xmax}) {
         for (const double y : {ymin, ymax}) {
             for (const double z : {zmin, zmax}) {
-                furthest = std::max(furthest, gp_Vec(x, y, z).Dot(normal));
+                furthest = std::max(furthest, gp_Vec(sketchAxes(plane).Location(),gp_Pnt(x,y,z)).Dot(normal));
             }
         }
     }
@@ -350,6 +352,28 @@ gp_Ax3 sketchAxes(SketchPlane plane)
     fail("Unsupported sketch plane.");
 }
 
+gp_Ax3 sketchAxes(const Sketch& sketch) { return sketch.attachment ? sketch.attachment->frame : sketchAxes(sketch.plane); }
+gp_Pnt sketchPoint(const Sketch& sketch, Point2 point) {
+    const auto axes=sketchAxes(sketch);
+    return axes.Location().Translated(gp_Vec(axes.XDirection())*point.x+gp_Vec(axes.YDirection())*point.y);
+}
+gp_Ax3 planarFaceAxes(const TopoDS_Face& face) {
+    BRepAdaptor_Surface surface(face);
+    if(surface.GetType()!=GeomAbs_Plane) fail("Select a planar solid face; curved faces cannot support a sketch yet.");
+    auto normal=surface.Plane().Axis().Direction();
+    if(face.Orientation()==TopAbs_REVERSED) normal.Reverse();
+    GProp_GProps properties;BRepGProp::SurfaceProperties(face,properties);
+    gp_Vec x=std::abs(normal.X())<0.9 ? gp_Vec(1,0,0) : gp_Vec(0,1,0);
+    x-=gp_Vec(normal)*x.Dot(gp_Vec(normal));
+    return gp_Ax3(properties.CentreOfMass(),normal,gp_Dir(x));
+}
+bool contourContains(const Contour& contour,const Sketch& sketch,Point2 point) {
+    if(contour.face.IsNull()) return false;
+    finiteCoordinate(point.x);finiteCoordinate(point.y);
+    BRepClass_FaceClassifier classifier(contour.face,sketchPoint(sketch,point),joiningTolerance);
+    return classifier.State()==TopAbs_IN || classifier.State()==TopAbs_ON;
+}
+
 gp_Pnt sketchPoint(SketchPlane plane, Point2 point)
 {
     const auto axes = sketchAxes(plane);
@@ -366,13 +390,13 @@ TopoDS_Shape sketchShape(const Sketch& sketch)
         builder.MakeCompound(result);
         for (const auto& entity : sketch.entities) {
             if (entity.kind == EntityKind::Circle) {
-                builder.Add(result, circleEdge(sketch.plane, entity));
+                builder.Add(result, circleEdge(sketch, entity));
             } else if (entity.kind == EntityKind::Line) {
-                builder.Add(result, lineEdge(sketch.plane, entity.first, entity.second));
+                builder.Add(result, lineEdge(sketch, entity.first, entity.second));
             } else {
                 const auto points = rectanglePoints(entity);
                 for (std::size_t index = 0; index < points.size(); ++index) {
-                    builder.Add(result, lineEdge(sketch.plane, points[index], points[(index + 1) % points.size()]));
+                    builder.Add(result, lineEdge(sketch, points[index], points[(index + 1) % points.size()]));
                 }
             }
         }
@@ -405,48 +429,86 @@ std::vector<Contour> closedContours(const Sketch& sketch)
             }
             identifiers.push_back(identifier);
         }
-        std::vector<Contour> result;
-        std::vector<bool> visited(sketch.entities.size(), false);
-        for (std::size_t seed = 0; seed < sketch.entities.size(); ++seed) {
-            if (visited[seed]) {
-                continue;
-            }
-            std::vector<std::size_t> component{seed};
-            visited[seed] = true;
-            if (sketch.entities[seed].kind == EntityKind::Line) {
-                // Extract connected line components; open or branched components
-                // remain sketch geometry, but cannot become extrusion profiles.
-                for (std::size_t next = 0; next < component.size(); ++next) {
-                    const auto& current = sketch.entities[component[next]];
-                    for (std::size_t index = 0; index < sketch.entities.size(); ++index) {
-                        const auto& candidate = sketch.entities[index];
-                        if (visited[index] || candidate.kind != EntityKind::Line) {
-                            continue;
-                        }
-                        if (samePoint(current.first, candidate.first)
-                            || samePoint(current.first, candidate.second)
-                            || samePoint(current.second, candidate.first)
-                            || samePoint(current.second, candidate.second)) {
-                            visited[index] = true;
-                            component.push_back(index);
-                        }
-                    }
-                }
-            }
-            Sketch candidate;
-            candidate.plane = sketch.plane;
-            Contour contour;
-            for (const auto index : component) {
-                candidate.entities.push_back(sketch.entities[index]);
-                contour.entityIds.push_back(identifiers[index]);
-            }
-            try {
-                contour.face = profileFace(candidate);
-            } catch (const std::runtime_error&) {
-                continue;
-            }
-            result.push_back(std::move(contour));
+        // Endpoint planar graph. Bridges cannot bound a region; remove them from
+        // the analysis only, retaining every original entity in the document.
+        std::vector<Point2> nodes;
+        std::vector<std::vector<int>> incident;
+        struct Edge {int a,b;std::size_t entity;};std::vector<Edge> edges;
+        const auto nodeFor=[&](Point2 point) {
+            for(std::size_t i=0;i<nodes.size();++i)if(samePoint(nodes[i],point))return int(i);
+            nodes.push_back(point);incident.emplace_back();return int(nodes.size()-1);
+        };
+        for(std::size_t i=0;i<sketch.entities.size();++i) {
+            const auto& e=sketch.entities[i];if(e.kind!=EntityKind::Line)continue;
+            const int a=nodeFor(e.first),b=nodeFor(e.second),index=int(edges.size());
+            edges.push_back({a,b,i});incident[a].push_back(index);incident[b].push_back(index);
         }
+        // Unsplit crossings/T-junctions and overlapping edges are intentionally
+        // unsupported. Never infer a different perimeter by ignoring a crossing.
+        for(std::size_t i=0;i<edges.size();++i)for(std::size_t j=i+1;j<edges.size();++j) {
+            const auto a=nodes[edges[i].a],b=nodes[edges[i].b],c=nodes[edges[j].a],d=nodes[edges[j].b];
+            if(!intersects(a,b,c,d))continue;
+            const bool shared=samePoint(a,c)||samePoint(a,d)||samePoint(b,c)||samePoint(b,d);
+            const bool interior=(onSegment(a,b,c)&&!samePoint(c,a)&&!samePoint(c,b)) ||
+                (onSegment(a,b,d)&&!samePoint(d,a)&&!samePoint(d,b)) ||
+                (onSegment(c,d,a)&&!samePoint(a,c)&&!samePoint(a,d)) ||
+                (onSegment(c,d,b)&&!samePoint(b,c)&&!samePoint(b,d));
+            if(!shared || interior || (samePoint(a,c)&&samePoint(b,d)) || (samePoint(a,d)&&samePoint(b,c)))
+                fail("Intersecting, overlapping or unsplit sketch edges are unsupported. Use simple boundaries with shared endpoints.");
+        }
+        for(const auto& line:sketch.entities)if(line.kind==EntityKind::Line)for(const auto& primitive:sketch.entities) {
+            if(primitive.kind==EntityKind::Rectangle) {
+                const auto corners=rectanglePoints(primitive);
+                for(int i=0;i<4;++i) {
+                    const auto a=corners[i],b=corners[(i+1)%4];
+                    if(!intersects(a,b,line.first,line.second))continue;
+                    const bool corner=samePoint(a,line.first)||samePoint(a,line.second)||samePoint(b,line.first)||samePoint(b,line.second);
+                    const bool overlap=(onSegment(a,b,line.first)&&!samePoint(a,line.first)&&!samePoint(b,line.first)) ||
+                        (onSegment(a,b,line.second)&&!samePoint(a,line.second)&&!samePoint(b,line.second));
+                    const bool covers=(onSegment(line.first,line.second,a)&&!samePoint(a,line.first)&&!samePoint(a,line.second)) ||
+                        (onSegment(line.first,line.second,b)&&!samePoint(b,line.first)&&!samePoint(b,line.second)) ||
+                        (samePoint(a,line.first)&&samePoint(b,line.second)) || (samePoint(b,line.first)&&samePoint(a,line.second));
+                    if(!corner || overlap || covers)
+                        fail("Intersecting or overlapping rectangle/line boundaries are unsupported.");
+                }
+            } else if(primitive.kind==EntityKind::Circle) {
+                const double dx=line.second.x-line.first.x,dy=line.second.y-line.first.y;
+                const double ox=line.first.x-primitive.first.x,oy=line.first.y-primitive.first.y;
+                const double a=dx*dx+dy*dy,b=2*(ox*dx+oy*dy),c=ox*ox+oy*oy-primitive.radius*primitive.radius;
+                const double discriminant=b*b-4*a*c;
+                if(discriminant>=0)for(double t:{(-b-std::sqrt(discriminant))/(2*a),(-b+std::sqrt(discriminant))/(2*a)})
+                    if(t>=-1e-9 && t<=1+1e-9)fail("Intersecting or touching circle/line boundaries are unsupported.");
+            }
+        }
+        std::vector<int> discovered(nodes.size(),-1),low(nodes.size());std::vector<bool> bridge(edges.size(),false);int clock=0;
+        std::function<void(int,int)> visit=[&](int node,int parentEdge) {
+            discovered[node]=low[node]=clock++;
+            for(int index:incident[node]) {
+                if(index==parentEdge)continue;const auto& e=edges[index];const int next=e.a==node?e.b:e.a;
+                if(discovered[next]<0) {visit(next,index);low[node]=std::min(low[node],low[next]);if(low[next]>discovered[node])bridge[index]=true;}
+                else low[node]=std::min(low[node],discovered[next]);
+            }
+        };
+        for(std::size_t i=0;i<nodes.size();++i)if(discovered[i]<0)visit(int(i),-1);
+        std::vector<Contour> result;
+        const auto append=[&](const std::vector<std::size_t>& entities) {
+            Sketch candidate;candidate.plane=sketch.plane;candidate.attachment=sketch.attachment;Contour contour;
+            for(auto i:entities){candidate.entities.push_back(sketch.entities[i]);contour.entityIds.push_back(identifiers[i]);}
+            contour.face=profileFace(candidate);result.push_back(std::move(contour));
+        };
+        std::vector<bool> visited(edges.size(),false);
+        for(std::size_t seed=0;seed<edges.size();++seed) {
+            if(bridge[seed] || visited[seed])continue;
+            std::vector<int> component{int(seed)};visited[seed]=true;
+            for(std::size_t j=0;j<component.size();++j)for(int node:{edges[component[j]].a,edges[component[j]].b}) {
+                int degree=0;for(int index:incident[node])if(!bridge[index]) {
+                    ++degree;if(!visited[index]){visited[index]=true;component.push_back(index);}
+                }
+                if(degree!=2)fail("Touching cycles or shared region boundaries are unsupported. Use independent simple closed regions.");
+            }
+            std::vector<std::size_t> entities;for(int index:component)entities.push_back(edges[index].entity);append(entities);
+        }
+        for(std::size_t i=0;i<sketch.entities.size();++i)if(sketch.entities[i].kind!=EntityKind::Line)append({i});
         // Adjacent, overlapping, or nested regions need region/inner-wire
         // semantics. Reject them explicitly until that workflow is designed.
         for (std::size_t first = 0; first < result.size(); ++first) {
@@ -489,6 +551,7 @@ Sketch selectContour(const Sketch& sketch, const std::vector<std::string>& entit
         }
         Sketch result;
         result.plane = sketch.plane;
+        result.attachment = sketch.attachment;
         for (std::size_t index = 0; index < sketch.entities.size(); ++index) {
             const auto& entity = sketch.entities[index];
             const auto id = entity.id.empty() ? "entity-" + std::to_string(index + 1) : entity.id;
@@ -555,7 +618,7 @@ TopoDS_Shape makeCut(const TopoDS_Shape& base, const Sketch& sketch, double dept
         const auto privateBase = BRepBuilderAPI_Copy(base, Standard_True, Standard_False).Shape();
         requireSolid(privateBase, "An extruded cut requires one valid existing solid.");
         positiveLength(depth, "Cut depth");
-        const double length = throughAll ? throughLength(privateBase, sketch.plane, direction) : depth;
+        const double length = throughAll ? throughLength(privateBase, sketch, direction) : depth;
         const auto tool = prism(sketch, length, direction);
         const double beforeVolume = volume(privateBase);
         TopTools_ListOfShape arguments, tools;

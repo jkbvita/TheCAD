@@ -1,6 +1,11 @@
 #include "ui/MainWindow.h"
 #include "ui/CadViewport.h"
 #include <Graphic3d_Camera.hxx>
+#include <QComboBox>
+#include <QDialogButtonBox>
+#include <QPushButton>
+#include <TopExp.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
 #include <QAction>
 #include <QApplication>
 #include <QDir>
@@ -74,6 +79,47 @@ private:
         QApplication::processEvents();
     }
 private slots:
+    void planarFaceFirstAndSketchFirst()
+    {
+        QTemporaryDir temporary;
+        auto document=document::PartDocument::createEmpty();modeling::Sketch profile;
+        profile.entities={{modeling::EntityKind::Rectangle,{-20,-15},{20,15},1,"rectangle"}};
+        const auto source=document.addSketch(profile);document.addExtrude(source,{"rectangle"},20,modeling::Direction::Positive);
+        const auto path=temporary.filePath("block.thepart");document.save(path);
+        for(bool sketchFirst:{false,true}) {
+            PlaneTestWindow window;window.path=path;window.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&window));
+            command(window,"actionOpen");auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());
+            TopTools_IndexedMapOfShape faces;TopExp::MapShapes(document.shape(),TopAbs_FACE,faces);
+            int selected=0;modeling::Sketch support;
+            for(int i=1;i<=faces.Extent();++i) {
+                auto candidate=document.sketchOnFace(i);const auto normal=modeling::sketchAxes(candidate).Direction();
+                if((!sketchFirst && normal.Z()>0.99)||(sketchFirst && normal.X()>0.99)){selected=i;support=candidate;break;}
+            }
+            QVERIFY(selected>0);
+            if(sketchFirst)command(window,"actionCreateSketch");
+            const auto axes=modeling::sketchAxes(support);
+            viewport->m_view->SetAt(axes.Location().X(),axes.Location().Y(),axes.Location().Z());
+            viewport->m_view->SetProj(axes.Direction().X(),axes.Direction().Y(),axes.Direction().Z());
+            viewport->m_view->SetUp(axes.YDirection().X(),axes.YDirection().Y(),axes.YDirection().Z());viewport->m_view->Camera()->SetScale(90);
+            viewport->m_view->Redraw();const auto pixel=project(viewport,axes.Location());
+            QCOMPARE(viewport->faceAt(pixel),selected);
+            QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,pixel);
+            if(!sketchFirst)command(window,"actionCreateSketch");
+            QVERIFY(viewport->m_sketchEditing);QVERIFY(viewport->m_sketch->attachment);
+            QCOMPARE(viewport->m_sketch->attachment->faceIndex,selected);
+            QVERIFY(viewport->m_view->Camera()->Direction().Dot(axes.Direction())< -0.999);
+            const auto origin=viewport->screenPoint({0,0});const auto local=viewport->sketchPosition(origin);
+            QVERIFY(local && std::abs(local->x)<0.2 && std::abs(local->y)<0.2);
+            for(const auto& axis:viewport->m_globalAxes)QVERIFY(axis.IsNull());
+            command(window,"actionRectangle");
+            QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,project(viewport,modeling::sketchPoint(support,{-4,-3})));
+            QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,project(viewport,modeling::sketchPoint(support,{4,3})));
+            command(window,"actionExtrude");auto* contours=window.findChild<QComboBox*>("operationContour");QVERIFY(contours && contours->count()==1);contours->setCurrentIndex(0);
+            auto* buttons=window.findChild<QDialogButtonBox*>("operationButtons");QVERIFY(buttons && buttons->button(QDialogButtonBox::Ok)->isEnabled());
+            QTest::mouseClick(buttons->button(QDialogButtonBox::Ok),Qt::LeftButton);QCOMPARE(window.document().features().size(),std::size_t(4));
+            QVERIFY(window.errors.isEmpty());window.setWindowModified(false);QVERIFY(window.close());
+        }
+    }
     void graphicalSelectionHoverOrbitCancelAndPersistence()
     {
         QTemporaryDir temporary;
@@ -117,7 +163,7 @@ private slots:
             QApplication::sendEvent(viewport, &hover);
             QCOMPARE(viewport->m_hoveredPlane, std::optional<modeling::SketchPlane>(plane));
             const auto index = static_cast<std::size_t>(plane);
-            QVERIFY(std::abs(viewport->m_referencePlanes[index]->Transparency() - 0.5) < 1e-6);
+            QVERIFY(std::abs(viewport->m_referencePlanes[index]->Transparency() - 0.45) < 1e-6);
             QEvent leave(QEvent::Leave);
             QApplication::sendEvent(viewport, &leave);
             QVERIFY(!viewport->m_hoveredPlane);
@@ -148,7 +194,7 @@ private slots:
         QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, *selectedPixel);
         QCOMPARE(window.document().features().size(), std::size_t(3));
         QCOMPARE(viewport->m_selectedPlane, std::optional<modeling::SketchPlane>(modeling::SketchPlane::XY));
-        QVERIFY(std::abs(viewport->m_referencePlanes[0]->Transparency()-0.4) < 1e-6);
+        QVERIFY(std::abs(viewport->m_referencePlanes[0]->Transparency()-0.35) < 1e-6);
         command(window, "actionCreateSketch");
         QVERIFY(viewport->m_sketchEditing);
         QCOMPARE(window.document().features().size(), std::size_t(4));

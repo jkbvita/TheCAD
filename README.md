@@ -18,7 +18,9 @@ The finite reference graphics do not limit the infinite sketching plane. See the
 
 ## Sketching and modeling
 
-- Empty parts and editable origin-plane sketches on XY, XZ, and YZ.
+- Empty parts, origin-plane sketches and sketches on selected planar solid faces.
+- Distinct translucent reference planes and model-space global axes.
+- Closed-region recognition alongside dangling open lines.
 - Antialiased continuous lines, exact origin/endpoint snapping and always-visible endpoint markers.
 - Select-mode endpoint dragging, transactional joining and connected-geometry updates.
 - Rectangles made of four connected edges, and circles with snappable centers.
@@ -41,6 +43,10 @@ The short-term goal is to reproduce the fundamental SolidWorks modeling workflow
 as faithfully as possible before developing alternatives; redesigns require
 individual approval. This milestone improves fundamental sketch interactions,
 relations, the familiar desktop layout and independent Windows deployment.
+
+See [face sketching and contour checks](docs/verification/reference-faces-contours.md),
+the [attachment strategy](docs/decisions/0008-reference-face-attachments.md), and
+the [Smart Dimension proposal](docs/requirements/smart-dimension-proposal.md).
 
 See [Windows build, run, and modeling tutorial](docs/build-windows.md).
 With dependencies installed, run from the repository root:
@@ -119,7 +125,7 @@ docs/decisions/    Approval records and unresolved decisions
 - [Native document structure and legacy compatibility](docs/file-formats.md)
 
 `.theasmb` and `.thedrw` are reserved names. Assemblies, drawings, a general-purpose constraint
-solver, automatic dimensioning, face attachment, and permanent topology naming
+solver, automatic dimensioning, resilient face reattachment, and permanent topology naming
 are outside this milestone. Independent simple closed contours are supported;
 nested, touching, or intersecting contours are rejected clearly.
 

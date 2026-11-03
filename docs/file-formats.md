@@ -5,7 +5,7 @@ permanent extensions for the parametric modeling milestone:
 
 | Extension | Document kind | Current support |
 | --- | --- | --- |
-| `.thepart` | Part | Version 3 parametric parts with sketch relations; versions 1/2 import |
+| `.thepart` | Part | Versions 3/4 parametric parts; versions 1/2 import |
 | `.theasmb` | Assembly | Reserved; no assembly implementation |
 | `.thedrw` | Technical drawing | Reserved; no drawing implementation |
 
@@ -23,7 +23,7 @@ strategy, or topological naming scheme.
 A `.thepart` is a UTF-8 JSON object with these root fields:
 
 - `format`: exactly `TheCAD.Part`.
-- `version`: exactly `3` for current writers.
+- `version`: `3` for origin-only parts; `4` when a face attachment is present.
 - `units`: exactly `mm`.
 - `features`: ordered array of feature records.
 - `resultFeature`: the ID of the last solid-producing feature, or an empty string
@@ -158,8 +158,9 @@ Sketches have no dependencies in this origin-plane milestone. An extrusion's
 dependencies are its source sketch followed by the prior solid feature when one
 exists. A cut's dependencies are its source sketch followed by the prior body.
 The reader validates those exact backward references and feature order. There is
-no suppression, rollback UI, reordering, face attachment, or general dependency
-solver. Future planar-face support and permanent topology naming need separately
+no suppression, rollback UI, reordering, or general dependency
+solver. Version 4 adds conservative planar-face support; resilient attachment tracking
+and permanent topology naming need separately
 approved semantics; neither is encoded implicitly in the current origin planes.
 
 Editing a sketch or feature recomputes a candidate history from its parameters.
@@ -204,3 +205,18 @@ guides, antialiasing data or drag previews are serialized. The schema remains 3.
 An active-sketch feature draft is transient; Confirm persists the supported
 sketch changes and feature together, while Cancel preserves the ongoing sketch
 edit. Saving a resumed sketch follows the normal sketch-finish validation path.
+
+## Version 4 face attachment
+
+Version 4 retains version 3 fields. A face-supported sketch additionally stores
+an attachment object with source (earlier solid feature ID), face (one-based OCCT
+face map index), signature (SHA-256 of its untriangulated source body BRep) and
+frame (nine numbers: origin XYZ, unit outward normal XYZ, unit X direction XYZ).
+Normal and X must be perpendicular; Y is derived. The legacy plane field is
+retained for structural compatibility but the attachment frame governs geometry.
+The sketch dependencies include source. Readers validate support and frame before
+using the reference. Origin-plane sketches omit attachment.
+
+See [the provisional reference strategy](decisions/0008-reference-face-attachments.md).
+Changed support causes a clear failure, never a guessed reattachment. Version 4
+files require this reader; older readers reject their unsupported version safely.

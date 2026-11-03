@@ -67,6 +67,11 @@ if(BUILD_TESTING)
     target_link_libraries(thecad_document_tests PRIVATE thecad_document)
     add_test(NAME document.part COMMAND thecad_document_tests)
 
+    add_executable(thecad_reference_face_tests tests/ReferenceFaceContourTests.cpp)
+    set_target_properties(thecad_reference_face_tests PROPERTIES AUTOMOC OFF)
+    target_link_libraries(thecad_reference_face_tests PRIVATE thecad_document)
+    add_test(NAME modeling.reference-faces-contours COMMAND thecad_reference_face_tests)
+
     if(THECAD_GUI_TESTS)
         find_package(Qt6 REQUIRED COMPONENTS Test)
         add_executable(thecad_viewport_tests tests/CadViewportTests.cpp)

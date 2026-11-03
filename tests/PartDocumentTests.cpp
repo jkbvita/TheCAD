@@ -264,7 +264,7 @@ int main(int argc, char* argv[])
             write(invalid, QJsonDocument(root).toJson());
             rejected([&] { (void)PartDocument::load(invalid); });
         };
-        auto bad = goodRoot; bad["version"] = 4; rejectRoot(bad);
+        auto bad = goodRoot; bad["version"] = 99; rejectRoot(bad);
         bad = goodRoot; bad["version"] = 2.5; rejectRoot(bad);
         bad = goodRoot; bad["format"] = "TheCAD.Assembly"; rejectRoot(bad);
         bad = goodRoot; bad["units"] = "inch"; rejectRoot(bad);

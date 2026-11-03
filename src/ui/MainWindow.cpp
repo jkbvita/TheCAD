@@ -507,6 +507,17 @@ MainWindow::MainWindow(QWidget* parent)
     });
     connect(m_viewport, &CadViewport::sketchRegionClicked, this, [this](modeling::Point2 point) { operationRegionClicked(point); });
     connect(m_viewport, &CadViewport::referencePlaneSelected, this, [this](modeling::SketchPlane plane) { referencePlaneSelected(plane); });
+    connect(m_viewport,&CadViewport::solidFaceSelected,this,[this](int index){
+        if(m_editSketch || m_operation)return;
+        m_selectedFace=0;m_selectedPlane.reset();m_selectedId.clear();
+        {const QSignalBlocker blocker(m_tree);m_tree->clearSelection();}
+        m_viewport->setSelectedReferencePlane({});updateActions();
+        if(index==0)return;
+        try {(void)m_document.sketchOnFace(index);}catch(const std::exception& error){m_selectedFace=0;reportError(QString::fromUtf8(error.what()));return;}
+        m_selectedPlane.reset();m_selectedFace=index;m_viewport->setSelectedReferencePlane({});
+        if(m_selectingPlane)createSketchOnFace(index);
+        else statusBar()->showMessage("Planar face selected. Click Sketch to create an attached sketch.");
+    });
     connect(m_viewport, &CadViewport::planeSelectionCanceled, this, [this] { planeSelectionCanceled(); });
 
     auto* cancelFeature = new QAction("Cancel feature", this);
@@ -715,6 +726,7 @@ bool MainWindow::replaceDocument(document::PartDocument candidate, const QString
     m_selectedId.clear();
     m_document = std::move(candidate);
     m_mode = WorkspaceMode::Part;
+    m_selectedFace=0;
     m_path = path;
     updateDocumentUi();
     m_viewport->showReferencePlanes(m_document.features().empty());
@@ -751,6 +763,7 @@ void MainWindow::selectFeature(const std::string& id)
 
 void MainWindow::selectionChanged()
 {
+    m_selectedFace=0;
     const auto* item = m_tree->currentItem();
     const QString selection = item ? item->data(0, Qt::UserRole).toString() : QString{};
     if (!m_editSketch && !m_operation && selection.startsWith("origin:")) {
@@ -872,6 +885,7 @@ void MainWindow::updateActions()
 void MainWindow::createSketch()
 {
     if (m_editSketch || m_operation || m_selectingPlane) return;
+    if(m_selectedFace) {createSketchOnFace(m_selectedFace);return;}
     if (m_selectedPlane) {
         createSketchOnPlane(*m_selectedPlane);
         return;
@@ -880,7 +894,17 @@ void MainWindow::createSketch()
     m_mode = WorkspaceMode::SelectingPlane;
     m_viewport->beginPlaneSelection();
     updateActions();
-    statusBar()->showMessage("Select Front, Top or Right in the viewport. Drag to orbit; Esc cancels.");
+    statusBar()->showMessage("Select a planar solid face or Front, Top or Right in the viewport. Drag to orbit; Esc cancels.");
+}
+
+void MainWindow::createSketchOnFace(int index)
+{
+    try {
+        auto sketch=m_document.sketchOnFace(index);auto candidate=m_document;
+        const auto id=candidate.addSketch(sketch);m_selectingPlane=false;m_selectedFace=0;
+        if(!applyModel(std::move(candidate),id))return;
+        startSketchEditing(*selectedFeature());
+    }catch(const std::exception& error){reportError(QString::fromUtf8(error.what()));}
 }
 
 void MainWindow::createSketchOnPlane(modeling::SketchPlane plane)
@@ -899,6 +923,7 @@ void MainWindow::createSketchOnPlane(modeling::SketchPlane plane)
 
 void MainWindow::referencePlaneSelected(modeling::SketchPlane plane)
 {
+    m_selectedFace=0;
     if (m_editSketch || m_operation) return;
     if (m_selectingPlane) {
         createSketchOnPlane(plane);
@@ -1269,7 +1294,7 @@ void MainWindow::operationRegionClicked(modeling::Point2 point)
     int selected = -1;
     try {
         for (std::size_t i = 0; i < draft.availableContours.size(); ++i) {
-            if (!modeling::contourContains(draft.availableContours[i], found->sketch.plane, point)) continue;
+            if (!modeling::contourContains(draft.availableContours[i], found->sketch, point)) continue;
             if (selected >= 0) {
                 draft.status->setText("Several contours contain this point. Choose the intended contour in the list.");
                 return;

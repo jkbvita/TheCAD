@@ -60,6 +60,7 @@ private:
     void selectionChanged();
     void createSketch();
     void createSketchOnPlane(modeling::SketchPlane plane);
+    void createSketchOnFace(int index);
     void referencePlaneSelected(modeling::SketchPlane plane);
     void planeSelectionCanceled();
     void editSelectedFeature();
@@ -108,6 +109,7 @@ private:
     QPushButton* m_applyProperties = nullptr;
     std::optional<modeling::SketchPlane> m_selectedPlane;
     bool m_selectingPlane = false;
+    int m_selectedFace = 0;
     std::optional<modeling::Sketch> m_editSketch;
     std::string m_editSketchId;
     std::string m_selectedId;
