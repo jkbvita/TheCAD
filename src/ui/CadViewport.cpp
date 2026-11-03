@@ -9,6 +9,8 @@
 #include <Aspect_GradientFillMethod.hxx>
 #include <OpenGl_GraphicDriver.hxx>
 #include <Graphic3d_Camera.hxx>
+#include <Graphic3d_RenderingParams.hxx>
+#include <Graphic3d_TypeOfLimit.hxx>
 #include <Graphic3d_ZLayerId.hxx>
 #include <gp_Vec.hxx>
 #include <BRepBndLib.hxx>
@@ -17,6 +19,7 @@
 #include <Prs3d_LineAspect.hxx>
 #include <TCollection_ExtendedString.hxx>
 #include <QApplication>
+#include <QLineF>
 #include <Prs3d_Drawer.hxx>
 #include <Quantity_Color.hxx>
 #include <Standard_Failure.hxx>
@@ -32,6 +35,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <set>
 
 namespace thecad::ui {
 
@@ -85,6 +89,11 @@ void CadViewport::initialize()
         m_view = m_viewer->CreateView();
         Handle(WNT_Window) window = new WNT_Window(reinterpret_cast<Aspect_Handle>(winId()));
         m_view->SetWindow(window);
+        const int maximumSamples = driver->InquireLimit(Graphic3d_TypeOfLimit_MaxMsaa);
+        int samples = 0;
+        for (int candidate = 2; candidate <= std::min(4, maximumSamples); candidate *= 2) samples = candidate;
+        m_view->ChangeRenderingParams().NbMsaaSamples = samples;
+        m_view->ChangeRenderingParams().IsAntialiasingEnabled = Standard_True;
         if (!window->IsMapped()) {
             window->Map();
         }
@@ -124,6 +133,8 @@ void CadViewport::releaseViewer()
     for (auto& axis : m_sketchAxes) { axis.Nullify(); }
     m_sketchOrigin.Nullify();
     m_pointPresentations.clear();
+    m_interactionLabel.Nullify();
+    m_inferenceGuides.clear();
     m_selectedEntityPresentation.Nullify();
     m_previewPresentation.Nullify();
     m_sketchPresentation.Nullify();
@@ -379,6 +390,7 @@ void CadViewport::updateSketchAxes()
 }
 void CadViewport::beginSketch(const modeling::Sketch& sketch)
 {
+    cancelPointDrag(); resetSketchInference();
     m_selectingPlane = false;
     showReferencePlanes(false);
     clearPreview();
@@ -398,6 +410,7 @@ void CadViewport::beginSketch(const modeling::Sketch& sketch)
 
 void CadViewport::endSketch()
 {
+    cancelPointDrag(); resetSketchInference();
     m_sketchEditing = false;
     updateSketchAxes();
     m_sketchTool.reset();
@@ -414,9 +427,12 @@ void CadViewport::endSketch()
 
 void CadViewport::beginContourSelection(const modeling::Sketch& sketch)
 {
+    cancelPointDrag();resetSketchInference();
+    m_sketchTool.reset();m_firstPoint.reset();m_firstReference.reset();
     showReferencePlanes(false);
     m_sketchEditing = false;
     m_regionSelecting = true;
+    updateSketchAxes();
     m_firstPoint.reset();
     setSketch(sketch);
     orientSketch();
@@ -424,6 +440,7 @@ void CadViewport::beginContourSelection(const modeling::Sketch& sketch)
 
 void CadViewport::endContourSelection()
 {
+    m_navigation=Navigation::None;m_navigationButton=Qt::NoButton;m_regionClickCandidate=false;
     m_regionSelecting = false;
     m_sketch.reset();
     updateSketchPresentation();
@@ -455,6 +472,7 @@ void CadViewport::clearPreview()
 }
 void CadViewport::setSketchTool(modeling::EntityKind kind)
 {
+    cancelPointDrag(); resetSketchInference();
     m_sketchTool = kind;
     m_firstPoint.reset();
     m_firstReference.reset();
@@ -464,6 +482,7 @@ void CadViewport::setSketchTool(modeling::EntityKind kind)
 
 void CadViewport::selectSketchTool()
 {
+    cancelPointDrag(); resetSketchInference();
     m_sketchTool.reset(); m_firstPoint.reset(); m_firstReference.reset();
     unsetCursor(); updateSketchPresentation();
 }
@@ -477,6 +496,7 @@ void CadViewport::selectSketchEntity(const QString& id)
 
 void CadViewport::setSketch(const modeling::Sketch& sketch)
 {
+    cancelPointDrag();
     m_sketch = sketch;
     // Numeric edits may move or remove the point where a continuous line resumes.
     if(m_firstReference) {
@@ -535,7 +555,9 @@ void CadViewport::updateSketchPresentation(const std::optional<modeling::SketchE
                 m_sketchPresentation = new AIS_Shape(shape);
                 m_sketchPresentation->SetZLayer(Graphic3d_ZLayerId_Topmost);
                 m_sketchPresentation->SetColor(Quantity_Color(0.10, 0.22, 0.60, Quantity_TOC_RGB));
-                m_sketchPresentation->SetWidth(3.0);
+                m_sketchPresentation->SetWidth(2.0 * devicePixelRatioF());
+                m_sketchPresentation->Attributes()->SetDeviationCoefficient(1e-5);
+                m_sketchPresentation->Attributes()->SetDeviationAngle(0.015);
                 m_context->Display(m_sketchPresentation, AIS_WireFrame, -1, Standard_False);
                 m_context->SetDisplayPriority(m_sketchPresentation, Graphic3d_DisplayPriority_Topmost);
             }
@@ -614,17 +636,47 @@ std::optional<std::string> CadViewport::entityAt(const QPointF& position) const
 modeling::Point2 CadViewport::drawingPoint(const QPointF& position, std::optional<modeling::SketchPointRef>& reference)
 {
     reference.reset();
-    if (const auto hit = pointAt(position)) {
-        // The circumference point defines radius, not a persistent center connection.
-        if (!(m_firstPoint && m_sketchTool == modeling::EntityKind::Circle)) {
-            reference=hit->reference; return hit->point;
-        }
+    const auto previous=m_inference;
+    m_inference={};
+    auto hit=pointAt(position);
+    if(previous.target && !(hit && hit->reference.role==modeling::PointRole::Origin)) {
+        const auto value=modeling::sketchPointValue(*m_sketch,*previous.target);
+        if(QLineF(position,screenPoint(value)).length()<=12.0) hit=SnapHit{*previous.target,value};
+    }
+    if(hit && !(m_firstPoint && m_sketchTool==modeling::EntityKind::Circle)) {
+        reference=hit->reference; m_inference.target=reference; m_inference.symbolPosition=hit->point;
+        m_hoveredPoint=reference; return hit->point;
     }
     auto point=sketchPosition(position).value_or(modeling::Point2{});
-    if (m_firstPoint && m_sketchTool == modeling::EntityKind::Line) {
-        const auto first=screenPoint(*m_firstPoint);
-        if (std::abs(position.y()-first.y())<=7.0) point.y=m_firstPoint->y;
-        else if (std::abs(position.x()-first.x())<=7.0) point.x=m_firstPoint->x;
+    if(m_firstPoint && m_sketchTool==modeling::EntityKind::Line) {
+        const auto firstPixel=screenPoint(*m_firstPoint);
+        const auto horizontal=screenPoint({point.x,m_firstPoint->y});
+        const auto vertical=screenPoint({m_firstPoint->x,point.y});
+        const auto inference=modeling::inferLineDirection(*m_firstPoint,point,
+            QLineF(position,horizontal).length(),QLineF(position,vertical).length(),QLineF(position,firstPixel).length(),previous.axis);
+        point=inference.point;m_inference.axis=inference.relation;
+        const double span=std::max(1.0,m_view->Camera()->Scale())*std::max(1.0,m_view->Camera()->Aspect())*2;
+        const auto guide=[&](modeling::Point2 anchor,bool horizontalGuide) {
+            if(horizontalGuide) m_inference.guides.push_back({{point.x-span,anchor.y},{point.x+span,anchor.y}});
+            else m_inference.guides.push_back({{anchor.x,point.y-span},{anchor.x,point.y+span}});
+        };
+        if(m_inference.axis) guide(*m_firstPoint,*m_inference.axis==modeling::RelationKind::Horizontal);
+        const auto align=[&](bool xCoordinate,const std::optional<modeling::SketchPointRef>& preferred) -> std::optional<modeling::SketchPointRef> {
+            double best=5.0; std::optional<modeling::SketchPointRef> result;
+            for(const auto& entry:modeling::sketchPoints(*m_sketch)) {
+                if(samePoint(entry.second,*m_firstPoint)) continue;
+                auto aligned=point;if(xCoordinate) aligned.x=entry.second.x;else aligned.y=entry.second.y;
+                const double distance=QLineF(position,screenPoint(aligned)).length();
+                if(preferred && sameReference(*preferred,entry.first) && distance<=9.0) return entry.first;
+                if(distance<best){best=distance;result=entry.first;}
+            }
+            return result;
+        };
+        if(m_inference.axis!=modeling::RelationKind::Vertical) m_inference.alignX=align(true,previous.alignX);
+        if(m_inference.axis!=modeling::RelationKind::Horizontal) m_inference.alignY=align(false,previous.alignY);
+        if(m_inference.alignX) { const auto anchor=modeling::sketchPointValue(*m_sketch,*m_inference.alignX); point.x=anchor.x;guide(anchor,false); }
+        if(m_inference.alignY) { const auto anchor=modeling::sketchPointValue(*m_sketch,*m_inference.alignY); point.y=anchor.y;guide(anchor,true); }
+        m_inference.symbolPosition={(m_firstPoint->x+point.x)/2,(m_firstPoint->y+point.y)/2};
     }
     return point;
 }
@@ -642,12 +694,15 @@ void CadViewport::updatePointPresentation()
             const bool origin=entry.first.role==modeling::PointRole::Origin;
             const bool hovered=m_hoveredPoint && sameReference(*m_hoveredPoint,entry.first);
             const bool selected=m_selectedPoint && sameReference(*m_selectedPoint,entry.first);
-            if(!origin && !hovered && !selected && entry.first.entityId!=m_selectedEntity) continue;
+            const bool lineEndpoint=std::any_of(m_sketch->entities.begin(),m_sketch->entities.end(),[&](const auto& entity) {
+                return entity.id==entry.first.entityId && entity.kind==modeling::EntityKind::Line;
+            });
+            if(!origin && !hovered && !selected && !lineEndpoint && entry.first.entityId!=m_selectedEntity) continue;
             Handle(AIS_Point) marker=new AIS_Point(new Geom_CartesianPoint(modeling::sketchPoint(m_sketch->plane,entry.second)));
-            const Quantity_Color color(hovered ? Quantity_NOC_ORANGE : selected ? Quantity_NOC_GREEN4 : origin ? Quantity_NOC_RED3 : Quantity_NOC_BLUE3);
+            const Quantity_Color color(selected ? Quantity_NOC_GREEN4 : hovered ? Quantity_NOC_ORANGE : origin ? Quantity_NOC_RED3 : Quantity_NOC_BLUE3);
             marker->SetZLayer(Graphic3d_ZLayerId_Topmost);
             marker->Attributes()->SetPointAspect(new Prs3d_PointAspect(origin ? Aspect_TOM_O_PLUS : Aspect_TOM_O_POINT,
-                color,(hovered||selected ? 5.0 : origin ? 3.5 : 3.0)*devicePixelRatioF()));
+                color,(selected ? 5.0 : hovered ? 4.5 : origin ? 3.5 : 2.5)*devicePixelRatioF()));
             marker->SetInfiniteState(Standard_True);
             m_context->Display(marker,0,-1,Standard_False);
             m_context->SetDisplayPriority(marker,Graphic3d_DisplayPriority_Topmost);
@@ -657,11 +712,108 @@ void CadViewport::updatePointPresentation()
             modeling::Sketch only; only.plane=m_sketch->plane; only.entities.push_back(entity);
             m_selectedEntityPresentation=new AIS_Shape(modeling::sketchShape(only));
             m_selectedEntityPresentation->SetZLayer(Graphic3d_ZLayerId_Topmost);
-            m_selectedEntityPresentation->SetColor(Quantity_NOC_GREEN4); m_selectedEntityPresentation->SetWidth(4.0);
+            m_selectedEntityPresentation->SetColor(Quantity_NOC_GREEN4); m_selectedEntityPresentation->SetWidth(2.5 * devicePixelRatioF());
+            m_selectedEntityPresentation->Attributes()->SetDeviationCoefficient(1e-5);
+            m_selectedEntityPresentation->Attributes()->SetDeviationAngle(0.015);
             m_context->Display(m_selectedEntityPresentation,AIS_WireFrame,-1,Standard_False);
         }
     }
     update();
+}
+
+void CadViewport::clearInteractionPresentation()
+{
+    if(isReady() && !m_interactionLabel.IsNull()) m_context->Remove(m_interactionLabel,Standard_False);
+    m_interactionLabel.Nullify();
+    if(isReady()) for(auto& guide:m_inferenceGuides) m_context->Remove(guide,Standard_False);
+    m_inferenceGuides.clear();update();
+}
+
+void CadViewport::resetSketchInference()
+{
+    m_inference={}; clearInteractionPresentation();
+}
+
+void CadViewport::updateInteractionPresentation()
+{
+    clearInteractionPresentation();
+    if(!isReady() || !m_sketch) return;
+    QString text;
+    modeling::Point2 point=m_inference.symbolPosition;
+    bool invalid=false;
+    if(m_pointDrag && m_pointDrag->moved) {
+        point=modeling::sketchPointValue(*m_sketch,m_pointDrag->reference);
+        if(!m_pointDrag->error.isEmpty()) {text="Cannot move";invalid=true;}
+        else if(m_pointDrag->target) {text="Coincident";point=modeling::sketchPointValue(*m_sketch,*m_pointDrag->target);}
+    } else if(m_sketchEditing && m_sketchTool && m_firstPoint) {
+        for(const auto& line:m_inference.guides) {
+            Handle(AIS_Shape) guide=new AIS_Shape(BRepBuilderAPI_MakeEdge(modeling::sketchPoint(m_sketch->plane,line.first),modeling::sketchPoint(m_sketch->plane,line.second)).Shape());
+            const Quantity_Color color(0.65,0.48,0.06,Quantity_TOC_RGB);
+            const Handle(Prs3d_LineAspect) aspect=new Prs3d_LineAspect(color,Aspect_TOL_DASH,devicePixelRatioF());
+            guide->Attributes()->SetWireAspect(aspect);guide->Attributes()->SetLineAspect(aspect);
+            guide->SetZLayer(Graphic3d_ZLayerId_Topmost);guide->SetInfiniteState(Standard_True);
+            m_context->Display(guide,AIS_WireFrame,-1,Standard_False);m_inferenceGuides.push_back(guide);
+        }
+        if(m_inference.target) text="Coincident";
+        else if(m_inference.axis==modeling::RelationKind::Horizontal) text="H";
+        else if(m_inference.axis==modeling::RelationKind::Vertical) text="V";
+    }
+    if(text.isEmpty()) return;
+    const auto labelPoint=sketchPosition(screenPoint(point)+QPointF(12,-16)).value_or(point);
+    m_interactionLabel=new AIS_TextLabel;
+    m_interactionLabel->SetText(TCollection_ExtendedString(text.toUtf8().constData(),Standard_True));
+    m_interactionLabel->SetPosition(modeling::sketchPoint(m_sketch->plane,labelPoint));
+    m_interactionLabel->SetHeight(12.0*devicePixelRatioF());
+    m_interactionLabel->SetColor(invalid ? Quantity_NOC_RED3 : Quantity_NOC_DARKGOLDENROD);
+    m_interactionLabel->SetZLayer(Graphic3d_ZLayerId_Topmost);
+    m_interactionLabel->SetInfiniteState(Standard_True);
+    m_context->Display(m_interactionLabel,0,-1,Standard_False); update();
+}
+
+void CadViewport::cancelPointDrag()
+{
+    if(!m_pointDrag) return;
+    m_sketch=m_pointDrag->original; m_pointDrag.reset();
+    if(QWidget::mouseGrabber()==this) releaseMouse();
+    m_hoveredPoint.reset(); clearInteractionPresentation(); updateSketchPresentation();
+}
+
+void CadViewport::updatePointDrag(const QPointF& position)
+{
+    if(!m_pointDrag || !m_sketch) return;
+    auto& drag=*m_pointDrag;
+    if(!drag.moved && (position-drag.pressPosition).manhattanLength()<QApplication::startDragDistance()) return;
+    drag.moved=true;
+    const auto raw=sketchPosition(position); if(!raw) return;
+    std::vector<modeling::ProjectedSketchPoint> targets;
+    const double dpr=devicePixelRatioF();
+    for(const auto& entry:drag.targets) {
+        const auto pixel=screenPoint(entry.second);
+        targets.push_back({entry.first,entry.second,pixel.x()*dpr,pixel.y()*dpr});
+    }
+    const auto target=modeling::nearestSketchPoint(targets,position.x()*dpr,position.y()*dpr,9.0*dpr);
+    drag.target=target ? std::optional<modeling::SketchPointRef>(target->reference) : std::nullopt;
+    m_hoveredPoint=drag.target; drag.error.clear();
+    try {
+        drag.candidate=modeling::moveSketchPoint(drag.original,drag.reference,*raw,drag.target);
+        m_sketch=*drag.candidate;
+    } catch(const std::exception& error) {
+        drag.error=QString::fromUtf8(error.what()); drag.candidate.reset(); m_sketch=drag.original;
+    } catch(const Standard_Failure& error) {
+        drag.error=QString::fromUtf8(error.GetMessageString()); drag.candidate.reset(); m_sketch=drag.original;
+    }
+    updateSketchPresentation(); updateInteractionPresentation();
+}
+
+void CadViewport::finishPointDrag()
+{
+    if(!m_pointDrag) return;
+    const auto drag=*m_pointDrag; m_pointDrag.reset();
+    if(QWidget::mouseGrabber()==this) releaseMouse();
+    clearInteractionPresentation();
+    if(drag.moved && drag.candidate) { m_sketch=*drag.candidate; emit sketchChanged(*m_sketch); }
+    else { m_sketch=drag.original; if(drag.moved && !drag.error.isEmpty()) emit sketchInteractionError(drag.error); }
+    updateSketchPresentation();
 }
 
 void CadViewport::commitDrawing(modeling::Point2 point, const std::optional<modeling::SketchPointRef>& reference)
@@ -722,6 +874,7 @@ void CadViewport::commitDrawing(modeling::Point2 point, const std::optional<mode
     if(entity.kind==modeling::EntityKind::Line) {
         m_firstPoint=point; m_firstReference=modeling::SketchPointRef{entity.id,modeling::PointRole::Second};
     } else { m_firstPoint.reset(); m_firstReference.reset(); }
+    resetSketchInference();
     emit sketchChanged(candidate);
     emit sketchEntityCreated(entity); // Compatibility notification; full sketchChanged owns insertion.
     updateSketchPresentation();
@@ -754,14 +907,13 @@ QPoint CadViewport::nativePosition(const QPointF& position) const
 
 void CadViewport::mousePressEvent(QMouseEvent* event)
 {
+    if(m_pointDrag) {event->accept();return;}
     if (!isReady() || m_navigation != Navigation::None) {
         return;
     }
     if (event->button() == Qt::LeftButton && m_regionSelecting) {
-        const auto point = sketchPosition(event->position());
-        if (point) { emit sketchRegionClicked(*point); }
-        event->accept();
-        return;
+        m_regionClickCandidate=true;
+        m_regionPressPosition=event->position();
     }
     if (event->button() == Qt::LeftButton && m_sketchEditing) {
         setFocus(Qt::MouseFocusReason);
@@ -779,6 +931,17 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
             emit sketchEntitySelected(QString::fromStdString(m_selectedEntity));
             m_selectedPoint = hit ? std::optional<modeling::SketchPointRef>(hit->reference) : std::nullopt;
             if (hit) { emit sketchPointSelected(QString::fromStdString(hit->reference.entityId), int(hit->reference.role)); }
+            if(hit && hit->reference.role!=modeling::PointRole::Origin && hit->reference.role!=modeling::PointRole::Center) {
+                const auto entity=std::find_if(m_sketch->entities.begin(),m_sketch->entities.end(),[&](const auto& e){return e.id==hit->reference.entityId;});
+                if(entity!=m_sketch->entities.end() && entity->kind==modeling::EntityKind::Line) {
+                    m_pointDrag=PointDrag{*m_sketch,hit->reference,event->position(),false,*m_sketch,{},{}};
+                    std::set<std::pair<std::string,int>> excluded;
+                    for(const auto& ref:modeling::coincidentSketchPoints(*m_sketch,hit->reference)) excluded.insert({ref.entityId,int(ref.role)});
+                    for(const auto& entry:modeling::sketchPoints(*m_sketch))
+                        if(!excluded.count({entry.first.entityId,int(entry.first.role)})) m_pointDrag->targets.push_back(entry);
+                    grabMouse();
+                }
+            }
             updatePointPresentation();
         }
         event->accept();
@@ -796,6 +959,8 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
         return;
     }
     setFocus(Qt::MouseFocusReason);
+    resetSketchInference();
+    updateSketchPresentation();
     m_navigationButton = event->button();
     m_previousPosition = nativePosition(event->position());
     setCursor(m_navigation == Navigation::Pan ? Qt::ClosedHandCursor : Qt::SizeAllCursor);
@@ -804,6 +969,7 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
 
 void CadViewport::mouseMoveEvent(QMouseEvent* event)
 {
+    if(m_pointDrag) { updatePointDrag(event->position()); event->accept(); return; }
     if (m_planesVisible && m_navigation == Navigation::None) {
         const auto hit = planeAt(event->position());
         const std::optional<modeling::SketchPlane> hovered = hit ? std::optional<modeling::SketchPlane>(hit->plane) : std::nullopt;
@@ -812,6 +978,8 @@ void CadViewport::mouseMoveEvent(QMouseEvent* event)
             updatePlaneStyles();
         }
     }
+    if(m_regionClickCandidate && (event->position()-m_regionPressPosition).manhattanLength()>QApplication::startDragDistance())
+        m_regionClickCandidate=false;
     if (m_planeClickCandidate
         && (event->position() - m_planePressPosition).manhattanLength() > QApplication::startDragDistance()) {
         m_planeClickCandidate = false;
@@ -827,6 +995,7 @@ void CadViewport::mouseMoveEvent(QMouseEvent* event)
             preview.first = *m_firstPoint; preview.second = point;
             preview.radius = std::hypot(point.x - m_firstPoint->x, point.y - m_firstPoint->y);
             updateSketchPresentation(preview);
+            updateInteractionPresentation();
         } else { updatePointPresentation(); }
         return;
     }
@@ -847,14 +1016,20 @@ void CadViewport::mouseMoveEvent(QMouseEvent* event)
 
 void CadViewport::mouseReleaseEvent(QMouseEvent* event)
 {
+    if(event->button()==Qt::LeftButton && m_pointDrag) { updatePointDrag(event->position()); finishPointDrag(); event->accept(); return; }
     if (event->button() == m_navigationButton) {
+        const bool regionClick=m_regionClickCandidate && event->button()==Qt::LeftButton
+            && (event->position()-m_regionPressPosition).manhattanLength()<=QApplication::startDragDistance();
+        m_regionClickCandidate=false;
         const bool click = m_planeClickCandidate && event->button() == Qt::LeftButton
             && (event->position() - m_planePressPosition).manhattanLength() <= QApplication::startDragDistance();
         m_navigation = Navigation::None;
         m_navigationButton = Qt::NoButton;
         m_planeClickCandidate = false;
         unsetCursor();
-        if (click) {
+        if(regionClick && m_regionSelecting) {
+            const auto point=sketchPosition(event->position());if(point) emit sketchRegionClicked(*point);
+        } else if (click) {
             const auto hit = planeAt(event->position());
             if (hit) {
                 setSelectedReferencePlane(hit->plane);
@@ -867,6 +1042,7 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* event)
 
 bool CadViewport::event(QEvent* event)
 {
+    if(event->type()==QEvent::Leave && !m_pointDrag) resetSketchInference();
     if (event->type() == QEvent::Leave && m_hoveredPoint) { m_hoveredPoint.reset(); updatePointPresentation(); }
     if (event->type() == QEvent::Leave && m_hoveredPlane) {
         m_hoveredPlane.reset();
@@ -877,9 +1053,10 @@ bool CadViewport::event(QEvent* event)
         update();
     }
     if (event->type() == QEvent::UngrabMouse || event->type() == QEvent::WindowDeactivate) {
+        cancelPointDrag();
         m_navigation = Navigation::None;
         m_navigationButton = Qt::NoButton;
-        m_planeClickCandidate = false;
+        m_planeClickCandidate = false;m_regionClickCandidate=false;
         unsetCursor();
     }
     return QWidget::event(event);
@@ -890,6 +1067,7 @@ void CadViewport::wheelEvent(QWheelEvent* event)
     if (!isReady()) {
         return;
     }
+    resetSketchInference();
     const double steps = !event->angleDelta().isNull()
         ? event->angleDelta().y() / 120.0 : event->pixelDelta().y() / 40.0;
     const double factor = std::pow(1.15, std::clamp(steps, -10.0, 10.0));

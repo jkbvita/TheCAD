@@ -1,4 +1,5 @@
 #include "modeling/Sketch.h"
+#include "modeling/SketchSnapping.h"
 #include "modeling/Box.h"
 
 #include <BRepBndLib.hxx>
@@ -119,6 +120,26 @@ int main()
         for (const auto plane : {SketchPlane::XY, SketchPlane::XZ, SketchPlane::YZ}) {
             checkPlane(plane);
         }
+        require(inferLineDirection({0,0},{50,0.1},2,300,300).relation==RelationKind::Horizontal,"Near-horizontal screen direction must infer horizontal");
+        require(inferLineDirection({0,0},{0.1,-50},300,2,300).relation==RelationKind::Vertical,"Negative vertical direction must infer vertical");
+        require(!inferLineDirection({0,0},{20,20},100,100,141).relation,"A diagonal must remain free");
+        require(!inferLineDirection({0,0},{1,0.2},4,19,20).relation,"Short diagonal lines must not be forced onto an axis");
+        Sketch separate{SketchPlane::XY, {
+            {EntityKind::Line,{-40,-10},{-20,0},1,"drag-a"},
+            {EntityKind::Line,{10,20},{35,35},1,"drag-b"}}};
+        const auto joined=moveSketchPoint(separate,{"drag-a",PointRole::Second},{10.1,20.1},SketchPointRef{"drag-b",PointRole::First});
+        require(joined.entities[0].second.x==10 && joined.entities[0].second.y==20,"Joining must use exact target coordinates");
+        require(joined.relations.size()==1 && joined.relations[0].kind==RelationKind::Coincident,"Joining creates a persistent coincident relation");
+        require(areSketchPointsCoincident(joined,{"drag-a",PointRole::Second},{"drag-b",PointRole::First}),"Stable point refs must stay connected");
+        const auto moved=moveSketchPoint(joined,{"drag-a",PointRole::Second},{-5,25});
+        require(moved.entities[1].first.x==-5 && moved.entities[1].first.y==25,"Moving a connected endpoint propagates its connection");
+        const auto pinned=moveSketchPoint(separate,{"drag-a",PointRole::Second},{0.1,0.1},SketchPointRef{});
+        require(pinned.entities[0].second.x==0 && pinned.entities[0].second.y==0,"Origin joining must be exact");
+        rejected([&]{moveSketchPoint(pinned,{"drag-a",PointRole::Second},{1,2});});
+        rejected([&]{moveSketchPoint(pinned,{}, {1,2});});
+        rejected([&]{moveSketchPoint(separate,{"missing",PointRole::Second},{1,2});});
+        rejected([&]{moveSketchPoint(constrainedRectangle(),{"a",PointRole::Second},{45,10});});
+        require(separate.entities[0].second.x==-20 && separate.relations.empty(),"Failed and successful point moves never mutate the source");
         // Exact persistent point equalities survive edits without a general solver.
         auto constrained = constrainedRectangle();
         validateSketchRelations(constrained);

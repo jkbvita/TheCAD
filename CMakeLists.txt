@@ -87,6 +87,11 @@ if(BUILD_TESTING)
             -o "${CMAKE_BINARY_DIR}/modeling-workflow-results.txt,txt")
         set_tests_properties(ui.modeling-workflow PROPERTIES TIMEOUT 120 LABELS "gui;modeling" RUN_SERIAL TRUE
             ENVIRONMENT "THECAD_TEST_ARTIFACT_DIR=${CMAKE_BINARY_DIR}/test-artifacts")
+        add_test(NAME ui.modeling-workflow.hidpi COMMAND thecad_workflow_tests
+            -o "${CMAKE_BINARY_DIR}/modeling-workflow-hidpi-results.txt,txt")
+        set_tests_properties(ui.modeling-workflow.hidpi PROPERTIES TIMEOUT 120
+            LABELS "gui;modeling;hidpi" RUN_SERIAL TRUE
+            ENVIRONMENT "QT_SCALE_FACTOR=1.5;THECAD_TEST_ARTIFACT_DIR=${CMAKE_BINARY_DIR}/test-artifacts/hidpi")
         add_executable(thecad_plane_workflow_tests tests/GraphicalPlaneWorkflowTests.cpp)
         target_link_libraries(thecad_plane_workflow_tests PRIVATE thecad_ui Qt6::Test)
         add_test(NAME ui.graphical-planes COMMAND thecad_plane_workflow_tests
@@ -105,8 +110,10 @@ if(BUILD_TESTING)
             -o "${CMAKE_BINARY_DIR}/sketch-interaction-hidpi-results.txt,txt")
         set_tests_properties(ui.sketch-interaction ui.sketch-interaction.hidpi PROPERTIES
             TIMEOUT 120 LABELS "gui;sketch;snapping" RUN_SERIAL TRUE)
+        set_tests_properties(ui.sketch-interaction PROPERTIES
+            ENVIRONMENT "THECAD_TEST_ARTIFACT_DIR=${CMAKE_BINARY_DIR}/test-artifacts")
         set_tests_properties(ui.sketch-interaction.hidpi PROPERTIES
-            ENVIRONMENT "QT_SCALE_FACTOR=1.5" LABELS "gui;sketch;snapping;hidpi")
+            ENVIRONMENT "QT_SCALE_FACTOR=1.5;THECAD_TEST_ARTIFACT_DIR=${CMAKE_BINARY_DIR}/test-artifacts/hidpi" LABELS "gui;sketch;snapping;hidpi")
         # Desktop tests must not race for focus or native windows.
         set_tests_properties(ui.viewport ui.viewport.hidpi ui.documents PROPERTIES RUN_SERIAL TRUE)
         set_tests_properties(ui.viewport PROPERTIES

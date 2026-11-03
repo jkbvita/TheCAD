@@ -1,4 +1,5 @@
 #include "ui/MainWindow.h"
+#include <QStackedWidget>
 #include "ui/CadViewport.h"
 #include "document/PartDocument.h"
 
@@ -355,6 +356,22 @@ private slots:
         QVERIFY(!window.findChild<QAction*>("actionFinishSketch")->isEnabled());
     }
 
+    void canceledFeatureRestoresCleanSketchEdit() {
+        QTemporaryDir directory;auto part=document::PartDocument::createEmpty();
+        modeling::Sketch sketch;sketch.entities.push_back({modeling::EntityKind::Rectangle,{0,0},{20,15},1});part.addSketch(sketch);
+        const auto path=directory.filePath("clean-sketch.thepart");part.save(path);
+        TestWindow window;window.openPath=path;window.trigger("actionOpen");QVERIFY(!window.isWindowModified());
+        auto* tree=window.findChild<QTreeWidget*>("featureTree");tree->setCurrentItem(tree->topLevelItem(0)->child(0));
+        window.trigger("actionEditFeature");QVERIFY(!window.isWindowModified());
+        window.trigger("actionExtrude");QVERIFY(window.findChild<QWidget*>("operationPanel"));
+        window.trigger("actionCancelFeature");QVERIFY(window.findChild<QAction*>("actionFinishSketch")->isEnabled());
+        QVERIFY(!window.isWindowModified());QCOMPARE(window.document().features().size(),std::size_t(1));
+        window.trigger("actionExtrude");auto* panel=window.findChild<QWidget*>("operationPanel");
+        panel->findChild<QComboBox*>("operationContour")->setCurrentIndex(0);
+        panel->findChild<QDialogButtonBox*>("operationButtons")->button(QDialogButtonBox::Ok)->click();
+        QCOMPARE(window.document().features().size(),std::size_t(2));QVERIFY(window.isWindowModified());
+        QVERIFY(!window.findChild<QAction*>("actionFinishSketch")->isEnabled());QVERIFY(window.errors.isEmpty());
+    }
     void operationRequiresExplicitSketchAndContour()
     {
         QTemporaryDir directory;
@@ -377,9 +394,11 @@ private slots:
         tree->setCurrentItem(tree->topLevelItem(0));
         QVERIFY(window.findChild<QAction*>("actionExtrude")->isEnabled());
         window.trigger("actionExtrude");
-        auto* dialog = window.findChild<QDialog*>("operationDialog");
+        auto* dialog = window.findChild<QWidget*>("operationPanel");
         QVERIFY(dialog);
-        QVERIFY(dialog->isVisible());
+        QCOMPARE(window.findChild<QStackedWidget*>("managerStack")->currentWidget(), dialog);
+        QVERIFY(!dialog->isWindow());
+        QVERIFY(window.findChild<QDialog*>("operationDialog") == nullptr);
         auto* source = dialog->findChild<QComboBox*>("operationSketch");
         auto* contours = dialog->findChild<QComboBox*>("operationContour");
         auto* buttons = dialog->findChild<QDialogButtonBox*>("operationButtons");
@@ -396,7 +415,7 @@ private slots:
         QCOMPARE(contours->count(), 0);
         QVERIFY(!buttons->button(QDialogButtonBox::Ok)->isEnabled());
         QVERIFY2(status->text().contains("no valid closed contour"), qPrintable(status->text()));
-        dialog->reject();
+        QTest::mouseClick(dialog->findChild<QDialogButtonBox*>("operationButtons")->button(QDialogButtonBox::Cancel), Qt::LeftButton);
         QCOMPARE(window.document().features().size(), std::size_t(2));
         QVERIFY(window.document().shape().IsNull());
         QVERIFY(!window.isWindowModified());

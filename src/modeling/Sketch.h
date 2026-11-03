@@ -7,6 +7,7 @@
 #include <gp_Pnt.hxx>
 #include <vector>
 #include <utility>
+#include <optional>
 
 namespace thecad::modeling {
 
@@ -44,6 +45,12 @@ void validateSketchRelations(const Sketch& sketch);
 // Coordinate equalities are propagated transactionally; the origin stays fixed.
 // This limited equality system is not a general geometric constraint solver.
 Sketch editSketchEntity(const Sketch& sketch, const SketchEntity& replacement);
+std::vector<SketchPointRef> coincidentSketchPoints(const Sketch& sketch, const SketchPointRef& reference);
+bool areSketchPointsCoincident(const Sketch& sketch, const SketchPointRef& first, const SketchPointRef& second);
+// Move one point through the existing equality groups; optionally join a stable
+// target reference. Returns a validated candidate and never mutates the source.
+Sketch moveSketchPoint(const Sketch& sketch, const SketchPointRef& reference, Point2 position,
+                      const std::optional<SketchPointRef>& target = {});
 Sketch removeSketchEntity(const Sketch& sketch, const std::string& entityId);
 
 enum class Direction { Positive, Negative };

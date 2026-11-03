@@ -16,6 +16,8 @@ class QAction;
 class QGroupBox;
 class QDoubleSpinBox;
 class QPushButton;
+class QDockWidget;
+class QStackedWidget;
 
 namespace thecad::ui {
 
@@ -68,16 +70,21 @@ private:
     void deleteSketchEntity();
     void extrude(bool cut);
     void startOperation(document::Feature feature, bool editing);
+    void finishOperation(bool accepted);
     void operationSketchChanged();
     void updateOperationPreview();
     void operationRegionClicked(modeling::Point2 point);
     struct OperationDraft;
 
+    enum class WorkspaceMode { Part, SelectingPlane, EditingSketch, FeatureDraft };
+    WorkspaceMode m_mode = WorkspaceMode::Part;
     document::PartDocument m_document;
     QString m_path;
     CadViewport* m_viewport = nullptr;
     QLabel* m_dimensions = nullptr;
     QTreeWidget* m_tree = nullptr;
+    QDockWidget* m_historyDock = nullptr;
+    QStackedWidget* m_managerStack = nullptr;
     QListWidget* m_entities = nullptr;
     QTabWidget* m_tabs = nullptr;
     QAction* m_createSketch = nullptr;

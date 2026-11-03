@@ -2,6 +2,12 @@
 #include "modeling/Box.h"
 #include <Graphic3d_Camera.hxx>
 #include <Graphic3d_ZLayerId.hxx>
+#include <Graphic3d_RenderingParams.hxx>
+#include <Graphic3d_GraphicDriver.hxx>
+#include <Graphic3d_TypeOfLimit.hxx>
+#include <QDir>
+#include <QImage>
+#include <set>
 #include "document/PartDocument.h"
 #include "modeling/SketchSnapping.h"
 #include <BRepCheck_Analyzer.hxx>
@@ -36,6 +42,133 @@ private slots:
         QVERIFY(QTest::qWaitForWindowExposed(host.get())); QTRY_VERIFY(viewport->isReady());
     }
     void init() { viewport->beginSketch({}); QApplication::processEvents(); }
+    void renderingQualityBeforeAndAfter() {
+        const auto expected=viewport->m_view->RenderingParams();
+        if (viewport->m_viewer->Driver()->InquireLimit(Graphic3d_TypeOfLimit_MaxMsaa) >= 4)
+            QCOMPARE(expected.NbMsaaSamples,4);
+        modeling::Sketch sketch; sketch.entities={
+            {modeling::EntityKind::Line,{-45,-12},{40,24},1,"diagonal"},
+            {modeling::EntityKind::Circle,{18,-25},{},12,"circle"}};
+        viewport->setSketch(sketch);
+        const QString directory=qEnvironmentVariable("THECAD_TEST_ARTIFACT_DIR",QDir::currentPath()+"/test-artifacts")+"/rendering";
+        QVERIFY(QDir().mkpath(directory));
+        for (const double zoom : {0.75,1.0,3.0}) {
+            viewport->m_view->Camera()->SetScale(150.0/zoom);
+            const QString stem=directory+QString("/sketch-%1").arg(zoom);
+            viewport->m_view->ChangeRenderingParams().NbMsaaSamples=0;
+            viewport->m_view->ChangeRenderingParams().IsAntialiasingEnabled=false;
+            viewport->m_sketchPresentation->SetWidth(3.0);
+            viewport->m_sketchPresentation->Attributes()->SetDeviationCoefficient(0.001);
+            viewport->m_sketchPresentation->Attributes()->SetDeviationAngle(0.5);
+            viewport->m_context->Redisplay(viewport->m_sketchPresentation,false);
+            QVERIFY(viewport->m_view->Dump((stem+"-before.png").toUtf8().constData()));
+            viewport->m_view->ChangeRenderingParams()=expected;
+            viewport->m_sketchPresentation->SetWidth(2.0*viewport->devicePixelRatioF());
+            viewport->m_sketchPresentation->Attributes()->SetDeviationCoefficient(1e-5);
+            viewport->m_sketchPresentation->Attributes()->SetDeviationAngle(0.015);
+            viewport->m_context->Redisplay(viewport->m_sketchPresentation,false);
+            QVERIFY(viewport->m_view->Dump((stem+"-after.png").toUtf8().constData()));
+            const QImage before(stem+"-before.png"),after(stem+"-after.png");
+            QVERIFY(!before.isNull() && !after.isNull()); QCOMPARE(before.size(),after.size());
+            QVERIFY(before!=after);
+            QCOMPARE(viewport->m_sketch->entities[0].first.x,-45.0);
+            QCOMPARE(viewport->m_sketch->entities[1].radius,12.0);
+        }
+    }
+    void endpointsVisibleDragJoinAndPropagate() {
+        modeling::Sketch sketch{modeling::SketchPlane::XY,{
+            {modeling::EntityKind::Line,{-40,-10},{-20,0},1,"drag-a"},
+            {modeling::EntityKind::Line,{10,20},{35,35},1,"drag-b"}}};
+        viewport->beginSketch(sketch); viewport->selectSketchTool();
+        QCOMPARE(viewport->m_pointPresentations.size(),std::size_t(5));
+        QSignalSpy changes(viewport,&CadViewport::sketchChanged);
+        const auto direction=viewport->m_view->Camera()->Direction();
+        const auto drag=[&](modeling::Point2 from,modeling::Point2 to,QPoint offset={}) {
+            QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,pixel(from));
+            const auto p=pixel(to)+offset;
+            QMouseEvent event(QEvent::MouseMove,p,viewport->mapToGlobal(p),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);
+            QApplication::sendEvent(viewport,&event);
+            QVERIFY(viewport->m_pointDrag); QVERIFY(viewport->m_pointDrag->candidate);
+            QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,p);
+        };
+        drag({-20,0},{10,20},{3,2});
+        QCOMPARE(changes.count(),1); QVERIFY(!viewport->m_pointDrag);
+        QCOMPARE(viewport->m_sketch->entities[0].second.x,10.0);
+        QCOMPARE(viewport->m_sketch->entities[0].second.y,20.0);
+        QVERIFY(modeling::areSketchPointsCoincident(*viewport->m_sketch,{"drag-a",modeling::PointRole::Second},{"drag-b",modeling::PointRole::First}));
+        drag({10,20},{-5,25});
+        QCOMPARE(changes.count(),2);
+        const auto& a=viewport->m_sketch->entities[0];const auto& b=viewport->m_sketch->entities[1];
+        QCOMPARE(a.second.x,b.first.x);QCOMPARE(a.second.y,b.first.y);
+        QVERIFY(direction.Angle(viewport->m_view->Camera()->Direction())<1e-10);
+        modeling::validateSketchRelations(*viewport->m_sketch);
+        auto part=document::PartDocument::createEmpty();part.addSketch(*viewport->m_sketch);
+        QTemporaryDir dir;const auto path=dir.filePath("dragged.thepart");part.save(path);
+        const auto restored=document::PartDocument::load(path).features()[0].sketch;
+        QVERIFY(modeling::areSketchPointsCoincident(restored,{"drag-a",modeling::PointRole::Second},{"drag-b",modeling::PointRole::First}));
+    }
+    void dragToOriginAndRejectOrCancelSafely() {
+        modeling::Sketch sketch{modeling::SketchPlane::XY,{{modeling::EntityKind::Line,{-40,-10},{-20,0},1,"drag"}}};
+        viewport->beginSketch(sketch);viewport->selectSketchTool();
+        QSignalSpy changes(viewport,&CadViewport::sketchChanged);
+        QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,pixel({-20,0}));
+        auto p=pixel({0,0})+QPoint(3,2);
+        QMouseEvent move(QEvent::MouseMove,p,viewport->mapToGlobal(p),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);
+        QApplication::sendEvent(viewport,&move);
+        QVERIFY(!viewport->m_interactionLabel.IsNull()); QCOMPARE(changes.count(),0);
+        QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,p);
+        QCOMPARE(changes.count(),1); QCOMPARE(viewport->m_sketch->entities[0].second.x,0.0);
+        QCOMPARE(viewport->m_sketch->entities[0].second.y,0.0);
+        QVERIFY(modeling::areSketchPointsCoincident(*viewport->m_sketch,{"drag",modeling::PointRole::Second},{}));
+        QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,pixel({0,0}));
+        QVERIFY(!viewport->m_pointDrag);QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,pixel({0,0}));
+        viewport->beginSketch(sketch);viewport->selectSketchTool();changes.clear();
+        QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,pixel({-20,0}));
+        p=pixel({10,25});QMouseEvent preview(QEvent::MouseMove,p,viewport->mapToGlobal(p),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);
+        QApplication::sendEvent(viewport,&preview);QVERIFY(viewport->m_pointDrag->moved);
+        QTest::keyClick(viewport,Qt::Key_Escape);
+        QVERIFY(!viewport->m_pointDrag);QCOMPARE(changes.count(),0);
+        QCOMPARE(viewport->m_sketch->entities[0].second.x,-20.0);
+        viewport->beginSketch({});viewport->setSketchTool(modeling::EntityKind::Rectangle);click({0,0});click({30,20});QTest::keyClick(viewport,Qt::Key_Escape);
+        const auto original=*viewport->m_sketch; const auto corner=original.entities[0].second;changes.clear();
+        QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,pixel(corner));
+        p=pixel({40,10});QMouseEvent bad(QEvent::MouseMove,p,viewport->mapToGlobal(p),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);
+        QApplication::sendEvent(viewport,&bad); QVERIFY(viewport->m_pointDrag); QVERIFY(!viewport->m_pointDrag->candidate);
+        QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,p);QCOMPARE(changes.count(),0);
+        QCOMPARE(viewport->m_sketch->entities[0].second.x,corner.x);QCOMPARE(viewport->m_sketch->entities[0].second.y,corner.y);
+        QCOMPARE(viewport->m_sketch->relations.size(),original.relations.size());
+    }
+    void axialInferenceAllPlanesAndDirections() {
+        for(const auto plane:{modeling::SketchPlane::XY,modeling::SketchPlane::XZ,modeling::SketchPlane::YZ}) {
+            for(const auto target:{modeling::Point2{50,20},modeling::Point2{-20,20},modeling::Point2{20,50},modeling::Point2{20,-20}}) {
+                modeling::Sketch sketch;sketch.plane=plane;viewport->beginSketch(sketch);viewport->setSketchTool(modeling::EntityKind::Line);
+                click({20,20}); const bool horizontal=target.y==20;
+                hover(target,horizontal?QPoint(0,3):QPoint(3,0));
+                QCOMPARE(viewport->m_inference.axis,horizontal?modeling::RelationKind::Horizontal:modeling::RelationKind::Vertical);
+                QVERIFY(!viewport->m_inferenceGuides.empty());QVERIFY(!viewport->m_interactionLabel.IsNull());
+                QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(0));
+                click(target,horizontal?QPoint(0,3):QPoint(3,0));
+                const auto& entity=viewport->m_sketch->entities[0];
+                if(horizontal) QCOMPARE(entity.first.y,entity.second.y);else QCOMPARE(entity.first.x,entity.second.x);
+                QCOMPARE(viewport->m_sketch->relations.size(),std::size_t(1));
+                QVERIFY(viewport->m_inferenceGuides.empty());modeling::validateSketchRelations(*viewport->m_sketch);
+            }
+        }
+    }
+    void inferenceHysteresisAlignmentAndFreeAngles() {
+        viewport->setSketchTool(modeling::EntityKind::Line);click({20,20});
+        hover({50,20},{0,5});QCOMPARE(viewport->m_inference.axis,modeling::RelationKind::Horizontal);
+        hover({50,20},{0,9});QCOMPARE(viewport->m_inference.axis,modeling::RelationKind::Horizontal);
+        hover({50,20},{0,16});QVERIFY(!viewport->m_inference.axis);
+        hover({50,47});QVERIFY(!viewport->m_inference.axis);QVERIFY(viewport->m_inferenceGuides.empty());
+        click({50,47});QVERIFY(viewport->m_sketch->relations.empty());
+        modeling::Sketch sketch{modeling::SketchPlane::XY,{{modeling::EntityKind::Line,{-30,-20},{-10,-5},1,"guide-anchor"}}};
+        viewport->beginSketch(sketch);viewport->setSketchTool(modeling::EntityKind::Line);click({20,25});
+        hover({-30,45},{2,0});QVERIFY(viewport->m_inference.alignX);QVERIFY(!viewport->m_inferenceGuides.empty());
+        click({-30,45},{2,0});QCOMPARE(viewport->m_sketch->entities.back().second.x,-30.0);
+        QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(2));QVERIFY(viewport->m_sketch->relations.empty());
+        QVERIFY(viewport->m_inferenceGuides.empty());
+    }
     void pixelSnappingPolicy() {
         using namespace modeling;
         std::vector<ProjectedSketchPoint> candidates{{{"a",PointRole::First},{12.5,6.25},100,200}};

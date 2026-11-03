@@ -195,3 +195,12 @@ and oversized input. Prototype limits are 1 MiB per document, 500 features,
 sketches are valid document data but are not automatically valid extrusion
 profiles. No general constraint solver, automatic dimensioning, or advanced relations
 are implied by this schema.
+
+## Endpoint joining and feature drafts
+
+Dragging an endpoint to another endpoint or the fixed origin creates a normal
+Coincident relation using the existing entity/point references. No display
+guides, antialiasing data or drag previews are serialized. The schema remains 3.
+An active-sketch feature draft is transient; Confirm persists the supported
+sketch changes and feature together, while Cancel preserves the ongoing sketch
+edit. Saving a resumed sketch follows the normal sketch-finish validation path.

@@ -19,11 +19,13 @@ The finite reference graphics do not limit the infinite sketching plane. See the
 ## Sketching and modeling
 
 - Empty parts and editable origin-plane sketches on XY, XZ, and YZ.
-- Continuous lines with exact origin/endpoint snapping and selectable point markers.
+- Antialiased continuous lines, exact origin/endpoint snapping and always-visible endpoint markers.
+- Select-mode endpoint dragging, transactional joining and connected-geometry updates.
 - Rectangles made of four connected edges, and circles with snappable centers.
 - Persistent coincident, horizontal and vertical relations with safe coordinate editing.
 - Light Features, Sketch and Evaluate command tabs, native menus and actual feature history.
-- Context entity properties; unfinished commands visibly disabled with tooltips.
+- Context entity properties and a docked Extrude/Cut PropertyManager with live previews.
+- Direct active-sketch Extrude/Cut with safe cancel/resume; unfinished tools stay disabled.
 - Explicit source-sketch and closed-contour selection, length/depth, direction,
   preview, and confirmation for additive Extrude and Extruded Cut.
 - Specified-depth and through-all cuts using precise OCCT BRep operations.
@@ -62,9 +64,10 @@ See [Windows deployment](docs/windows-deployment.md) for the exact local path an
 In an active sketch, choose Line and click near the red local origin to start
 exactly at (0,0). Each next click finishes an edge and continues from its endpoint.
 Snap back to a starting point to close a contour. Near-horizontal/vertical edges
-receive the corresponding persistent relation. Esc stops drawing and keeps all
-completed edges. Select a line body to see its endpoint markers; select a point
-to identify it separately. Rectangle uses two opposite corners; Circle uses a
+show dashed guides and an H/V indicator, then receive the corresponding relation. Esc stops drawing and keeps all
+completed edges. Endpoints stay visible throughout sketch editing. In Select mode, drag a point
+to move connected geometry, or release near another endpoint/origin to create
+a persistent connection. Esc cancels a drag without changing the sketch. Rectangle uses two opposite corners; Circle uses a
 center and a radius point. The origin stays at its true position during pan/zoom.
 
 The property panel propagates supported relations when coordinates change. An
@@ -75,6 +78,12 @@ Smart Dimension, Centerline, Construction Line, Arc, Spline, Trim, Convert,
 Offset, Mirror, Linear Sketch Pattern, Move, Display/Delete Relations, Repair
 Sketch, Shaded Sketch Contours, Measure, Mass Properties and Check Geometry are
 disabled until implemented.
+
+While editing a closed sketch, switch to Features and click Extrude or Extruded
+Cut. The active sketch is used automatically; select the intended contour in the
+viewport or left PropertyManager. Depth/reverse/Through All changes update the
+preview live. Confirm adds the feature; Cancel returns to sketch editing with
+completed geometry intact. Tab switching alone does not finish a sketch.
 
 ## Source layout
 
@@ -94,6 +103,9 @@ docs/decisions/    Approval records and unresolved decisions
 - [Development rules](AGENTS.md)
 - [Documentation guide](docs/README.md)
 - [Project vision and principles](docs/requirements/project-vision.md)
+- [Sketcher and feature workflow requirements](docs/requirements/sketcher-feature-workflow.md)
+- [Sketcher/PropertyManager decision](docs/decisions/0007-sketcher-feature-workflow.md)
+- [Current verification](docs/verification/sketcher-feature-workflow.md)
 - [Sketch interaction and desktop requirements](docs/requirements/sketch-interactions-desktop.md)
 - [Foundational relations](docs/requirements/sketch-relations.md)
 - [Provisional relation representation](docs/decisions/0005-sketch-relations.md)

@@ -12,6 +12,11 @@
 #include <QDoubleSpinBox>
 #include <QFileInfo>
 #include <QLabel>
+#include <QLineEdit>
+#include <QMouseEvent>
+#include <Graphic3d_Camera.hxx>
+#include <QStackedWidget>
+#include <QDockWidget>
 #include <QListWidget>
 #include <QPushButton>
 #include <QTabWidget>
@@ -113,7 +118,7 @@ private:
     }
     void confirmOperation(WorkflowWindow& window)
     {
-        auto* dialog = window.findChild<QDialog*>("operationDialog");
+        auto* dialog = window.findChild<QWidget*>("operationPanel");
         QVERIFY(dialog && dialog->isVisible());
         auto* ok = dialog->findChild<QDialogButtonBox*>("operationButtons")->button(QDialogButtonBox::Ok);
         QVERIFY2(ok->isEnabled(), qPrintable(dialog->findChild<QLabel*>("operationStatus")->text()));
@@ -123,6 +128,84 @@ private:
         QVERIFY(window.errors.isEmpty());
     }
 private slots:
+    void activeSketchExtrudeCancelConfirmAndDirectCut() {
+        QTemporaryDir directory; WorkflowWindow window;window.showMaximized();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());
+        createSketch(window);command(window,"actionLine");
+        for(const auto p:{modeling::Point2{0,0},modeling::Point2{40,0},modeling::Point2{40,30},modeling::Point2{0,30},modeling::Point2{0,0}})
+            QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,p));
+        const auto active=*viewport->m_sketch;QCOMPARE(active.entities.size(),std::size_t(4));
+        window.findChild<QTabWidget*>("modelingTabs")->setCurrentIndex(0);
+        QVERIFY(window.findChild<QAction*>("actionFinishSketch")->isEnabled());
+        command(window,"actionExtrude");
+        auto* operation=window.findChild<QWidget*>("operationPanel");QVERIFY(operation);
+        QVERIFY(!operation->isWindow());QVERIFY(window.findChild<QDialog*>("operationDialog")==nullptr);
+        QCOMPARE(window.findChild<QStackedWidget*>("managerStack")->currentWidget(),operation);
+        QCOMPARE(window.findChild<QDockWidget*>("historyDock")->windowTitle(),QString("PropertyManager"));
+        QCOMPARE(operation->findChild<QLabel*>("operationStartingReference")->text(),QString("Sketch Plane"));
+        QCOMPARE(operation->findChild<QLabel*>("operationEndCondition")->text(),QString("Blind"));
+        QVERIFY(!operation->findChild<QPushButton*>("operationPreview"));
+        QVERIFY(!window.findChild<QTreeWidget*>("featureTree")->isVisible());
+        QCOMPARE(operation->findChild<QComboBox*>("operationSketch")->currentData().toString().toStdString(),window.document().features()[0].id);
+        QVERIFY(!viewport->m_firstPoint);QCOMPARE(operation->findChild<QComboBox*>("operationContour")->currentIndex(),-1);
+        QCOMPARE(window.document().features()[0].sketch.entities.size(),std::size_t(0));
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{20,15}));
+        auto* depth=operation->findChild<QDoubleSpinBox*>("featureLength");depth->setValue(20);
+        QVERIFY(!viewport->m_previewPresentation.IsNull());const double before=volume(viewport->m_previewPresentation->Shape());
+        depth->setValue(35);QVERIFY(std::abs(volume(viewport->m_previewPresentation->Shape())/before-35.0/20.0)<1e-8);
+        const auto previousDirection=viewport->m_view->Camera()->Direction();
+        const auto dragStart=viewport->rect().center(),dragEnd=dragStart+QPoint(80,50);
+        QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,dragStart);
+        QMouseEvent orbit(QEvent::MouseMove,dragEnd,viewport->mapToGlobal(dragEnd),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);
+        QApplication::sendEvent(viewport,&orbit);QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,dragEnd);
+        QVERIFY(previousDirection.Angle(viewport->m_view->Camera()->Direction())>0.01);
+        depth->findChild<QLineEdit*>()->setText("--");
+        QVERIFY(!operation->findChild<QDialogButtonBox*>("operationButtons")->button(QDialogButtonBox::Ok)->isEnabled());
+        QVERIFY(operation->findChild<QLabel*>("operationStatus")->text().contains("valid positive depth"));
+        depth->findChild<QLineEdit*>()->setText("35 mm");QVERIFY(!viewport->m_previewPresentation.IsNull());
+        QTest::mouseClick(operation->findChild<QDialogButtonBox*>("operationButtons")->button(QDialogButtonBox::Cancel),Qt::LeftButton);
+        QApplication::processEvents();QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
+        QVERIFY(window.findChild<QAction*>("actionFinishSketch")->isEnabled());QCOMPARE(window.document().features().size(),std::size_t(1));
+        QCOMPARE(window.findChild<QDockWidget*>("historyDock")->windowTitle(),QString("FeatureManager"));
+        QCOMPARE(viewport->m_sketch->entities.size(),active.entities.size());QCOMPARE(viewport->m_sketch->relations.size(),active.relations.size());
+        window.findChild<QTabWidget*>("modelingTabs")->setCurrentIndex(0);command(window,"actionExtrude");
+        operation=window.findChild<QWidget*>("operationPanel");operation->findChild<QComboBox*>("operationContour")->setCurrentIndex(0);
+        operation->findChild<QDoubleSpinBox*>("featureLength")->setValue(25);
+        QTest::mouseClick(operation->findChild<QPushButton*>("featureReverseDirection"),Qt::LeftButton);
+        QCOMPARE(operation->findChild<QComboBox*>("featureDirection")->currentIndex(),1);QVERIFY(!viewport->m_previewPresentation.IsNull());
+        operation->findChild<QComboBox*>("featureDirection")->setCurrentIndex(0);confirmOperation(window);
+        QCOMPARE(window.document().features().size(),std::size_t(2));QCOMPARE(window.document().features()[0].sketch.relations.size(),active.relations.size());
+        const double solidVolume=volume(window.document().shape());
+        createSketch(window);command(window,"actionCircle");
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{20,15}));
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{25,15}));
+        window.findChild<QTabWidget*>("modelingTabs")->setCurrentIndex(0);command(window,"actionExtrudedCut");
+        operation=window.findChild<QWidget*>("operationPanel");QVERIFY(operation);
+        QCOMPARE(operation->findChild<QComboBox*>("operationSketch")->currentData().toString().toStdString(),window.document().features()[2].id);
+        operation->findChild<QCheckBox*>("featureThroughAll")->setChecked(true);
+        operation->findChild<QComboBox*>("operationContour")->setCurrentIndex(0);
+        command(window,"actionCancelFeature");QCOMPARE(window.document().features().size(),std::size_t(3));
+        QVERIFY(window.findChild<QAction*>("actionFinishSketch")->isEnabled());QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(1));
+        window.findChild<QTabWidget*>("modelingTabs")->setCurrentIndex(0);command(window,"actionExtrudedCut");
+        operation=window.findChild<QWidget*>("operationPanel");operation->findChild<QCheckBox*>("featureThroughAll")->setChecked(true);
+        operation->findChild<QComboBox*>("operationContour")->setCurrentIndex(0);confirmOperation(window);
+        QCOMPARE(window.document().features().size(),std::size_t(4));QVERIFY(volume(window.document().shape())<solidVolume);
+        QVERIFY(window.document().features()[3].throughAll);
+        window.path=directory.filePath("active-sketch.thepart");command(window,"actionSave");command(window,"actionNew");command(window,"actionOpen");
+        QCOMPARE(window.document().features().size(),std::size_t(4));QCOMPARE(window.document().features()[0].sketch.relations.size(),active.relations.size());
+        QVERIFY(BRepCheck_Analyzer(window.document().shape()).IsValid());QVERIFY(window.errors.isEmpty());QVERIFY(window.close());
+    }
+    void invalidActiveSketchStaysEditable() {
+        WorkflowWindow window;window.show();QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
+        command(window,"actionExtrude");QCOMPARE(window.errors.size(),1);QVERIFY(window.errors[0].contains("closed contour"));
+        QVERIFY(window.findChild<QAction*>("actionFinishSketch")->isEnabled());QVERIFY(!window.findChild<QWidget*>("operationPanel"));
+        QCOMPARE(window.document().features().size(),std::size_t(1));
+        command(window,"actionLine");QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{0,0}));
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{20,10}));
+        command(window,"actionExtrude");QCOMPARE(window.errors.size(),2);QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(1));
+        QVERIFY(window.findChild<QAction*>("actionFinishSketch")->isEnabled());QVERIFY(window.close());
+    }
     void rectangleExtrudeCircleCutEditSaveReopen()
     {
         QTemporaryDir directory;
@@ -151,7 +234,7 @@ private slots:
         command(window, "actionFinishSketch");
         QCOMPARE(window.document().features().front().sketch.entities.size(), std::size_t(8));
         command(window, "actionExtrude");
-        auto* operation = window.findChild<QDialog*>("operationDialog");
+        auto* operation = window.findChild<QWidget*>("operationPanel");
         QVERIFY(operation);
         QVERIFY(operation->findChild<QCheckBox*>("featureThroughAll")->isHidden());
         auto* contours = operation->findChild<QComboBox*>("operationContour");
@@ -177,7 +260,7 @@ private slots:
         editEntity(window, modeling::EntityKind::Circle, {0, 0}, {}, 8);
         command(window, "actionFinishSketch");
         command(window, "actionExtrudedCut");
-        operation = window.findChild<QDialog*>("operationDialog");
+        operation = window.findChild<QWidget*>("operationPanel");
         QVERIFY(operation);
         QVERIFY(!operation->findChild<QCheckBox*>("featureThroughAll")->isHidden());
         operation->findChild<QCheckBox*>("featureThroughAll")->setChecked(true);
@@ -191,7 +274,7 @@ private slots:
         QCOMPARE(tree->topLevelItem(0)->childCount(), 4);
         tree->setCurrentItem(tree->topLevelItem(0)->child(1));
         command(window, "actionEditFeature");
-        operation = window.findChild<QDialog*>("operationDialog");
+        operation = window.findChild<QWidget*>("operationPanel");
         QVERIFY(operation);
         QCOMPARE(operation->findChild<QComboBox*>("operationContour")->currentIndex(), 0);
         operation->findChild<QDoubleSpinBox*>("featureLength")->setValue(45);

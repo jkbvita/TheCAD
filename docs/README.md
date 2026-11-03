@@ -17,6 +17,8 @@ automatically.
 
 ## Current guides
 
+- [Sketcher interaction and feature workflow](requirements/sketcher-feature-workflow.md)
+- [Workflow state and PropertyManager decision](decisions/0007-sketcher-feature-workflow.md)
 - [Independent Windows launch and packaging](windows-deployment.md)
 - [Sketch interaction and desktop requirements](requirements/sketch-interactions-desktop.md)
 - [Supported sketch relations](requirements/sketch-relations.md)
@@ -35,6 +37,6 @@ automatically.
 
 ## Current verification
 
+- [Sketcher and docked feature workflow checks](verification/sketcher-feature-workflow.md)
 - [Sketch relations, layout and independent startup](verification/sketch-relations-desktop.md)
-
 - [Graphical plane-selection checks](verification/graphical-plane-selection.md)

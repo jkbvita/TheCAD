@@ -729,6 +729,49 @@ Sketch editSketchEntity(const Sketch& sketch, const SketchEntity& replacement)
     return candidate;
 }
 
+std::vector<SketchPointRef> coincidentSketchPoints(const Sketch& sketch,const SketchPointRef& reference)
+{
+    EqualityGroups groups(sketch);
+    for(const auto& relation:sketch.relations) if(relation.kind==RelationKind::Coincident) groups.join(relation);
+    const auto root=EqualityGroups::root(groups.x,groups.index(reference));
+    std::vector<SketchPointRef> result;
+    for(std::size_t i=0;i<groups.points.size();++i)
+        if(EqualityGroups::root(groups.x,i)==root) result.push_back(groups.points[i].first);
+    return result;
+}
+
+bool areSketchPointsCoincident(const Sketch& sketch, const SketchPointRef& first, const SketchPointRef& second)
+{
+    EqualityGroups groups(sketch);
+    for(const auto& relation:sketch.relations)
+        if(relation.kind==RelationKind::Coincident) groups.join(relation);
+    return EqualityGroups::root(groups.x,groups.index(first)) == EqualityGroups::root(groups.x,groups.index(second));
+}
+
+Sketch moveSketchPoint(const Sketch& sketch, const SketchPointRef& reference, Point2 position,
+                      const std::optional<SketchPointRef>& target)
+{
+    validate(sketch);
+    if(reference.role==PointRole::Origin) fail("The sketch origin is fixed and cannot be dragged.");
+    (void)sketchPointValue(sketch,reference);
+    if(target) {
+        if(pointKey(reference)==pointKey(*target)) fail("A point cannot be joined to itself.");
+        position=sketchPointValue(sketch,*target);
+    }
+    auto entity=*std::find_if(sketch.entities.begin(),sketch.entities.end(),[&](const SketchEntity& e){return e.id==reference.entityId;});
+    if(reference.role==PointRole::Second) entity.second=position;
+    else entity.first=position;
+    auto candidate=editSketchEntity(sketch,entity);
+    if(target && !areSketchPointsCoincident(candidate,reference,*target)) {
+        std::set<std::string> ids;
+        for(const auto& relation:candidate.relations) ids.insert(relation.id);
+        int sequence=1; while(ids.count("connection-"+std::to_string(sequence))) ++sequence;
+        candidate.relations.push_back({"connection-"+std::to_string(sequence),RelationKind::Coincident,reference,*target});
+    }
+    validate(candidate);
+    return candidate;
+}
+
 Sketch removeSketchEntity(const Sketch& sketch, const std::string& entityId)
 {
     auto candidate = sketch;

@@ -94,6 +94,12 @@ private:
     QPointF screenPoint(modeling::Point2 point) const;
     modeling::Point2 drawingPoint(const QPointF& position, std::optional<modeling::SketchPointRef>& reference);
     void updatePointPresentation();
+    void cancelPointDrag();
+    void updatePointDrag(const QPointF& position);
+    void finishPointDrag();
+    void updateInteractionPresentation();
+    void clearInteractionPresentation();
+    void resetSketchInference();
     void commitDrawing(modeling::Point2 point, const std::optional<modeling::SketchPointRef>& reference);
     QPoint nativePosition(const QPointF& position) const;
 
@@ -110,10 +116,32 @@ private:
     std::optional<modeling::SketchPointRef> m_hoveredPoint;
     std::optional<modeling::SketchPointRef> m_selectedPoint;
     std::string m_selectedEntity;
+    struct PointDrag {
+        modeling::Sketch original;
+        modeling::SketchPointRef reference;
+        QPointF pressPosition;
+        bool moved = false;
+        std::optional<modeling::Sketch> candidate;
+        std::optional<modeling::SketchPointRef> target;
+        QString error;
+        std::vector<std::pair<modeling::SketchPointRef,modeling::Point2>> targets;
+    };
+    std::optional<PointDrag> m_pointDrag;
+    Handle(AIS_TextLabel) m_interactionLabel;
+    struct SketchInference {
+        std::optional<modeling::RelationKind> axis;
+        std::optional<modeling::SketchPointRef> target, alignX, alignY;
+        std::vector<std::pair<modeling::Point2,modeling::Point2>> guides;
+        modeling::Point2 symbolPosition;
+    };
+    SketchInference m_inference;
+    std::vector<Handle(AIS_Shape)> m_inferenceGuides;
     std::vector<Handle(AIS_Point)> m_pointPresentations;
     Handle(AIS_Shape) m_selectedEntityPresentation;
     bool m_sketchEditing = false;
     bool m_regionSelecting = false;
+    bool m_regionClickCandidate = false;
+    QPointF m_regionPressPosition;
     Handle(AIS_Shape) m_previewPresentation;
     std::array<Handle(AIS_Shape), 3> m_referencePlanes;
     std::array<Handle(AIS_TextLabel), 3> m_planeLabels;

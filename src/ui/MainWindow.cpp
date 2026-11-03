@@ -14,6 +14,8 @@
 #include <QStyleFactory>
 #include <QStyle>
 #include <QSplitter>
+#include <QStackedWidget>
+#include <QScrollArea>
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
@@ -28,6 +30,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
+#include <QLineEdit>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -42,6 +45,7 @@
 #include <QVBoxLayout>
 
 #include <exception>
+#include <stdexcept>
 #include <algorithm>
 #include <QVariantList>
 
@@ -169,7 +173,10 @@ QString entityText(const modeling::SketchEntity& entity)
 struct MainWindow::OperationDraft {
     document::Feature feature;
     bool editing = false;
-    QDialog* dialog = nullptr;
+    bool fromSketch = false;
+    bool modifiedBefore = false;
+    std::optional<document::PartDocument> sourceDocument;
+    QWidget* panel = nullptr;
     QComboBox* sketches = nullptr;
     QComboBox* contours = nullptr;
     QDoubleSpinBox* length = nullptr;
@@ -372,6 +379,7 @@ MainWindow::MainWindow(QWidget* parent)
         QMessageBox::about(this, "About TheCAD", "TheCAD\nOpen-source parametric mechanical CAD prototype.\nC++ / Qt 6 / Open CASCADE Technology");
     });
     auto* historyDock = new QDockWidget("FeatureManager", this);
+    m_historyDock = historyDock;
     historyDock->setObjectName("historyDock");
     historyDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     historyDock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
@@ -436,7 +444,10 @@ MainWindow::MainWindow(QWidget* parent)
     historySplitter->setStretchFactor(0, 2);
     historySplitter->setStretchFactor(1, 1);
     historyLayout->addWidget(historySplitter);
-    historyDock->setWidget(history);
+    m_managerStack = new QStackedWidget;
+    m_managerStack->setObjectName("managerStack");
+    m_managerStack->addWidget(history);
+    historyDock->setWidget(m_managerStack);
     addDockWidget(Qt::LeftDockWidgetArea, historyDock);
     resizeDocks({historyDock}, {300}, Qt::Horizontal);
     viewMenu->addSeparator();
@@ -498,6 +509,9 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_viewport, &CadViewport::referencePlaneSelected, this, [this](modeling::SketchPlane plane) { referencePlaneSelected(plane); });
     connect(m_viewport, &CadViewport::planeSelectionCanceled, this, [this] { planeSelectionCanceled(); });
 
+    auto* cancelFeature = new QAction("Cancel feature", this);
+    cancelFeature->setObjectName("actionCancelFeature");cancelFeature->setShortcut(QKeySequence(Qt::Key_Escape));
+    addAction(cancelFeature);connect(cancelFeature,&QAction::triggered,this,[this]{finishOperation(false);});
     statusBar()->showMessage("Orbit: left drag | Pan: middle / right drag | Zoom: wheel | Fit: F");
     m_dimensions = new QLabel(this);
     statusBar()->addPermanentWidget(m_dimensions);
@@ -512,9 +526,9 @@ MainWindow::MainWindow(QWidget* parent)
 MainWindow::~MainWindow()
 {
     if (m_operation) {
-        m_operation->dialog->disconnect(this);
-        delete m_operation->dialog;
+        auto* panel = m_operation->panel;
         m_operation.reset();
+        delete panel;
     }
     delete takeCentralWidget();
     m_viewport = nullptr;
@@ -700,6 +714,7 @@ bool MainWindow::replaceDocument(document::PartDocument candidate, const QString
     m_editSketchId.clear();
     m_selectedId.clear();
     m_document = std::move(candidate);
+    m_mode = WorkspaceMode::Part;
     m_path = path;
     updateDocumentUi();
     m_viewport->showReferencePlanes(m_document.features().empty());
@@ -769,7 +784,7 @@ void MainWindow::updateDocumentUi()
     const QString name = m_path.isEmpty() ? "Untitled.thepart" : QFileInfo(m_path).fileName();
     setWindowTitle(name + "[*] - TheCAD");
     setWindowFilePath(m_path);
-    m_dimensions->setText(QString("%1 features | mm%2").arg(m_document.features().size()).arg(m_editSketch ? " | Editing sketch" : ""));
+    m_dimensions->setText(QString("%1 features | mm%2").arg(m_document.features().size()).arg(m_mode==WorkspaceMode::FeatureDraft ? " | Feature preview" : m_mode==WorkspaceMode::EditingSketch ? " | Editing sketch" : ""));
     {
         const QSignalBlocker blocker(m_tree);
         m_tree->clear();
@@ -822,9 +837,10 @@ void MainWindow::updateEntityList()
 void MainWindow::updateActions()
 {
     const bool operation = bool(m_operation);
-    const bool editing = m_editSketch.has_value();
+    const bool editing = m_mode == WorkspaceMode::EditingSketch;
     const bool selecting = m_selectingPlane;
     m_tabs->setEnabled(!operation);
+    findChild<QAction*>("actionCancelFeature")->setEnabled(operation);
     m_tree->setEnabled(!operation && !editing && !selecting);
     for (const auto* name : {"actionNew", "actionOpen", "actionSave", "actionSaveAs"}) {
         if (auto* action = findChild<QAction*>(name)) action->setEnabled(!operation && !selecting);
@@ -840,7 +856,8 @@ void MainWindow::updateActions()
     m_editEntity->setEnabled(editing && !operation && m_entities->currentRow() >= 0);
     m_deleteEntity->setEnabled(editing && !operation && m_entities->currentRow() >= 0);
     m_applyProperties->setEnabled(editing && !operation && m_entities->currentRow() >= 0);
-    bool profile = false;
+    updateEntityProperties();
+    bool profile = editing && !operation;
     if (!editing && !operation && !selecting) {
         for (const auto& feature : m_document.features()) {
             if (feature.kind != document::FeatureKind::Sketch) continue;
@@ -860,6 +877,7 @@ void MainWindow::createSketch()
         return;
     }
     m_selectingPlane = true;
+    m_mode = WorkspaceMode::SelectingPlane;
     m_viewport->beginPlaneSelection();
     updateActions();
     statusBar()->showMessage("Select Front, Top or Right in the viewport. Drag to orbit; Esc cancels.");
@@ -898,6 +916,7 @@ void MainWindow::planeSelectionCanceled()
 {
     if (!m_selectingPlane) return;
     m_selectingPlane = false;
+    m_mode = WorkspaceMode::Part;
     m_selectedPlane.reset();
     m_viewport->setSelectedReferencePlane({});
     updateActions();
@@ -908,6 +927,7 @@ void MainWindow::startSketchEditing(const document::Feature& feature)
     m_selectingPlane = false;
     m_selectedPlane.reset();
     m_viewport->setSelectedReferencePlane({});
+    m_mode = WorkspaceMode::EditingSketch;
     m_editSketch = feature.sketch;
     m_editSketchId = feature.id;
     m_selectedId = feature.id;
@@ -931,6 +951,7 @@ bool MainWindow::finishSketch()
         if (!applyModel(std::move(candidate), id)) return false;
         m_editSketch.reset();
         m_editSketchId.clear();
+        m_mode = WorkspaceMode::Part;
         m_viewport->endSketch();
         m_viewport->setSketch(feature.sketch);
         m_tabs->setCurrentIndex(0);
@@ -954,7 +975,7 @@ void MainWindow::updateEntityProperties()
     if (!valid) return;
     const auto& entity = sketch->entities[std::size_t(row)];
     const bool circle = entity.kind == modeling::EntityKind::Circle;
-    const bool editing = m_editSketch.has_value();
+    const bool editing = m_mode == WorkspaceMode::EditingSketch;
     m_entitySummary->setText(QString("%1\n%2 supported relation(s)")
         .arg(circle ? "Circle" : entity.kind == modeling::EntityKind::Line ? "Line" : "Legacy rectangle")
         .arg(std::count_if(sketch->relations.begin(), sketch->relations.end(), [&entity](const auto& relation) {
@@ -1033,116 +1054,130 @@ void MainWindow::editSelectedFeature()
 
 void MainWindow::extrude(bool cut)
 {
-    if (m_editSketch || m_operation) return;
+    if (m_operation || m_selectingPlane) return;
     document::Feature feature;
     feature.kind = cut ? document::FeatureKind::Cut : document::FeatureKind::Extrude;
     const auto* selected = selectedFeature();
-    if (selected && selected->kind == document::FeatureKind::Sketch) feature.sketchId = selected->id;
+    if (m_editSketch) feature.sketchId = m_editSketchId;
+    else if (selected && selected->kind == document::FeatureKind::Sketch) feature.sketchId = selected->id;
     startOperation(feature, false);
 }
 
 void MainWindow::startOperation(document::Feature feature, bool editing)
 {
-    if (m_operation || m_editSketch) return;
-    m_operation = std::make_unique<OperationDraft>();
-    auto& draft = *m_operation;
-    draft.feature = std::move(feature);
-    draft.editing = editing;
-    draft.dialog = new QDialog(this);
-    draft.dialog->setObjectName("operationDialog");
-    draft.dialog->setWindowTitle(draft.feature.kind == document::FeatureKind::Cut ? "Extruded Cut" : "Extrude");
-    draft.dialog->setModal(false);
-    auto* layout = new QVBoxLayout(draft.dialog);
-    auto* instructions = new QLabel("Select a sketch, then click its closed region in the viewport or choose an explicit contour below.");
-    instructions->setWordWrap(true);
-    layout->addWidget(instructions);
-    auto* form = new QFormLayout;
-    layout->addLayout(form);
-    draft.sketches = new QComboBox;
-    draft.sketches->setObjectName("operationSketch");
-    draft.sketches->setPlaceholderText("Select a sketch explicitly");
-    int selectedIndex = -1;
-    for (const auto& item : m_document.features()) {
-        // An edited operation may reference only sketches before it in history.
-        if (editing && item.id == draft.feature.id) break;
-        if (item.kind != document::FeatureKind::Sketch) continue;
-        draft.sketches->addItem(QString::fromStdString(item.name), QString::fromStdString(item.id));
-        if (item.id == draft.feature.sketchId) selectedIndex = draft.sketches->count() - 1;
+    if(m_operation || m_selectingPlane) return;
+    auto sourceDocument=m_document;
+    if(m_editSketch) {
+        m_viewport->selectSketchTool();
+        try {
+            if(modeling::closedContours(*m_editSketch).empty())
+                throw std::runtime_error("The active sketch has no valid closed contour. Continue sketch editing and close a profile.");
+            auto source=*std::find_if(sourceDocument.features().begin(),sourceDocument.features().end(),[this](const auto& item){return item.id==m_editSketchId;});
+            source.sketch=*m_editSketch;sourceDocument.replaceFeature(source);
+        } catch(const std::exception& error) {reportError(QString("Cannot start the feature: %1").arg(error.what()));return;}
     }
-    form->addRow("Sketch", draft.sketches);
-    draft.contours = new QComboBox;
-    draft.contours->setObjectName("operationContour");
-    draft.contours->setPlaceholderText("Select a contour explicitly");
-    form->addRow("Contour", draft.contours);
-    draft.length = number(form, draft.feature.kind == document::FeatureKind::Cut ? "Depth" : "Length", draft.feature.length, true);
-    draft.length->setObjectName("featureLength");
-    draft.direction = new QComboBox;
-    draft.direction->setObjectName("featureDirection");
-    draft.direction->addItems({"Positive sketch normal", "Negative sketch normal"});
-    draft.direction->setCurrentIndex(draft.feature.direction == modeling::Direction::Positive ? 0 : 1);
-    form->addRow("Direction", draft.direction);
-    draft.through = new QCheckBox("Through all in selected direction", draft.dialog);
-    draft.through->setObjectName("featureThroughAll");
-    draft.through->setVisible(draft.feature.kind == document::FeatureKind::Cut);
-    if (draft.feature.kind == document::FeatureKind::Cut) {
-        form->addRow(draft.through);
-        draft.through->setChecked(draft.feature.throughAll);
-        draft.length->setEnabled(!draft.feature.throughAll);
+    m_operation=std::make_unique<OperationDraft>();auto& draft=*m_operation;
+    draft.feature=std::move(feature);draft.editing=editing;
+    draft.fromSketch=m_editSketch.has_value();draft.modifiedBefore=isWindowModified();
+    draft.sourceDocument=std::move(sourceDocument);m_mode=WorkspaceMode::FeatureDraft;
+    draft.panel=new QWidget(m_managerStack);draft.panel->setObjectName("operationPanel");
+    auto* layout=new QVBoxLayout(draft.panel);layout->setContentsMargins(8,8,8,8);
+    auto* title=new QLabel(draft.feature.kind==document::FeatureKind::Cut ? "Extruded Cut" : "Extrude");
+    title->setObjectName("operationTitle");title->setStyleSheet("font-size: 14px; font-weight: 600;");layout->addWidget(title);
+    draft.buttons=new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel);
+    draft.buttons->setObjectName("operationButtons");draft.buttons->button(QDialogButtonBox::Ok)->setText("Confirm");
+    draft.buttons->button(QDialogButtonBox::Ok)->setEnabled(false);layout->addWidget(draft.buttons);
+    auto* scroll=new QScrollArea;scroll->setWidgetResizable(true);scroll->setFrameShape(QFrame::NoFrame);layout->addWidget(scroll);
+    auto* content=new QWidget;scroll->setWidget(content);auto* settings=new QVBoxLayout(content);settings->setContentsMargins(0,0,0,0);
+    auto* referenceForm=new QFormLayout;
+    auto* startingReference=new QLabel("Sketch Plane");startingReference->setObjectName("operationStartingReference");
+    referenceForm->addRow("Starting reference",startingReference);settings->addLayout(referenceForm);
+    auto* directionGroup=new QGroupBox("Direction 1");auto* directionForm=new QFormLayout(directionGroup);
+    auto* endCondition=new QLabel(draft.feature.throughAll ? "Through All" : "Blind");endCondition->setObjectName("operationEndCondition");
+    directionForm->addRow("End condition",endCondition);
+    draft.length=number(directionForm,"Depth",draft.feature.length,true);draft.length->setObjectName("featureLength");
+    draft.direction=new QComboBox;draft.direction->setObjectName("featureDirection");
+    draft.direction->addItems({"Positive sketch normal","Negative sketch normal"});
+    draft.direction->setCurrentIndex(draft.feature.direction==modeling::Direction::Positive ? 0 : 1);
+    directionForm->addRow("Direction",draft.direction);
+    auto* reverse=new QPushButton("Reverse direction");reverse->setObjectName("featureReverseDirection");
+    directionForm->addRow(reverse);
+    draft.through=new QCheckBox("Through all in selected direction",directionGroup);draft.through->setObjectName("featureThroughAll");
+    draft.through->setVisible(draft.feature.kind==document::FeatureKind::Cut);
+    if(draft.feature.kind==document::FeatureKind::Cut) {
+        directionForm->addRow(draft.through);draft.through->setChecked(draft.feature.throughAll);draft.length->setEnabled(!draft.feature.throughAll);
     }
-    draft.status = new QLabel;
-    draft.status->setObjectName("operationStatus");
-    draft.status->setWordWrap(true);
-    layout->addWidget(draft.status);
-    auto* preview = new QPushButton("Update preview");
-    preview->setObjectName("operationPreview");
-    layout->addWidget(preview);
-    draft.buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-    draft.buttons->setObjectName("operationButtons");
-    draft.buttons->button(QDialogButtonBox::Ok)->setEnabled(false);
-    layout->addWidget(draft.buttons);
-    connect(draft.sketches, &QComboBox::currentIndexChanged, this, [this] { operationSketchChanged(); });
-    connect(draft.contours, &QComboBox::currentIndexChanged, this, [this] { updateOperationPreview(); });
-    connect(draft.length, &QDoubleSpinBox::valueChanged, this, [this] { updateOperationPreview(); });
-    connect(draft.direction, &QComboBox::currentIndexChanged, this, [this] { updateOperationPreview(); });
-    connect(draft.through, &QCheckBox::toggled, this, [this](bool through) {
-        if (m_operation) m_operation->length->setEnabled(!through);
-        updateOperationPreview();
+    settings->addWidget(directionGroup);
+    auto* selectionGroup=new QGroupBox("Selected Contours");auto* selectionForm=new QFormLayout(selectionGroup);
+    draft.sketches=new QComboBox;draft.sketches->setObjectName("operationSketch");draft.sketches->setPlaceholderText("Select a sketch");
+    int selectedIndex=-1;
+    for(const auto& item:draft.sourceDocument->features()) {
+        if(editing && item.id==draft.feature.id) break;
+        if(item.kind!=document::FeatureKind::Sketch) continue;
+        draft.sketches->addItem(QString::fromStdString(item.name),QString::fromStdString(item.id));
+        if(item.id==draft.feature.sketchId) selectedIndex=draft.sketches->count()-1;
+    }
+    selectionForm->addRow("Sketch",draft.sketches);draft.sketches->setEnabled(!draft.fromSketch);
+    draft.contours=new QComboBox;draft.contours->setObjectName("operationContour");draft.contours->setPlaceholderText("Select a contour");
+    selectionForm->addRow("Contour",draft.contours);
+    auto* instructions=new QLabel("Click inside the intended closed region in the viewport, or select its contour here.");
+    instructions->setWordWrap(true);selectionForm->addRow(instructions);settings->addWidget(selectionGroup);
+    draft.status=new QLabel;draft.status->setObjectName("operationStatus");draft.status->setWordWrap(true);settings->addWidget(draft.status);settings->addStretch();
+    connect(draft.sketches,&QComboBox::currentIndexChanged,this,[this]{operationSketchChanged();});
+    connect(draft.contours,&QComboBox::currentIndexChanged,this,[this]{updateOperationPreview();});
+    connect(draft.length,&QDoubleSpinBox::valueChanged,this,[this]{updateOperationPreview();});
+    connect(draft.length->findChild<QLineEdit*>(),&QLineEdit::textChanged,this,[this]{
+        if(m_operation && (!m_operation->length->hasAcceptableInput() || !m_operation->candidate)) updateOperationPreview();
     });
-    connect(preview, &QPushButton::clicked, this, [this] { updateOperationPreview(); });
-    connect(draft.buttons, &QDialogButtonBox::rejected, draft.dialog, &QDialog::reject);
-    connect(draft.buttons, &QDialogButtonBox::accepted, this, [this] {
-        updateOperationPreview();
-        if (!m_operation || !m_operation->candidate) return;
-        m_viewport->clearPreview();
-        if (applyModel(*m_operation->candidate, m_operation->candidateFeatureId)) m_operation->dialog->accept();
+    connect(draft.direction,&QComboBox::currentIndexChanged,this,[this]{updateOperationPreview();});
+    connect(reverse,&QPushButton::clicked,this,[this]{if(m_operation)m_operation->direction->setCurrentIndex(1-m_operation->direction->currentIndex());});
+    connect(draft.through,&QCheckBox::toggled,this,[this,endCondition](bool through){
+        if(!m_operation)return;endCondition->setText(through?"Through All":"Blind");m_operation->length->setEnabled(!through);updateOperationPreview();
     });
-    connect(draft.dialog, &QDialog::finished, this, [this] {
-        m_viewport->clearPreview();
-        m_viewport->endContourSelection();
-        if (m_operation) {
-            m_operation->dialog->deleteLater();
-            m_operation.reset();
+    connect(draft.buttons,&QDialogButtonBox::rejected,this,[this]{finishOperation(false);});
+    connect(draft.buttons,&QDialogButtonBox::accepted,this,[this]{
+        updateOperationPreview();if(!m_operation || !m_operation->candidate)return;
+        m_viewport->clearPreview();if(applyModel(*m_operation->candidate,m_operation->candidateFeatureId))finishOperation(true);
+    });
+    draft.sketches->setCurrentIndex(selectedIndex);operationSketchChanged();
+    if(editing) {
+        auto expected=draft.feature.contour;std::sort(expected.begin(),expected.end());
+        for(int i=0;i<int(draft.availableContours.size());++i) {
+            auto actual=draft.availableContours[std::size_t(i)].entityIds;std::sort(actual.begin(),actual.end());
+            if(actual==expected){draft.contours->setCurrentIndex(i);break;}
         }
-        updateActions();
-    });
-    // A source may only be prefilled from an explicit tree selection or the
-    // edited feature reference. Never silently choose the first available sketch.
-    draft.sketches->setCurrentIndex(selectedIndex);
-    operationSketchChanged();
-    if (editing) {
-        const auto expected = draft.feature.contour;
-        for (int i = 0; i < int(draft.availableContours.size()); ++i) {
-            auto actual = draft.availableContours[std::size_t(i)].entityIds;
-            auto sortedExpected = expected;
-            std::sort(actual.begin(), actual.end());
-            std::sort(sortedExpected.begin(), sortedExpected.end());
-            if (actual == sortedExpected) { draft.contours->setCurrentIndex(i); break; }
-        }
-        if (draft.sketches->currentIndex() < 0) draft.status->setText("The saved source sketch is unavailable. Select a replacement explicitly; nothing has been changed.");
-        else if (draft.contours->currentIndex() < 0) draft.status->setText("The saved contour is unavailable. Select a replacement explicitly; nothing has been changed.");
+        if(draft.sketches->currentIndex()<0)draft.status->setText("The saved source sketch is unavailable. Select a replacement explicitly.");
+        else if(draft.contours->currentIndex()<0)draft.status->setText("The saved contour is unavailable. Select a replacement explicitly.");
     }
-    updateActions();
-    draft.dialog->show();
+    m_managerStack->addWidget(draft.panel);m_managerStack->setCurrentWidget(draft.panel);
+    m_historyDock->setWindowTitle("PropertyManager");updateDocumentUi();
+}
+
+void MainWindow::finishOperation(bool accepted)
+{
+    if(!m_operation) return;
+    const bool resumeSketch=!accepted && m_operation->fromSketch;
+    const bool modifiedBefore=m_operation->modifiedBefore;
+    auto* panel=m_operation->panel;
+    m_viewport->clearPreview();m_viewport->endContourSelection();
+    // Retire the page outside the live widget tree immediately, then let Qt
+    // destroy it after the current button event. New drafts cannot reuse it.
+    for(auto* child:panel->findChildren<QObject*>()) QObject::disconnect(child,nullptr,this,nullptr);
+    m_managerStack->setCurrentIndex(0);m_managerStack->removeWidget(panel);
+    panel->hide();panel->setParent(nullptr);
+    m_historyDock->setWindowTitle("FeatureManager");
+    m_operation.reset();panel->deleteLater();
+    if(resumeSketch) {
+        m_mode=WorkspaceMode::EditingSketch;
+        m_viewport->beginSketch(*m_editSketch);m_viewport->selectSketchTool();m_tabs->setCurrentIndex(1);
+        setWindowModified(modifiedBefore);
+    } else {
+        if(accepted) {m_editSketch.reset();m_editSketchId.clear();}
+        m_mode=WorkspaceMode::Part;
+        m_viewport->endSketch();
+        if(!accepted) setWindowModified(modifiedBefore);
+    }
+    updateDocumentUi();
 }
 
 void MainWindow::operationSketchChanged()
@@ -1155,9 +1190,9 @@ void MainWindow::operationSketchChanged()
     const QSignalBlocker blocker(draft.contours);
     draft.contours->clear();
     const auto sourceId = draft.sketches->currentData().toString().toStdString();
-    const auto found = std::find_if(m_document.features().begin(), m_document.features().end(),
+    const auto found = std::find_if(draft.sourceDocument->features().begin(), draft.sourceDocument->features().end(),
                                     [&sourceId](const auto& item) { return item.id == sourceId; });
-    if (found == m_document.features().end()) {
+    if (found == draft.sourceDocument->features().end()) {
         m_viewport->endContourSelection();
         draft.status->setText("Select a source sketch explicitly.");
         draft.buttons->button(QDialogButtonBox::Ok)->setEnabled(false);
@@ -1185,6 +1220,10 @@ void MainWindow::updateOperationPreview()
     auto& draft = *m_operation;
     draft.candidate.reset();
     draft.buttons->button(QDialogButtonBox::Ok)->setEnabled(false);
+    if(draft.length->isEnabled() && !draft.length->hasAcceptableInput()) {
+        m_viewport->clearPreview();draft.status->setText("Enter a valid positive depth in millimeters.");return;
+    }
+    {const QSignalBlocker blocker(draft.length);const QSignalBlocker editorBlocker(draft.length->findChild<QLineEdit*>());draft.length->interpretText();}
     const int index = draft.contours->currentIndex();
     if (index < 0 || index >= int(draft.availableContours.size())) {
         m_viewport->clearPreview();
@@ -1198,7 +1237,7 @@ void MainWindow::updateOperationPreview()
         feature.length = draft.length->value();
         feature.direction = draft.direction->currentIndex() == 0 ? modeling::Direction::Positive : modeling::Direction::Negative;
         feature.throughAll = feature.kind == document::FeatureKind::Cut && draft.through->isChecked();
-        auto candidate = m_document;
+        auto candidate = *draft.sourceDocument;
         std::string id;
         if (draft.editing) {
             candidate.replaceFeature(feature);
@@ -1224,9 +1263,9 @@ void MainWindow::operationRegionClicked(modeling::Point2 point)
     if (!m_operation) return;
     auto& draft = *m_operation;
     const auto sourceId = draft.sketches->currentData().toString().toStdString();
-    const auto found = std::find_if(m_document.features().begin(), m_document.features().end(),
+    const auto found = std::find_if(draft.sourceDocument->features().begin(), draft.sourceDocument->features().end(),
                                    [&sourceId](const auto& item) { return item.id == sourceId; });
-    if (found == m_document.features().end()) return;
+    if (found == draft.sourceDocument->features().end()) return;
     int selected = -1;
     try {
         for (std::size_t i = 0; i < draft.availableContours.size(); ++i) {

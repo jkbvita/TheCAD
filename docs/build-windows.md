@@ -147,8 +147,12 @@ clicks without reactivation. A preview follows the pointer. Near the origin or
 an existing endpoint, the point highlights and the click uses its exact model
 coordinates with a persistent coincident relation. Near-horizontal/vertical
 segments receive the corresponding relation. Esc ends drawing and preserves
-completed edges. Select a line body to expose endpoint markers; points can be
-selected independently. Middle/right dragging and the wheel pan/zoom the sketch.
+completed edges. Small blue endpoint markers remain visible. In Select mode,
+left-drag an endpoint to move it and its connected geometry. Release near another
+endpoint or the origin to join exactly with a Coincident relation. Conflicting
+moves reject without changing the sketch; Esc cancels the drag. Middle/right
+dragging and the wheel pan/zoom the sketch. Temporary dashed guides and H/V
+indicators show active drawing inference; ordinary diagonal lines stay free.
 
 Rectangle uses two opposite corners and creates four connected horizontal and
 vertical edges. Circle uses a center and radius point; its center can snap to
@@ -159,12 +163,18 @@ fixed to the origin, fail clearly without changing the draft. Exit Sketch
 returns to normal modeling mode. The displayed plane boundaries are only guides:
 sketching is not confined to them.
 
-The existing Extrude, Extruded Cut, feature editing, and file workflows are
-preserved. Save the part as `.thepart`; reopening restores each sketch's stored
+To extrude from the active sketch, switch to Features and choose Extrude or
+Extruded Cut. Tab changes keep sketch editing active. The left PropertyManager
+uses that sketch automatically, with an explicit contour choice. Choose a region
+in the viewport, change depth/direction for a live preview, then Confirm. Cancel
+returns to sketch editing without losing completed geometry. Open or invalid
+profiles stay editable with a clear error. Completed sketch and feature editing
+workflows remain available; Cut retains Through All. The viewport stays usable
+for orbit, pan and zoom while the panel is open. There is no Update Preview step. Save the part as `.thepart`; reopening restores each sketch's stored
 plane reference and coordinates. Arbitrary planar-face attachment is not part of
 this task.
 
 This guide describes intended/current controls, not evidence of completed manual
 testing. Consult the verification report for the interactions actually exercised.
 
-See the [sketch and desktop verification report](verification/sketch-relations-desktop.md) for this milestone, and the [graphical-plane report](verification/graphical-plane-selection.md) for earlier checks.
+See the [current sketcher/feature workflow checks](verification/sketcher-feature-workflow.md) and the earlier [sketch and desktop verification report](verification/sketch-relations-desktop.md) for this milestone, and the [graphical-plane report](verification/graphical-plane-selection.md) for earlier checks.
