@@ -8,8 +8,7 @@
 - Qt 6.8.4, OCCT 7.9.3, CMake 3.28 or newer (3.x), supplied below.
 
 The tested path uses Release builds and dynamically linked, MSVC-compatible
-conda-forge packages. This avoids building Qt and OCCT from source. It is a local
-prototype development setup, not a standalone distributable installer.
+conda-forge packages. This avoids building Qt and OCCT from source. The development SDK remains separate from the application runtime package.
 
 ## Install the compiler
 
@@ -79,9 +78,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1 -GuiTest
 .\scripts\run.ps1
 ```
 
-The executable is `build/windows/Release/TheCAD.exe`. The run script supplies DLL,
-Qt platform-plugin, and OCCT shader paths. Running the executable directly from
-Explorer requires equivalent runtime paths; deployment packaging is not included.
+For Explorer startup, double-click **Launch TheCAD.cmd** at the repository root.
+Create an independent runtime folder with `.\scripts\package-windows.ps1`, then
+launch `build/package/TheCAD/TheCAD.exe`. Keep the whole package folder together.
+The development executable at `build/windows/Release/TheCAD.exe` still uses the
+run script for its runtime paths. See [Windows deployment](windows-deployment.md)
+for the exact local path, package contents and verification procedure.
 
 Controls for this prototype:
 
@@ -140,11 +142,22 @@ choice, leaving the document unchanged. If projections overlap, the nearest
 forward geometric hit wins, with Front/Top/Right as the equal-depth tie order.
 Labels are not hit targets.
 
-Use Line, Rectangle, or Circle in sketch mode. Click two model points to create a
-line or rectangle, or a circle center and radius point. Edit supported numeric
-values through the sketch geometry list. Finish Sketch returns to normal modeling
-mode; reference-plane selection graphics are normally hidden. The displayed plane
-boundaries are only guides: sketching is not confined to them.
+In the Sketch tab, Line starts with one click and continues through successive
+clicks without reactivation. A preview follows the pointer. Near the origin or
+an existing endpoint, the point highlights and the click uses its exact model
+coordinates with a persistent coincident relation. Near-horizontal/vertical
+segments receive the corresponding relation. Esc ends drawing and preserves
+completed edges. Select a line body to expose endpoint markers; points can be
+selected independently. Middle/right dragging and the wheel pan/zoom the sketch.
+
+Rectangle uses two opposite corners and creates four connected horizontal and
+vertical edges. Circle uses a center and radius point; its center can snap to
+the origin or an endpoint. Both show previews. Select an entity to edit its
+properties in the left panel, or use Edit geometry. Supported connections
+propagate during coordinate edits; incompatible edits, including moving a point
+fixed to the origin, fail clearly without changing the draft. Exit Sketch
+returns to normal modeling mode. The displayed plane boundaries are only guides:
+sketching is not confined to them.
 
 The existing Extrude, Extruded Cut, feature editing, and file workflows are
 preserved. Save the part as `.thepart`; reopening restores each sketch's stored
@@ -154,4 +167,4 @@ this task.
 This guide describes intended/current controls, not evidence of completed manual
 testing. Consult the verification report for the interactions actually exercised.
 
-See the [graphical-plane verification report](verification/graphical-plane-selection.md) for completed automated and manual checks.
+See the [sketch and desktop verification report](verification/sketch-relations-desktop.md) for this milestone, and the [graphical-plane report](verification/graphical-plane-selection.md) for earlier checks.

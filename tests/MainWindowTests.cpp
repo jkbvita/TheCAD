@@ -12,6 +12,11 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QMenuBar>
+#include <QTabWidget>
+#include <QToolBar>
+#include <QGroupBox>
+#include <QDoubleSpinBox>
+#include <QListWidget>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -51,7 +56,7 @@ private slots:
         TestWindow window;
         QVERIFY(window.isWindowModified());
         QVERIFY(window.currentPath().isEmpty());
-        QCOMPARE(window.menuBar()->actions().size(), 1);
+        QCOMPARE(window.menuBar()->actions().size(), 7);
         const QList<QPair<QString, QKeySequence>> commands = {
             {"actionNew", QKeySequence::New}, {"actionOpen", QKeySequence::Open},
             {"actionSave", QKeySequence::Save}, {"actionSaveAs", QKeySequence::SaveAs},
@@ -64,6 +69,41 @@ private slots:
         }
     }
 
+    void commandManagerShowsFunctionalAndFutureTools()
+    {
+        TestWindow window;
+        const QStringList menuNames = {"&File", "&Edit", "&View", "&Insert", "&Tools", "&Window", "&Help"};
+        const auto menus = window.menuBar()->actions();
+        QCOMPARE(menus.size(), menuNames.size());
+        for (int i = 0; i < menus.size(); ++i) QCOMPARE(menus[i]->text(), menuNames[i]);
+        auto* tabs = window.findChild<QTabWidget*>("modelingTabs");
+        QVERIFY(tabs);
+        QCOMPARE(tabs->count(), 3);
+        QCOMPARE(tabs->tabText(0), QString("Features"));
+        QCOMPARE(tabs->tabText(1), QString("Sketch"));
+        QCOMPARE(tabs->tabText(2), QString("Evaluate"));
+        QCOMPARE(tabs->tabPosition(), QTabWidget::South);
+        QCOMPARE(QApplication::style()->objectName(), QString("fusion"));
+        auto* tree = window.findChild<QTreeWidget*>("featureTree");
+        QVERIFY(tree->palette().color(QPalette::Text).lightness() < 128);
+        QVERIFY(tree->palette().color(QPalette::Base).lightness() > 200);
+        auto* commands = window.findChild<QToolBar*>("modelingToolbar");
+        QVERIFY(commands && !commands->isMovable() && !commands->isFloatable());
+        for (const auto* name : {"actionSmartDimension", "actionArc", "actionSpline",
+                "actionCenterline", "actionConstructionLine", "actionTrimEntities", "actionConvertEntities", "actionOffsetEntities",
+                "actionMirrorEntities", "actionLinearSketchPattern", "actionMoveEntities",
+                "actionDisplayDeleteRelations", "actionRepairSketch", "actionShadedSketchContours",
+                "actionMeasure", "actionMassProperties", "actionCheckGeometry"}) {
+            auto* tool = window.findChild<QAction*>(name);
+            QVERIFY2(tool, name);
+            QVERIFY(!tool->isEnabled());
+            QVERIFY(tool->toolTip().contains("not implemented"));
+            QVERIFY(!tool->icon().isNull());
+        }
+        QVERIFY(window.findChild<QGroupBox*>("entityProperties"));
+        QVERIFY(window.findChild<QDoubleSpinBox*>("propertyFirstX"));
+        QVERIFY(window.findChild<QPushButton*>("applyEntityProperties"));
+    }
     void saveReusesPathAndSaveAsSwitchesPath()
     {
         QTemporaryDir directory;
@@ -391,6 +431,46 @@ private slots:
         QCOMPARE(window.errors.size(), 0);
     }
 
+    void propertyPanelPreservesCoincidentAndOriginRelations()
+    {
+        TestWindow window;
+        auto* viewport = window.findChild<CadViewport*>();
+        window.trigger("actionCreateSketch");
+        viewport->referencePlaneSelected(modeling::SketchPlane::XY);
+        modeling::Sketch sketch;
+        sketch.entities = {
+            {modeling::EntityKind::Line, {0, 0}, {10, 0}, 1, "edge-a"},
+            {modeling::EntityKind::Line, {10, 0}, {10, 10}, 1, "edge-b"}};
+        using modeling::PointRole;
+        using modeling::RelationKind;
+        sketch.relations = {
+            {"at-origin", RelationKind::Coincident, {"edge-a", PointRole::First}, {{}, PointRole::Origin}},
+            {"join", RelationKind::Coincident, {"edge-a", PointRole::Second}, {"edge-b", PointRole::First}},
+            {"horizontal", RelationKind::Horizontal, {"edge-a", PointRole::First}, {"edge-a", PointRole::Second}},
+            {"vertical", RelationKind::Vertical, {"edge-b", PointRole::First}, {"edge-b", PointRole::Second}}};
+        viewport->sketchChanged(sketch);
+        viewport->sketchEntitySelected("edge-a");
+        auto* entities = window.findChild<QListWidget*>("sketchEntities");
+        QCOMPARE(entities->currentRow(), 0);
+        auto* firstX = window.findChild<QDoubleSpinBox*>("propertyFirstX");
+        auto* secondX = window.findChild<QDoubleSpinBox*>("propertySecondX");
+        auto* apply = window.findChild<QPushButton*>("applyEntityProperties");
+        QVERIFY(firstX && secondX && apply && apply->isEnabled());
+        secondX->setValue(20);
+        apply->click();
+        QVERIFY(window.errors.empty());
+        firstX->setValue(1);
+        apply->click();
+        QCOMPARE(window.errors.size(), 1);
+        window.trigger("actionFinishSketch");
+        const auto& saved = window.document().features().front().sketch;
+        QCOMPARE(saved.entities[0].first.x, 0.0);
+        QCOMPARE(saved.entities[0].second.x, 20.0);
+        QCOMPARE(saved.entities[1].first.x, 20.0);
+        QCOMPARE(saved.entities[1].second.x, 20.0);
+        QCOMPARE(saved.relations.size(), std::size_t(4));
+        modeling::validateSketchRelations(saved);
+    }
     void referenceTreePlaneFirstStartsImmediatelyAndPersistsAllPlanes()
     {
         QTemporaryDir directory;
@@ -400,9 +480,9 @@ private slots:
         auto* tree = window.findChild<QTreeWidget*>("featureTree");
         QVERIFY(tree);
         QCOMPARE(tree->topLevelItemCount(), 2);
-        QCOMPARE(tree->topLevelItem(0)->text(0), QString("Part"));
+        QCOMPARE(tree->topLevelItem(0)->text(0), QString("Untitled.thepart"));
         QCOMPARE(tree->topLevelItem(1)->text(0), QString("Origin"));
-        const QStringList names{"Front", "Top", "Right"};
+        const QStringList names{"Front Plane", "Top Plane", "Right Plane"};
         const modeling::SketchPlane planes[] = {modeling::SketchPlane::XY,
             modeling::SketchPlane::XZ, modeling::SketchPlane::YZ};
         for (int index = 0; index < 3; ++index) {
@@ -446,7 +526,7 @@ private slots:
         QVERIFY(window.document().features().empty());
         QVERIFY(!window.isWindowModified());
         auto* tree = window.findChild<QTreeWidget*>("featureTree");
-        QCOMPARE(tree->currentItem()->text(0), QString("Right"));
+        QCOMPARE(tree->currentItem()->text(0), QString("Right Plane"));
         window.trigger("actionCreateSketch");
         QCOMPARE(window.document().features().size(), std::size_t(1));
         QCOMPARE(window.document().features().front().sketch.plane, modeling::SketchPlane::YZ);

@@ -125,6 +125,64 @@ modeling::SketchEntity readEntity(const QJsonValue& value)
     } else fail("Unsupported sketch entity type.");
     return entity;
 }
+QJsonObject writePointRef(const modeling::SketchPointRef& ref)
+{
+    const char* role = nullptr;
+    switch (ref.role) {
+    case modeling::PointRole::Origin: role = "origin"; break;
+    case modeling::PointRole::First: role = "first"; break;
+    case modeling::PointRole::Second: role = "second"; break;
+    case modeling::PointRole::Center: role = "center"; break;
+    default: fail("Unsupported sketch point role.");
+    }
+    return {{"entity", q(ref.entityId)}, {"point", role}};
+}
+modeling::SketchPointRef readPointRef(const QJsonValue& value)
+{
+    if (!value.isObject()) fail("Sketch relation point must be an object.");
+    const auto object = value.toObject();
+    fields(object, {"entity", "point"}, "Sketch point reference");
+    modeling::SketchPointRef ref;
+    ref.entityId = stringValue(object.value("entity"), "Point entity ID").toStdString();
+    const auto role = stringValue(object.value("point"), "Point role");
+    if (role == "origin") ref.role = modeling::PointRole::Origin;
+    else if (role == "first") ref.role = modeling::PointRole::First;
+    else if (role == "second") ref.role = modeling::PointRole::Second;
+    else if (role == "center") ref.role = modeling::PointRole::Center;
+    else fail("Unsupported sketch point role.");
+    if (ref.role == modeling::PointRole::Origin) {
+        if (!ref.entityId.empty()) fail("The fixed sketch origin cannot reference an entity.");
+    } else validId(ref.entityId);
+    return ref;
+}
+QJsonObject writeRelation(const modeling::SketchRelation& relation)
+{
+    const char* type = nullptr;
+    switch (relation.kind) {
+    case modeling::RelationKind::Coincident: type = "coincident"; break;
+    case modeling::RelationKind::Horizontal: type = "horizontal"; break;
+    case modeling::RelationKind::Vertical: type = "vertical"; break;
+    default: fail("Unsupported sketch relation type.");
+    }
+    return {{"id", q(relation.id)}, {"type", type}, {"first", writePointRef(relation.first)}, {"second", writePointRef(relation.second)}};
+}
+modeling::SketchRelation readRelation(const QJsonValue& value)
+{
+    if (!value.isObject()) fail("Sketch relation must be an object.");
+    const auto object = value.toObject();
+    fields(object, {"id", "type", "first", "second"}, "Sketch relation");
+    modeling::SketchRelation relation;
+    relation.id = stringValue(object.value("id"), "Relation ID").toStdString();
+    validId(relation.id);
+    const auto type = stringValue(object.value("type"), "Relation type");
+    if (type == "coincident") relation.kind = modeling::RelationKind::Coincident;
+    else if (type == "horizontal") relation.kind = modeling::RelationKind::Horizontal;
+    else if (type == "vertical") relation.kind = modeling::RelationKind::Vertical;
+    else fail("Unsupported sketch relation type.");
+    relation.first = readPointRef(object.value("first"));
+    relation.second = readPointRef(object.value("second"));
+    return relation;
+}
 QJsonObject writeBox(BoxParameters box)
 {
     return {{"width", box.width}, {"depth", box.depth}, {"height", box.height}};
@@ -146,6 +204,7 @@ void validSketch(const modeling::Sketch& sketch)
             if (!std::isfinite(coordinate) || std::abs(coordinate) > maximumLength)
                 fail("Sketch coordinates must be finite and within the prototype's 1e9 mm limit.");
     }
+    modeling::validateSketchRelations(sketch);
     // Open sketches are valid document data. Closed-profile validation belongs
     // to the extrusion operation; drawing geometry still validates entity lengths.
     if (!sketch.entities.empty()) (void)modeling::sketchShape(sketch);
@@ -341,7 +400,7 @@ PartDocument PartDocument::load(const QString& path)
     if (root.value("format") != QJsonValue("TheCAD.Part")) fail("Unsupported document format; expected TheCAD.Part.");
     if (root.value("units") != QJsonValue("mm")) fail("Unsupported units; this prototype supports millimeters only.");
     const auto versionValue = root.value("version");
-    if (!versionValue.isDouble() || (versionValue.toDouble() != 1 && versionValue.toDouble() != 2)) fail("Unsupported part document version; expected 1 or 2.");
+    if (!versionValue.isDouble() || (versionValue.toDouble() != 1 && versionValue.toDouble() != 2 && versionValue.toDouble() != 3)) fail("Unsupported part document version; expected 1, 2, or 3.");
     const int version = versionValue.toInt();
     if (!root.value("features").isArray()) fail("Part features must be an ordered array.");
     const auto array = root.value("features").toArray();
@@ -366,12 +425,19 @@ PartDocument PartDocument::load(const QString& path)
                 feature.kind = FeatureKind::Box;
                 feature.box = readBox(object.value("parameters"));
             } else if (type == "sketch") {
-                fields(object, {"id", "name", "type", "plane", "entities", "dependencies"}, "Sketch feature");
+                QSet<QString> expected{"id", "name", "type", "plane", "entities", "dependencies"};
+                if (version >= 3) expected.insert("relations");
+                fields(object, expected, "Sketch feature");
                 feature.kind = FeatureKind::Sketch;
                 feature.sketch.plane = readPlane(object.value("plane"));
                 if (!object.value("entities").isArray() || object.value("entities").toArray().size() > int(maximumEntities))
                     fail("Sketch entities must be an array of no more than 1000 elements.");
                 for (const auto& entity : object.value("entities").toArray()) feature.sketch.entities.push_back(readEntity(entity));
+                if (version >= 3) {
+                    if (!object.value("relations").isArray() || object.value("relations").toArray().size() > 4000)
+                        fail("Sketch relations must be an array of no more than 4000 elements.");
+                    for (const auto& relation : object.value("relations").toArray()) feature.sketch.relations.push_back(readRelation(relation));
+                }
             } else if (type == "extrude" || type == "cut") {
                 QSet<QString> expected{"id", "name", "type", "sketch", "contour", "length", "direction", "dependencies"};
                 if (type == "cut") expected.insert("throughAll");
@@ -418,6 +484,9 @@ void PartDocument::save(const QString& path) const
             QJsonArray entities;
             for (const auto& entity : feature.sketch.entities) entities.append(writeEntity(entity));
             object["entities"] = entities;
+            QJsonArray relations;
+            for (const auto& relation : feature.sketch.relations) relations.append(writeRelation(relation));
+            object["relations"] = relations;
         } else {
             object["sketch"] = q(feature.sketchId);
             QJsonArray contour;
@@ -430,7 +499,7 @@ void PartDocument::save(const QString& path) const
         if (feature.kind != FeatureKind::Sketch) resultId = feature.id;
         features.append(object);
     }
-    const QJsonObject root{{"format", "TheCAD.Part"}, {"version", 2}, {"units", "mm"}, {"features", features}, {"resultFeature", q(resultId)}};
+    const QJsonObject root{{"format", "TheCAD.Part"}, {"version", 3}, {"units", "mm"}, {"features", features}, {"resultFeature", q(resultId)}};
     const auto bytes = QJsonDocument(root).toJson(QJsonDocument::Indented);
     if (bytes.size() > maximumDocumentBytes) fail("Part document exceeds the 1 MiB prototype size limit.");
     QSaveFile file(path);

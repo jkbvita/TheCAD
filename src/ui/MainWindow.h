@@ -13,6 +13,9 @@ class QTreeWidgetItem;
 class QListWidget;
 class QTabWidget;
 class QAction;
+class QGroupBox;
+class QDoubleSpinBox;
+class QPushButton;
 
 namespace thecad::ui {
 
@@ -48,6 +51,8 @@ private:
     void updateDocumentUi();
     void updateActions();
     void updateEntityList();
+    void updateEntityProperties();
+    void applySketchEntityEdit(const modeling::SketchEntity& entity);
     const document::Feature* selectedFeature() const;
     void selectFeature(const std::string& id);
     void selectionChanged();
@@ -58,7 +63,7 @@ private:
     void editSelectedFeature();
     void startSketchEditing(const document::Feature& feature);
     bool finishSketch();
-    void addSketchEntity(const modeling::SketchEntity& entity);
+
     void editSketchEntity();
     void deleteSketchEntity();
     void extrude(bool cut);
@@ -85,6 +90,15 @@ private:
     QAction* m_line = nullptr;
     QAction* m_rectangle = nullptr;
     QAction* m_circle = nullptr;
+    QAction* m_selectEntity = nullptr;
+    QGroupBox* m_propertyPanel = nullptr;
+    QLabel* m_entitySummary = nullptr;
+    QDoubleSpinBox* m_propertyFirstX = nullptr;
+    QDoubleSpinBox* m_propertyFirstY = nullptr;
+    QDoubleSpinBox* m_propertySecondX = nullptr;
+    QDoubleSpinBox* m_propertySecondY = nullptr;
+    QDoubleSpinBox* m_propertyRadius = nullptr;
+    QPushButton* m_applyProperties = nullptr;
     std::optional<modeling::SketchPlane> m_selectedPlane;
     bool m_selectingPlane = false;
     std::optional<modeling::Sketch> m_editSketch;

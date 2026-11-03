@@ -69,6 +69,25 @@ void requireNear(double value, double expected)
             "Generated precise geometry must match its numeric parameters");
 }
 
+
+Sketch constrainedRectangle()
+{
+    Sketch sketch{SketchPlane::XY, {
+        {EntityKind::Line, {0,0}, {40,0}, 1, "a"},
+        {EntityKind::Line, {40,0}, {40,30}, 1, "b"},
+        {EntityKind::Line, {40,30}, {0,30}, 1, "c"},
+        {EntityKind::Line, {0,30}, {0,0}, 1, "d"}}};
+    for (std::size_t i = 0; i < 4; ++i) {
+        const auto& entity = sketch.entities[i];
+        sketch.relations.push_back({"join-" + std::to_string(i), RelationKind::Coincident,
+            {entity.id, PointRole::Second}, {sketch.entities[(i + 1) % 4].id, PointRole::First}});
+        sketch.relations.push_back({"axis-" + std::to_string(i), i % 2 ? RelationKind::Vertical : RelationKind::Horizontal,
+            {entity.id, PointRole::First}, {entity.id, PointRole::Second}});
+    }
+    sketch.relations.push_back({"origin", RelationKind::Coincident, {"a", PointRole::First}, {}});
+    return sketch;
+}
+
 void checkPlane(SketchPlane plane)
 {
     const auto sketch = rectangle(plane);
@@ -100,6 +119,47 @@ int main()
         for (const auto plane : {SketchPlane::XY, SketchPlane::XZ, SketchPlane::YZ}) {
             checkPlane(plane);
         }
+        // Exact persistent point equalities survive edits without a general solver.
+        auto constrained = constrainedRectangle();
+        validateSketchRelations(constrained);
+        require(sketchPoints(constrained).size() == 9, "The origin and all line endpoints must have independent stable references");
+        auto edited = constrained.entities[0]; edited.second.x = 55;
+        const auto wider = editSketchEntity(constrained, edited);
+        require(wider.entities[1].first.x == 55 && wider.entities[1].second.x == 55
+            && wider.entities[2].first.x == 55, "Horizontal, vertical, and coincident groups must propagate exact coordinates");
+        requireNear(volume(makeExtrusion(wider, 10, Direction::Positive)), 55 * 30 * 10);
+        require(constrained.entities[1].first.x == 40, "Transactional edits must not mutate the source sketch");
+        edited = constrained.entities[0]; edited.first.x = 1;
+        rejected([&] { editSketchEntity(constrained, edited); });
+        edited = constrained.entities[0]; edited.second = {0,0};
+        rejected([&] { editSketchEntity(constrained, edited); });
+        auto invalidRelations = constrained; invalidRelations.entities[1].first.x = 40.000000001;
+        rejected([&] { sketchShape(invalidRelations); });
+        invalidRelations = constrained; invalidRelations.relations[0].second.entityId = "missing";
+        rejected([&] { validateSketchRelations(invalidRelations); });
+        invalidRelations = constrained; invalidRelations.relations[0].second.role = PointRole::Center;
+        rejected([&] { validateSketchRelations(invalidRelations); });
+        invalidRelations = constrained; auto duplicateRelation = invalidRelations.relations[0]; duplicateRelation.id = "duplicate";
+        invalidRelations.relations.push_back(duplicateRelation);
+        rejected([&] { validateSketchRelations(invalidRelations); });
+        invalidRelations = constrained; invalidRelations.relations[0].id = "origin";
+        rejected([&] { validateSketchRelations(invalidRelations); });
+        const auto removed = removeSketchEntity(constrained, "b");
+        require(removed.entities.size() == 3 && removed.relations.size() == 6, "Deleting an entity must explicitly remove its relations");
+        validateSketchRelations(removed);
+        Sketch centeredCircle{SketchPlane::XY, {{EntityKind::Circle, {0,0}, {}, 5, "circle"}}};
+        centeredCircle.relations.push_back({"center-at-origin", RelationKind::Coincident, {"circle", PointRole::Center}, {}});
+        auto circleEdit = centeredCircle.entities[0]; circleEdit.radius = 8;
+        require(editSketchEntity(centeredCircle, circleEdit).entities[0].radius == 8, "A fixed circle center must still allow radius editing");
+        circleEdit.first.x = 1;
+        rejected([&] { editSketchEntity(centeredCircle, circleEdit); });
+        auto circleOnEndpoint = constrained;
+        circleOnEndpoint.entities.push_back({EntityKind::Circle, {40,30}, {}, 4, "circle"});
+        circleOnEndpoint.relations.push_back({"center-on-endpoint", RelationKind::Coincident,
+            {"circle", PointRole::Center}, {"b", PointRole::Second}});
+        edited = circleOnEndpoint.entities[0]; edited.second.x = 50;
+        require(editSketchEntity(circleOnEndpoint, edited).entities.back().first.x == 50,
+            "Circle-center connections must propagate with the connected line endpoint");
         const auto profile = rectangle();
         validateClosedProfile(profile);
         const auto original = makeExtrusion(profile, 25, Direction::Positive);

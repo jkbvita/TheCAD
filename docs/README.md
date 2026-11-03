@@ -17,6 +17,11 @@ automatically.
 
 ## Current guides
 
+- [Independent Windows launch and packaging](windows-deployment.md)
+- [Sketch interaction and desktop requirements](requirements/sketch-interactions-desktop.md)
+- [Supported sketch relations](requirements/sketch-relations.md)
+- [Relation representation](decisions/0005-sketch-relations.md)
+- [Desktop layout and deployment](decisions/0006-sketch-desktop-layout.md)
 - [Windows build, run, and sketch workflow](build-windows.md)
 - [Graphical origin-plane selection requirements](requirements/graphical-plane-selection.md)
 - [Graphical plane-selection decision](decisions/0004-graphical-origin-planes.md)
@@ -29,5 +34,7 @@ automatically.
 - [Window and part-document milestone](verification/part-documents-viewport.md)
 
 ## Current verification
+
+- [Sketch relations, layout and independent startup](verification/sketch-relations-desktop.md)
 
 - [Graphical plane-selection checks](verification/graphical-plane-selection.md)

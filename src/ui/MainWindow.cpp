@@ -4,6 +4,16 @@
 #include "modeling/ReferencePlanes.h"
 
 #include <QAction>
+#include <QApplication>
+#include <QFrame>
+#include <QGridLayout>
+#include <QGroupBox>
+#include <QPainter>
+#include <QPainterPath>
+#include <QPalette>
+#include <QStyleFactory>
+#include <QStyle>
+#include <QSplitter>
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
@@ -37,6 +47,88 @@
 
 namespace thecad::ui {
 namespace {
+// Original line-art icons, painted at device-independent resolution.
+QIcon commandIcon(const QString& name)
+{
+    QPixmap image(64, 64);
+    image.fill(Qt::transparent);
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.scale(2.0, 2.0);
+    painter.setPen(QPen(QColor("#276a91"), 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.setBrush(Qt::NoBrush);
+    if (name.contains("Circle")) painter.drawEllipse(QRectF(6, 6, 20, 20));
+    else if (name.contains("Rectangle")) painter.drawRect(QRectF(5, 8, 22, 16));
+    else if (name.contains("Line")) {
+        painter.drawLine(QPointF(5, 26), QPointF(27, 6));
+        painter.setBrush(Qt::white);
+        painter.drawRect(QRectF(3, 24, 4, 4));
+        painter.drawRect(QRectF(25, 4, 4, 4));
+    } else if (name.contains("Arc")) {
+        painter.drawArc(QRectF(5, 5, 22, 22), 15 * 16, 270 * 16);
+    } else if (name.contains("Spline")) {
+        QPainterPath path(QPointF(4, 25));
+        path.cubicTo(12, -10, 17, 43, 28, 5);
+        painter.drawPath(path);
+    } else if (name.contains("Sketch") || name.contains("Exit")) {
+        painter.drawRect(QRectF(5, 6, 19, 21));
+        painter.setPen(QPen(QColor("#d49024"), 2.4, Qt::SolidLine, Qt::RoundCap));
+        painter.drawLine(QPointF(13, 22), QPointF(28, 5));
+    } else if (name.contains("Origin")) {
+        painter.setPen(QPen(QColor("#b83b42"), 1.6));
+        painter.drawLine(5, 25, 27, 25); painter.drawLine(8, 28, 8, 4);
+        painter.setBrush(QColor("#b83b42")); painter.drawEllipse(QPointF(8, 25), 2.5, 2.5);
+    } else if (name.contains("Plane")) {
+        painter.drawPolygon(QPolygonF{QPointF(4, 11), QPointF(23, 5), QPointF(28, 23), QPointF(9, 28)});
+    } else if (name.contains("Extrude") || name.contains("Part")) {
+        painter.drawPolygon(QPolygonF{QPointF(6, 10), QPointF(20, 5), QPointF(27, 11), QPointF(13, 17)});
+        painter.drawPolygon(QPolygonF{QPointF(6, 10), QPointF(13, 17), QPointF(13, 28), QPointF(6, 21)});
+        painter.drawPolygon(QPolygonF{QPointF(13, 17), QPointF(27, 11), QPointF(27, 22), QPointF(13, 28)});
+        if (name.contains("Cut")) { painter.setPen(QPen(QColor("#b83b42"), 2)); painter.drawLine(18, 12, 24, 19); }
+    } else if (name.contains("Select")) {
+        painter.drawPolygon(QPolygonF{QPointF(8, 4), QPointF(8, 26), QPointF(14, 20), QPointF(20, 29), QPointF(24, 27), QPointF(18, 18), QPointF(27, 17)});
+    } else {
+        painter.drawRect(QRectF(6, 7, 20, 18));
+        painter.drawLine(8, 24, 25, 8);
+        painter.drawEllipse(QPointF(16, 16), 3, 3);
+    }
+    return QIcon(image);
+}
+
+QWidget* commandGroup(QHBoxLayout* row, const QString& name, QGridLayout*& grid)
+{
+    auto* group = new QWidget;
+    auto* column = new QVBoxLayout(group);
+    column->setContentsMargins(6, 0, 6, 0);
+    column->setSpacing(1);
+    grid = new QGridLayout;
+    grid->setContentsMargins(0, 0, 0, 0);
+    grid->setHorizontalSpacing(2);
+    grid->setVerticalSpacing(1);
+    column->addLayout(grid);
+    auto* caption = new QLabel(name);
+    caption->setAlignment(Qt::AlignCenter);
+    caption->setStyleSheet("color: #626a72; font-size: 10px;");
+    column->addWidget(caption);
+    row->addWidget(group);
+    auto* separator = new QFrame;
+    separator->setFrameShape(QFrame::VLine);
+    separator->setStyleSheet("color: #d1d5d9;");
+    row->addWidget(separator);
+    return group;
+}
+
+QToolButton* commandButton(QAction* action, QGridLayout* grid, int row, int column, bool large = false)
+{
+    auto* button = new QToolButton;
+    button->setDefaultAction(action);
+    button->setToolButtonStyle(large ? Qt::ToolButtonTextUnderIcon : Qt::ToolButtonTextBesideIcon);
+    button->setIconSize(large ? QSize(28, 28) : QSize(18, 18));
+    button->setAutoRaise(true);
+    button->setAttribute(Qt::WA_AlwaysShowToolTips);
+    grid->addWidget(button, row, column, large ? 3 : 1, 1);
+    return button;
+}
 QDoubleSpinBox* number(QFormLayout* layout, const QString& label, double value, bool positive = false)
 {
     auto* editor = new QDoubleSpinBox;
@@ -93,6 +185,10 @@ struct MainWindow::OperationDraft {
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent), m_document(document::PartDocument::createEmpty())
 {
+    // Windows dark widget themes can ignore a light per-window palette. Use
+    // Qt's palette-aware widget style; native Windows title bars/dialogs remain.
+    if (QApplication::style()->objectName().compare("fusion", Qt::CaseInsensitive) != 0)
+        QApplication::setStyle(QStyleFactory::create("Fusion"));
     resize(1200, 800);
     m_viewport = new CadViewport(m_document.shape(), this);
     setCentralWidget(m_viewport);
@@ -114,85 +210,290 @@ MainWindow::MainWindow(QWidget* parent)
     fileMenu->addSeparator();
     addCommand("E&xit", "actionExit", QKeySequence(Qt::ALT | Qt::Key_F4), [this] { close(); });
 
-    auto* modelingToolbar = addToolBar("Modeling");
+    // Keep the standard Windows window and Qt menus, with a light workspace palette.
+    QPalette light = palette();
+    light.setColor(QPalette::Window, QColor("#f5f6f7"));
+    light.setColor(QPalette::Base, QColor("#ffffff"));
+    light.setColor(QPalette::AlternateBase, QColor("#f1f4f6"));
+    light.setColor(QPalette::Text, QColor("#20282f"));
+    light.setColor(QPalette::WindowText, QColor("#20282f"));
+    light.setColor(QPalette::Button, QColor("#f5f6f7"));
+    light.setColor(QPalette::ButtonText, QColor("#20282f"));
+    light.setColor(QPalette::Highlight, QColor("#c6e3f3"));
+    light.setColor(QPalette::HighlightedText, QColor("#173e55"));
+    light.setColor(QPalette::Disabled, QPalette::Text, QColor("#989fa5"));
+    light.setColor(QPalette::Disabled, QPalette::ButtonText, QColor("#989fa5"));
+    QApplication::setPalette(light);
+    setPalette(light);
+    setStyleSheet("QMainWindow { background: #f5f6f7; } "
+                  "QToolBar { background: #f5f6f7; border: none; spacing: 3px; } "
+                  "QMenuBar, QMenu { background: #f5f6f7; color: #20282f; } "
+                  "QMenu::item:selected, QMenuBar::item:selected { background: #d9ebf6; } "
+                  "QMenu::item:disabled { color: #989fa5; } "
+                  "QTabWidget::pane { border: 1px solid #cbd0d5; background: #f5f6f7; } "
+                  "QTabBar::tab { padding: 4px 15px; background: #e6e8eb; border: 1px solid #cbd0d5; } "
+                  "QTabBar::tab:selected { background: #ffffff; color: #174c6e; } "
+                  "QToolButton:hover { background: #d9ebf6; border-radius: 2px; } "
+                  "QToolButton:disabled { color: #a3a8ad; } "
+                  "QTreeWidget, QListWidget { border: 1px solid #d5d9dd; background: #ffffff; } "
+                  "QDockWidget::title { background: #e9ecef; padding: 5px; } "
+                  "QGroupBox { font-weight: 600; margin-top: 10px; border: 1px solid #d5d9dd; } "
+                  "QGroupBox::title { subcontrol-origin: margin; left: 7px; padding: 0 3px; }");
+
+    auto* editMenu = menuBar()->addMenu("&Edit");
+    auto* viewMenu = menuBar()->addMenu("&View");
+    auto* insertMenu = menuBar()->addMenu("&Insert");
+    auto* toolsMenu = menuBar()->addMenu("&Tools");
+    auto* windowMenu = menuBar()->addMenu("&Window");
+    auto* helpMenu = menuBar()->addMenu("&Help");
+
+    auto* modelingToolbar = addToolBar("Command Manager");
     modelingToolbar->setObjectName("modelingToolbar");
     modelingToolbar->setMovable(false);
+    modelingToolbar->setFloatable(false);
     m_tabs = new QTabWidget;
     m_tabs->setObjectName("modelingTabs");
-    m_tabs->setMaximumHeight(88);
+    m_tabs->setTabPosition(QTabWidget::South);
+    m_tabs->setMaximumHeight(126);
+    m_tabs->setMinimumHeight(118);
     m_tabs->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     modelingToolbar->addWidget(m_tabs);
-    auto* features = new QWidget;
-    auto* featureButtons = new QHBoxLayout(features);
-    auto* sketch = new QWidget;
-    auto* sketchButtons = new QHBoxLayout(sketch);
-    m_tabs->addTab(features, "FEATURES");
-    m_tabs->addTab(sketch, "SKETCH");
+    const auto page = [this](const QString& name) {
+        auto* widget = new QWidget;
+        auto* row = new QHBoxLayout(widget);
+        row->setContentsMargins(2, 3, 2, 2);
+        row->setSpacing(0);
+        m_tabs->addTab(widget, name);
+        return row;
+    };
+    auto* featureButtons = page("Features");
+    auto* sketchButtons = page("Sketch");
+    auto* evaluateButtons = page("Evaluate");
+    const auto action = [this](const QString& text, const char* name, auto callback) {
+        auto* result = new QAction(commandIcon(text), text, this);
+        result->setObjectName(name);
+        result->setToolTip(text);
+        connect(result, &QAction::triggered, this, callback);
+        return result;
+    };
+    const auto unavailable = [this](const QString& text, const char* name) {
+        auto* result = new QAction(commandIcon(text), text, this);
+        result->setObjectName(name);
+        result->setEnabled(false);
+        result->setToolTip(text + " — not implemented in this milestone.");
+        return result;
+    };
     const auto modelingAction = [this](QHBoxLayout* layout, const QString& text,
                                       const char* name, auto callback) {
-        auto* action = new QAction(text, this);
-        action->setObjectName(name);
+        auto* result = new QAction(text, this);
+        result->setObjectName(name);
         auto* button = new QToolButton;
-        button->setDefaultAction(action);
+        button->setDefaultAction(result);
         button->setToolButtonStyle(Qt::ToolButtonTextOnly);
         layout->addWidget(button);
-        connect(action, &QAction::triggered, this, callback);
-        return action;
+        connect(result, &QAction::triggered, this, callback);
+        return result;
     };
-    m_extrude = modelingAction(featureButtons, "Extrude", "actionExtrude", [this] { extrude(false); });
-    m_cut = modelingAction(featureButtons, "Extruded Cut", "actionExtrudedCut", [this] { extrude(true); });
+    QGridLayout* featureGrid = nullptr;
+    commandGroup(featureButtons, "Solid features", featureGrid);
+    m_extrude = action("Extrude", "actionExtrude", [this] { extrude(false); });
+    m_cut = action("Extruded Cut", "actionExtrudedCut", [this] { extrude(true); });
+    commandButton(m_extrude, featureGrid, 0, 0, true);
+    commandButton(m_cut, featureGrid, 0, 1, true);
     featureButtons->addStretch();
-    m_createSketch = modelingAction(sketchButtons, "Sketch", "actionCreateSketch", [this] { createSketch(); });
-    m_line = modelingAction(sketchButtons, "Line", "actionLine", [this] { m_viewport->setSketchTool(modeling::EntityKind::Line); });
-    m_rectangle = modelingAction(sketchButtons, "Rectangle", "actionRectangle", [this] { m_viewport->setSketchTool(modeling::EntityKind::Rectangle); });
-    m_circle = modelingAction(sketchButtons, "Circle", "actionCircle", [this] { m_viewport->setSketchTool(modeling::EntityKind::Circle); });
-    m_finishSketch = modelingAction(sketchButtons, "Finish Sketch", "actionFinishSketch", [this] { finishSketch(); });
+
+    QGridLayout *sketchGrid = nullptr, *drawGrid = nullptr, *modifyGrid = nullptr, *relationGrid = nullptr;
+    commandGroup(sketchButtons, "Sketch", sketchGrid);
+    m_createSketch = action("Sketch", "actionCreateSketch", [this] { createSketch(); });
+    m_finishSketch = action("Exit Sketch", "actionFinishSketch", [this] { finishSketch(); });
+    commandButton(m_createSketch, sketchGrid, 0, 0, true);
+    commandButton(m_finishSketch, sketchGrid, 0, 1, true);
+    commandButton(unavailable("Smart Dimension", "actionSmartDimension"), sketchGrid, 0, 2, true);
+    commandGroup(sketchButtons, "Draw", drawGrid);
+    m_selectEntity = action("Select", "actionSelectSketchEntity", [this] { m_viewport->selectSketchTool(); });
+    m_line = action("Line", "actionLine", [this] { m_viewport->setSketchTool(modeling::EntityKind::Line); });
+    m_rectangle = action("Rectangle", "actionRectangle", [this] { m_viewport->setSketchTool(modeling::EntityKind::Rectangle); });
+    m_circle = action("Circle", "actionCircle", [this] { m_viewport->setSketchTool(modeling::EntityKind::Circle); });
+    commandButton(m_selectEntity, drawGrid, 0, 0);
+    commandButton(m_line, drawGrid, 1, 0);
+    commandButton(m_rectangle, drawGrid, 2, 0);
+    commandButton(m_circle, drawGrid, 0, 1);
+    commandButton(unavailable("Arc", "actionArc"), drawGrid, 1, 1);
+    commandButton(unavailable("Spline", "actionSpline"), drawGrid, 2, 1);
+    commandButton(unavailable("Centerline", "actionCenterline"), drawGrid, 0, 2);
+    commandButton(unavailable("Construction Line", "actionConstructionLine"), drawGrid, 1, 2);
+    commandGroup(sketchButtons, "Modify", modifyGrid);
+    const QList<QPair<QString, const char*>> modifyCommands = {
+        {"Trim Entities", "actionTrimEntities"}, {"Convert Entities", "actionConvertEntities"},
+        {"Offset Entities", "actionOffsetEntities"}, {"Mirror Entities", "actionMirrorEntities"},
+        {"Linear Sketch Pattern", "actionLinearSketchPattern"}, {"Move Entities", "actionMoveEntities"}};
+    for (int i = 0; i < modifyCommands.size(); ++i)
+        commandButton(unavailable(modifyCommands[i].first, modifyCommands[i].second), modifyGrid, i % 3, i / 3);
+    commandGroup(sketchButtons, "Relations / inspection", relationGrid);
+    commandButton(unavailable("Display/Delete Relations", "actionDisplayDeleteRelations"), relationGrid, 0, 0);
+    commandButton(unavailable("Repair Sketch", "actionRepairSketch"), relationGrid, 1, 0);
+    commandButton(unavailable("Shaded Sketch Contours", "actionShadedSketchContours"), relationGrid, 2, 0);
     sketchButtons->addStretch();
+    QGridLayout* evaluateGrid = nullptr;
+    commandGroup(evaluateButtons, "Evaluate", evaluateGrid);
+    commandButton(unavailable("Measure", "actionMeasure"), evaluateGrid, 0, 0, true);
+    commandButton(unavailable("Mass Properties", "actionMassProperties"), evaluateGrid, 0, 1, true);
+    commandButton(unavailable("Check Geometry", "actionCheckGeometry"), evaluateGrid, 0, 2, true);
+    evaluateButtons->addStretch();
 
     addToolBarBreak();
     auto* toolbar = addToolBar("View");
+    toolbar->setObjectName("viewToolbar");
     toolbar->setMovable(false);
-    auto* fit = toolbar->addAction("Fit all");
+    toolbar->setFloatable(false);
+    auto* fit = toolbar->addAction(commandIcon("Fit"), "Fit All");
     fit->setObjectName("actionFitAll");
     fit->setShortcut(QKeySequence(Qt::Key_F));
     connect(fit, &QAction::triggered, m_viewport, &CadViewport::fitAll);
-    auto* reset = toolbar->addAction("Isometric");
+    auto* reset = toolbar->addAction(commandIcon("Part"), "Isometric");
     reset->setObjectName("actionIsometric");
     reset->setShortcut(QKeySequence(Qt::Key_Home));
     connect(reset, &QAction::triggered, m_viewport, &CadViewport::resetView);
-
-    auto* historyDock = new QDockWidget("Part history", this);
+    viewMenu->addAction(fit);
+    viewMenu->addAction(reset);
+    insertMenu->addAction(m_createSketch);
+    insertMenu->addAction(m_extrude);
+    insertMenu->addAction(m_cut);
+    toolsMenu->addAction(m_selectEntity);
+    toolsMenu->addSeparator();
+    toolsMenu->addAction(findChild<QAction*>("actionDisplayDeleteRelations"));
+    toolsMenu->addAction(findChild<QAction*>("actionRepairSketch"));
+    auto* maximize = windowMenu->addAction("Maximize");
+    connect(maximize, &QAction::triggered, this, &QWidget::showMaximized);
+    auto* restore = windowMenu->addAction("Restore");
+    connect(restore, &QAction::triggered, this, &QWidget::showNormal);
+    auto* about = helpMenu->addAction("About TheCAD");
+    connect(about, &QAction::triggered, this, [this] {
+        QMessageBox::about(this, "About TheCAD", "TheCAD\nOpen-source parametric mechanical CAD prototype.\nC++ / Qt 6 / Open CASCADE Technology");
+    });
+    auto* historyDock = new QDockWidget("FeatureManager", this);
     historyDock->setObjectName("historyDock");
     historyDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     historyDock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
     auto* history = new QWidget;
     auto* historyLayout = new QVBoxLayout(history);
+    historyLayout->setContentsMargins(5, 5, 5, 5);
+    historyLayout->setSpacing(5);
+    auto* historySplitter = new QSplitter(Qt::Vertical);
+    historySplitter->setChildrenCollapsible(false);
     m_tree = new QTreeWidget;
     m_tree->setObjectName("featureTree");
     m_tree->setHeaderHidden(true);
-    m_tree->setMinimumWidth(200);
-    historyLayout->addWidget(m_tree);
+    m_tree->setMinimumSize(240, 170);
+    m_tree->setIndentation(17);
+    m_tree->setIconSize(QSize(18, 18));
+    historySplitter->addWidget(m_tree);
+    auto* geometryPanel = new QWidget;
+    auto* geometryLayout = new QVBoxLayout(geometryPanel);
+    geometryLayout->setContentsMargins(0, 0, 0, 0);
+    geometryLayout->setSpacing(4);
     auto* editButton = new QToolButton;
     m_editFeature = new QAction("Edit selected feature", this);
     m_editFeature->setObjectName("actionEditFeature");
     editButton->setDefaultAction(m_editFeature);
-    historyLayout->addWidget(editButton);
-    historyLayout->addWidget(new QLabel("Sketch geometry (millimeters)"));
+    geometryLayout->addWidget(editButton);
+    geometryLayout->addWidget(new QLabel("Sketch entities"));
     m_entities = new QListWidget;
     m_entities->setObjectName("sketchEntities");
-    historyLayout->addWidget(m_entities);
+    m_entities->setMinimumHeight(65);
+    m_entities->setMaximumHeight(150);
+    geometryLayout->addWidget(m_entities);
+    m_propertyPanel = new QGroupBox("Selected entity properties");
+    m_propertyPanel->setObjectName("entityProperties");
+    auto* propertyLayout = new QVBoxLayout(m_propertyPanel);
+    propertyLayout->setContentsMargins(7, 14, 7, 5);
+    m_entitySummary = new QLabel;
+    m_entitySummary->setWordWrap(true);
+    propertyLayout->addWidget(m_entitySummary);
+    auto* propertyForm = new QFormLayout;
+    propertyForm->setContentsMargins(0, 0, 0, 0);
+    propertyForm->setSpacing(3);
+    m_propertyFirstX = number(propertyForm, "First / center U", 0.0);
+    m_propertyFirstY = number(propertyForm, "First / center V", 0.0);
+    m_propertySecondX = number(propertyForm, "Second U", 0.0);
+    m_propertySecondY = number(propertyForm, "Second V", 0.0);
+    m_propertyRadius = number(propertyForm, "Radius", 1.0, true);
+    m_propertyFirstX->setObjectName("propertyFirstX");
+    m_propertyFirstY->setObjectName("propertyFirstY");
+    m_propertySecondX->setObjectName("propertySecondX");
+    m_propertySecondY->setObjectName("propertySecondY");
+    m_propertyRadius->setObjectName("propertyRadius");
+    propertyLayout->addLayout(propertyForm);
+    m_applyProperties = new QPushButton("Apply properties");
+    m_applyProperties->setObjectName("applyEntityProperties");
+    propertyLayout->addWidget(m_applyProperties);
+    geometryLayout->addWidget(m_propertyPanel);
     auto* entityButtons = new QHBoxLayout;
-    m_editEntity = modelingAction(entityButtons, "Edit geometry", "actionEditEntity", [this] { editSketchEntity(); });
+    m_editEntity = modelingAction(entityButtons, "Edit geometry...", "actionEditEntity", [this] { editSketchEntity(); });
     m_deleteEntity = modelingAction(entityButtons, "Remove", "actionDeleteEntity", [this] { deleteSketchEntity(); });
-    historyLayout->addLayout(entityButtons);
+    geometryLayout->addLayout(entityButtons);
+    historySplitter->addWidget(geometryPanel);
+    historySplitter->setStretchFactor(0, 2);
+    historySplitter->setStretchFactor(1, 1);
+    historyLayout->addWidget(historySplitter);
     historyDock->setWidget(history);
     addDockWidget(Qt::LeftDockWidgetArea, historyDock);
+    resizeDocks({historyDock}, {300}, Qt::Horizontal);
+    viewMenu->addSeparator();
+    viewMenu->addAction(historyDock->toggleViewAction());
+    editMenu->addAction(m_editEntity);
+    editMenu->addAction(m_deleteEntity);
     connect(m_tree, &QTreeWidget::itemSelectionChanged, this, [this] { selectionChanged(); });
     connect(m_tree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem*, int) { editSelectedFeature(); });
     connect(m_editFeature, &QAction::triggered, this, [this] { editSelectedFeature(); });
     connect(m_entities, &QListWidget::itemDoubleClicked, this, [this] { editSketchEntity(); });
-    connect(m_entities, &QListWidget::itemSelectionChanged, this, [this] { updateActions(); });
-    connect(m_viewport, &CadViewport::sketchEntityCreated, this, [this](const modeling::SketchEntity& entity) { addSketchEntity(entity); });
+    connect(m_entities, &QListWidget::itemSelectionChanged, this, [this] {
+        updateActions();
+        updateEntityProperties();
+        if (m_editSketch && m_entities->currentRow() >= 0)
+            m_viewport->selectSketchEntity(QString::fromStdString(m_editSketch->entities.at(std::size_t(m_entities->currentRow())).id));
+    });
+    connect(m_applyProperties, &QPushButton::clicked, this, [this] {
+        if (!m_editSketch || m_entities->currentRow() < 0) return;
+        auto entity = m_editSketch->entities.at(std::size_t(m_entities->currentRow()));
+        entity.first = {m_propertyFirstX->value(), m_propertyFirstY->value()};
+        if (entity.kind == modeling::EntityKind::Circle) entity.radius = m_propertyRadius->value();
+        else entity.second = {m_propertySecondX->value(), m_propertySecondY->value()};
+        applySketchEntityEdit(entity);
+    });
+    connect(m_viewport, &CadViewport::sketchEntitySelected, this, [this](const QString& id) {
+        if (!m_editSketch) return;
+        for (std::size_t i = 0; i < m_editSketch->entities.size(); ++i) {
+            if (m_editSketch->entities[i].id == id.toStdString()) {
+                m_entities->setCurrentRow(int(i));
+                updateEntityProperties();
+                return;
+            }
+        }
+        m_entities->setCurrentRow(-1);
+    });
+    connect(m_viewport, &CadViewport::sketchInteractionError, this, [this](const QString& message) {
+        statusBar()->showMessage(message);
+    });
+    connect(m_viewport, &CadViewport::sketchPointSelected, this, [this](const QString& id, int role) {
+        const QString pointName = id.isEmpty() ? "Sketch origin (0, 0)" : QString("%1 of %2")
+            .arg(role == int(modeling::PointRole::Second) ? "Endpoint" : role == int(modeling::PointRole::Center) ? "Center" : "Start point", id);
+        statusBar()->showMessage(pointName + " selected. Snapping uses exact sketch coordinates.");
+    });
+    connect(m_viewport, &CadViewport::sketchChanged, this, [this](const modeling::Sketch& sketch) {
+        if (!m_editSketch) return;
+        try {
+            modeling::validateSketchRelations(sketch);
+            (void)modeling::sketchShape(sketch);
+            m_editSketch = sketch;
+            setWindowModified(true);
+            updateEntityList();
+            updateActions();
+        } catch (const std::exception& error) {
+            m_viewport->setSketch(*m_editSketch);
+            reportError(QString::fromUtf8(error.what()));
+        }
+    });
     connect(m_viewport, &CadViewport::sketchRegionClicked, this, [this](modeling::Point2 point) { operationRegionClicked(point); });
     connect(m_viewport, &CadViewport::referencePlaneSelected, this, [this](modeling::SketchPlane plane) { referencePlaneSelected(plane); });
     connect(m_viewport, &CadViewport::planeSelectionCanceled, this, [this] { planeSelectionCanceled(); });
@@ -472,20 +773,25 @@ void MainWindow::updateDocumentUi()
     {
         const QSignalBlocker blocker(m_tree);
         m_tree->clear();
-        auto* part = new QTreeWidgetItem(m_tree, {"Part"});
+        auto* part = new QTreeWidgetItem(m_tree, {name});
+        part->setIcon(0, commandIcon("Part"));
         for (const auto& feature : m_document.features()) {
             auto* item = new QTreeWidgetItem(part, {QString::fromStdString(feature.name)});
             item->setData(0, Qt::UserRole, QString::fromStdString(feature.id));
             item->setToolTip(0, QString::fromStdString(feature.id));
+            item->setIcon(0, commandIcon(feature.kind == document::FeatureKind::Sketch ? "Sketch"
+                : feature.kind == document::FeatureKind::Cut ? "Extruded Cut" : "Extrude"));
             if (feature.id == m_selectedId) m_tree->setCurrentItem(item);
         }
         part->setExpanded(true);
         auto* origin = new QTreeWidgetItem(m_tree, {"Origin"});
         origin->setData(0, Qt::UserRole, "origin:");
+        origin->setIcon(0, commandIcon("Origin"));
         for (const auto plane : {modeling::SketchPlane::XY, modeling::SketchPlane::XZ, modeling::SketchPlane::YZ}) {
             const QString key = plane == modeling::SketchPlane::XY ? "origin:XY"
                 : plane == modeling::SketchPlane::XZ ? "origin:XZ" : "origin:YZ";
-            auto* reference = new QTreeWidgetItem(origin, {modeling::referencePlaneName(plane)});
+            auto* reference = new QTreeWidgetItem(origin, {QString("%1 Plane").arg(modeling::referencePlaneName(plane))});
+            reference->setIcon(0, commandIcon("Plane"));
             reference->setData(0, Qt::UserRole, key);
             reference->setToolTip(0, QString("%1 origin reference plane").arg(modeling::referencePlaneName(plane)));
             if (m_selectedPlane && *m_selectedPlane == plane) m_tree->setCurrentItem(reference);
@@ -504,8 +810,13 @@ void MainWindow::updateEntityList()
     const auto* feature = selectedFeature();
     const modeling::Sketch* sketch = m_editSketch ? &*m_editSketch
         : feature && feature->kind == document::FeatureKind::Sketch ? &feature->sketch : nullptr;
-    if (sketch) for (const auto& entity : sketch->entities) m_entities->addItem(entityText(entity));
+    if (sketch) for (const auto& entity : sketch->entities) {
+        auto* item = new QListWidgetItem(entityText(entity), m_entities);
+        item->setData(Qt::UserRole, QString::fromStdString(entity.id));
+        item->setToolTip(QString::fromStdString(entity.id));
+    }
     if (m_entities->count()) m_entities->setCurrentRow(std::min(std::max(selectedRow, 0), m_entities->count() - 1));
+    updateEntityProperties();
 }
 
 void MainWindow::updateActions()
@@ -519,6 +830,7 @@ void MainWindow::updateActions()
         if (auto* action = findChild<QAction*>(name)) action->setEnabled(!operation && !selecting);
     }
     m_createSketch->setEnabled(!editing && !operation && !selecting);
+    m_selectEntity->setEnabled(editing && !operation);
     m_line->setEnabled(editing && !operation);
     m_rectangle->setEnabled(editing && !operation);
     m_circle->setEnabled(editing && !operation);
@@ -527,6 +839,7 @@ void MainWindow::updateActions()
     m_editFeature->setEnabled(!editing && !operation && !selecting && selected);
     m_editEntity->setEnabled(editing && !operation && m_entities->currentRow() >= 0);
     m_deleteEntity->setEnabled(editing && !operation && m_entities->currentRow() >= 0);
+    m_applyProperties->setEnabled(editing && !operation && m_entities->currentRow() >= 0);
     bool profile = false;
     if (!editing && !operation && !selecting) {
         for (const auto& feature : m_document.features()) {
@@ -602,7 +915,7 @@ void MainWindow::startSketchEditing(const document::Feature& feature)
     m_viewport->setSketchTool(modeling::EntityKind::Line);
     m_tabs->setCurrentIndex(1);
     updateDocumentUi();
-    statusBar()->showMessage("Sketch: click two model points | Middle/right drag pans | Wheel zooms | Finish Sketch commits changes");
+    statusBar()->showMessage("Line: click to start, click successive endpoints | Esc ends chain / Select picks geometry | Middle/right drag pans");
 }
 
 bool MainWindow::finishSketch()
@@ -630,12 +943,46 @@ bool MainWindow::finishSketch()
     }
 }
 
-void MainWindow::addSketchEntity(const modeling::SketchEntity& entity)
+void MainWindow::updateEntityProperties()
+{
+    const auto* feature = selectedFeature();
+    const modeling::Sketch* sketch = m_editSketch ? &*m_editSketch
+        : feature && feature->kind == document::FeatureKind::Sketch ? &feature->sketch : nullptr;
+    const int row = m_entities->currentRow();
+    const bool valid = sketch && row >= 0 && std::size_t(row) < sketch->entities.size();
+    m_propertyPanel->setVisible(valid);
+    if (!valid) return;
+    const auto& entity = sketch->entities[std::size_t(row)];
+    const bool circle = entity.kind == modeling::EntityKind::Circle;
+    const bool editing = m_editSketch.has_value();
+    m_entitySummary->setText(QString("%1\n%2 supported relation(s)")
+        .arg(circle ? "Circle" : entity.kind == modeling::EntityKind::Line ? "Line" : "Legacy rectangle")
+        .arg(std::count_if(sketch->relations.begin(), sketch->relations.end(), [&entity](const auto& relation) {
+            return relation.first.entityId == entity.id || relation.second.entityId == entity.id;
+        })));
+    m_propertyFirstX->setValue(entity.first.x);
+    m_propertyFirstY->setValue(entity.first.y);
+    m_propertySecondX->setValue(entity.second.x);
+    m_propertySecondY->setValue(entity.second.y);
+    m_propertyRadius->setValue(entity.radius);
+    if (auto* form = m_propertyPanel->findChild<QFormLayout*>()) {
+        form->setRowVisible(m_propertySecondX, !circle);
+        form->setRowVisible(m_propertySecondY, !circle);
+        form->setRowVisible(m_propertyRadius, circle);
+    }
+    m_propertyFirstX->setEnabled(editing);
+    m_propertyFirstY->setEnabled(editing);
+    m_propertySecondX->setEnabled(editing && !circle);
+    m_propertySecondY->setEnabled(editing && !circle);
+    m_propertyRadius->setEnabled(editing && circle);
+    m_applyProperties->setEnabled(editing && !m_operation);
+}
+
+void MainWindow::applySketchEntityEdit(const modeling::SketchEntity& entity)
 {
     if (!m_editSketch) return;
-    auto candidate = *m_editSketch;
-    candidate.entities.push_back(entity);
     try {
+        auto candidate = modeling::editSketchEntity(*m_editSketch, entity);
         (void)modeling::sketchShape(candidate);
         m_editSketch = std::move(candidate);
         m_viewport->setSketch(*m_editSketch);
@@ -648,12 +995,16 @@ void MainWindow::addSketchEntity(const modeling::SketchEntity& entity)
 void MainWindow::editSketchEntity()
 {
     if (!m_editSketch || m_entities->currentRow() < 0) return;
-    const auto index = static_cast<std::size_t>(m_entities->currentRow());
-    auto entity = m_editSketch->entities.at(index);
-    if (!chooseEntityParameters(entity)) return;
-    auto candidate = *m_editSketch;
-    candidate.entities[index] = entity;
+    auto entity = m_editSketch->entities.at(std::size_t(m_entities->currentRow()));
+    if (chooseEntityParameters(entity)) applySketchEntityEdit(entity);
+}
+
+void MainWindow::deleteSketchEntity()
+{
+    if (!m_editSketch || m_entities->currentRow() < 0) return;
     try {
+        const auto id = m_editSketch->entities.at(std::size_t(m_entities->currentRow())).id;
+        auto candidate = modeling::removeSketchEntity(*m_editSketch, id);
         (void)modeling::sketchShape(candidate);
         m_editSketch = std::move(candidate);
         m_viewport->setSketch(*m_editSketch);
@@ -662,17 +1013,6 @@ void MainWindow::editSketchEntity()
         updateActions();
     } catch (const std::exception& error) { reportError(QString::fromUtf8(error.what())); }
 }
-
-void MainWindow::deleteSketchEntity()
-{
-    if (!m_editSketch || m_entities->currentRow() < 0) return;
-    m_editSketch->entities.erase(m_editSketch->entities.begin() + m_entities->currentRow());
-    m_viewport->setSketch(*m_editSketch);
-    setWindowModified(true);
-    updateEntityList();
-    updateActions();
-}
-
 void MainWindow::editSelectedFeature()
 {
     const auto* selected = selectedFeature();
@@ -743,6 +1083,7 @@ void MainWindow::startOperation(document::Feature feature, bool editing)
     form->addRow("Direction", draft.direction);
     draft.through = new QCheckBox("Through all in selected direction", draft.dialog);
     draft.through->setObjectName("featureThroughAll");
+    draft.through->setVisible(draft.feature.kind == document::FeatureKind::Cut);
     if (draft.feature.kind == document::FeatureKind::Cut) {
         form->addRow(draft.through);
         draft.through->setChecked(draft.feature.throughAll);

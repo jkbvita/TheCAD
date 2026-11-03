@@ -16,11 +16,14 @@ Front = XY, Top = XZ, and Right = YZ, preserving the existing saved sketch frame
 The finite reference graphics do not limit the infinite sketching plane. See the
 [coordinate mapping and interaction rules](docs/requirements/graphical-plane-selection.md).
 
-## Preserved modeling foundation
+## Sketching and modeling
 
 - Empty parts and editable origin-plane sketches on XY, XZ, and YZ.
-- Model-coordinate lines, rectangles, and circles with numeric editing.
-- Compact FEATURES and SKETCH toolbar tabs and an actual feature-history tree.
+- Continuous lines with exact origin/endpoint snapping and selectable point markers.
+- Rectangles made of four connected edges, and circles with snappable centers.
+- Persistent coincident, horizontal and vertical relations with safe coordinate editing.
+- Light Features, Sketch and Evaluate command tabs, native menus and actual feature history.
+- Context entity properties; unfinished commands visibly disabled with tooltips.
 - Explicit source-sketch and closed-contour selection, length/depth, direction,
   preview, and confirmation for additive Extrude and Extruded Cut.
 - Specified-depth and through-all cuts using precise OCCT BRep operations.
@@ -34,9 +37,8 @@ provide New, Open, Save, Save As, and Exit with unsaved-change handling.
 
 The short-term goal is to reproduce the fundamental SolidWorks modeling workflows
 as faithfully as possible before developing alternatives; redesigns require
-individual approval. The current task is limited to graphical sketch creation.
-The existing prototype implements the approved operations without attempting to
-reproduce the entire SolidWorks interface.
+individual approval. This milestone improves fundamental sketch interactions,
+relations, the familiar desktop layout and independent Windows deployment.
 
 See [Windows build, run, and modeling tutorial](docs/build-windows.md).
 With dependencies installed, run from the repository root:
@@ -45,6 +47,34 @@ With dependencies installed, run from the repository root:
 .\scripts\build.ps1 -GuiTests
 .\scripts\run.ps1
 ```
+
+## Launch from Windows Explorer
+
+Double-click **Launch TheCAD.cmd** in the repository root. To create an independent
+Release folder after building, run `.\scripts\package-windows.ps1`, then double-click
+`build/package/TheCAD/TheCAD.exe`. On this computer the executable is
+`C:\Users\jakub\projects\TheCAD\build\package\TheCAD\TheCAD.exe`.
+Keep its DLLs, plugins and resources together.
+See [Windows deployment](docs/windows-deployment.md) for the exact local path and details.
+
+## Sketch interaction
+
+In an active sketch, choose Line and click near the red local origin to start
+exactly at (0,0). Each next click finishes an edge and continues from its endpoint.
+Snap back to a starting point to close a contour. Near-horizontal/vertical edges
+receive the corresponding persistent relation. Esc stops drawing and keeps all
+completed edges. Select a line body to see its endpoint markers; select a point
+to identify it separately. Rectangle uses two opposite corners; Circle uses a
+center and a radius point. The origin stays at its true position during pan/zoom.
+
+The property panel propagates supported relations when coordinates change. An
+edit that conflicts with the fixed origin or other equalities is rejected.
+This is a limited equality system, without a general solver or dimensions.
+
+Smart Dimension, Centerline, Construction Line, Arc, Spline, Trim, Convert,
+Offset, Mirror, Linear Sketch Pattern, Move, Display/Delete Relations, Repair
+Sketch, Shaded Sketch Contours, Measure, Mass Properties and Check Geometry are
+disabled until implemented.
 
 ## Source layout
 
@@ -64,6 +94,10 @@ docs/decisions/    Approval records and unresolved decisions
 - [Development rules](AGENTS.md)
 - [Documentation guide](docs/README.md)
 - [Project vision and principles](docs/requirements/project-vision.md)
+- [Sketch interaction and desktop requirements](docs/requirements/sketch-interactions-desktop.md)
+- [Foundational relations](docs/requirements/sketch-relations.md)
+- [Provisional relation representation](docs/decisions/0005-sketch-relations.md)
+- [Desktop layout and deployment approval](docs/decisions/0006-sketch-desktop-layout.md)
 - [Graphical sketch-plane requirements](docs/requirements/graphical-plane-selection.md)
 - [Graphical plane-selection decision](docs/decisions/0004-graphical-origin-planes.md)
 - [Parametric modeling requirements](docs/requirements/parametric-modeling.md)
@@ -72,7 +106,7 @@ docs/decisions/    Approval records and unresolved decisions
 - [Dependencies and licenses](docs/dependencies.md)
 - [Native document structure and legacy compatibility](docs/file-formats.md)
 
-`.theasmb` and `.thedrw` are reserved names. Assemblies, drawings, a constraint
+`.theasmb` and `.thedrw` are reserved names. Assemblies, drawings, a general-purpose constraint
 solver, automatic dimensioning, face attachment, and permanent topology naming
 are outside this milestone. Independent simple closed contours are supported;
 nested, touching, or intersecting contours are rejected clearly.

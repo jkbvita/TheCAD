@@ -138,7 +138,7 @@ private slots:
             command(window, "actionFinishSketch");
             QVERIFY(!viewport->m_sketchEditing);
             QVERIFY(!viewport->m_planesVisible);
-            QCOMPARE(window.document().features().back().sketch.entities.size(), std::size_t(1));
+            QCOMPARE(window.document().features().back().sketch.entities.size(), std::size_t(4));
         }
         QCOMPARE(window.document().features().size(), std::size_t(3));
         // Plane-first in the viewport: selected green differs from amber hover.

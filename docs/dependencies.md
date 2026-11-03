@@ -22,9 +22,10 @@ Prebuilt dynamic libraries come from conda-forge. The [manifest](../environment.
 selects the direct dependencies and the [Windows lock](../environment-win-64.lock)
 records the tested complete package set and hashes. The [license inventory](dependency-license-inventory.md)
 records package metadata for development and transitive dependencies, including
-modules that TheCAD does not link. Installed package notices remain in the
-package environment/cache. This is a development build, with no redistribution
-bundle or installer; packaging would need to retain the relevant notices.
+modules that TheCAD does not link. The [Windows runtime package](windows-deployment.md) retains notices for each
+copied runtime package in its `licenses/` folder, together with version and source
+package metadata. Development tools, headers, import libraries and SDK files are
+excluded. No installer or signed public release is provided.
 
 The root [LICENSE](../LICENSE) is unchanged. Dependency license information does
 not select or change TheCAD's application license.

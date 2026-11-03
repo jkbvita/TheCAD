@@ -87,6 +87,25 @@ Sketch rectangle()
     sketch.entities.push_back(entity);
     return sketch;
 }
+
+Sketch constrainedRectangle()
+{
+    Sketch sketch{SketchPlane::XY, {
+        {EntityKind::Line, {0,0}, {40,0}, 1, "a"},
+        {EntityKind::Line, {40,0}, {40,30}, 1, "b"},
+        {EntityKind::Line, {40,30}, {0,30}, 1, "c"},
+        {EntityKind::Line, {0,30}, {0,0}, 1, "d"}}};
+    for (std::size_t i = 0; i < 4; ++i) {
+        const auto& entity = sketch.entities[i];
+        sketch.relations.push_back({"join-" + std::to_string(i), RelationKind::Coincident,
+            {entity.id, PointRole::Second}, {sketch.entities[(i + 1) % 4].id, PointRole::First}});
+        sketch.relations.push_back({"axis-" + std::to_string(i), i % 2 ? RelationKind::Vertical : RelationKind::Horizontal,
+            {entity.id, PointRole::First}, {entity.id, PointRole::Second}});
+    }
+    sketch.relations.push_back({"origin", RelationKind::Coincident, {"a", PointRole::First}, {}});
+    return sketch;
+}
+
 Sketch circle()
 {
     Sketch sketch;
@@ -125,6 +144,48 @@ int main(int argc, char* argv[])
         rejected([&] { sketchOnly.addExtrude(lineId, {sketchOnly.features()[0].sketch.entities[0].id}, 10, Direction::Positive); });
         require(sketchOnly.features().size() == 1, "Failed append must preserve history");
 
+        auto relatedPart = PartDocument::createEmpty();
+        const auto relatedSketchId = relatedPart.addSketch(constrainedRectangle());
+        relatedPart.addExtrude(relatedSketchId, {"a", "b", "c", "d"}, 12, Direction::Positive);
+        relatedPart.save(path);
+        auto relatedLoaded = PartDocument::load(path);
+        require(relatedLoaded.features()[0].sketch.relations.size() == 9, "All supported relations must survive serialization");
+        require(relatedLoaded.features()[0].sketch.relations.back().second.role == PointRole::Origin,
+            "Origin references must survive with their actual geometric identity");
+        auto relatedFeature = relatedLoaded.features()[0];
+        auto relatedEdit = relatedFeature.sketch.entities[0]; relatedEdit.second.x = 50;
+        relatedFeature.sketch = editSketchEntity(relatedFeature.sketch, relatedEdit);
+        relatedLoaded.replaceFeature(relatedFeature);
+        closeVolume(relatedLoaded, 50 * 30 * 12);
+        relatedLoaded.save(path);
+        closeVolume(PartDocument::load(path), 50 * 30 * 12);
+        const auto relatedRoot = QJsonDocument::fromJson(read(path)).object();
+        const auto rejectRelated = [&](QJsonObject root) { write(path, QJsonDocument(root).toJson()); rejected([&] { PartDocument::load(path); }); };
+        const auto corruptRelation = [&](const QString& field, const QJsonValue& value) {
+            auto root = relatedRoot; auto history = root["features"].toArray(); auto feature = history[0].toObject();
+            auto relations = feature["relations"].toArray(); auto relation = relations[0].toObject(); relation[field] = value;
+            relations[0] = relation; feature["relations"] = relations; history[0] = feature; root["features"] = history; rejectRelated(root);
+        };
+        corruptRelation("type", "unsupported");
+        corruptRelation("id", "origin");
+        corruptRelation("second", QJsonObject{{"entity", "missing"}, {"point", "first"}});
+        corruptRelation("second", QJsonObject{{"entity", "a"}, {"point", "center"}});
+        corruptRelation("second", QJsonObject{{"entity", "a"}, {"point", "origin"}});
+        auto missingRelations = relatedRoot; auto relatedHistory = missingRelations["features"].toArray();
+        auto noRelationsFeature = relatedHistory[0].toObject(); noRelationsFeature.remove("relations");
+        relatedHistory[0] = noRelationsFeature; missingRelations["features"] = relatedHistory; rejectRelated(missingRelations);
+        auto unsatisfied = relatedLoaded.features()[0]; unsatisfied.sketch.entities[1].first.x += 1;
+        rejected([&] { relatedLoaded.replaceFeature(unsatisfied); });
+        closeVolume(relatedLoaded, 50 * 30 * 12);
+        // Schema 2 lacked relations. It remains a supported input, upgraded on save.
+        auto legacyV2 = relatedRoot; legacyV2["version"] = 2; relatedHistory = legacyV2["features"].toArray();
+        noRelationsFeature = relatedHistory[0].toObject(); noRelationsFeature.remove("relations");
+        relatedHistory[0] = noRelationsFeature; legacyV2["features"] = relatedHistory;
+        write(path, QJsonDocument(legacyV2).toJson());
+        auto upgraded = PartDocument::load(path); closeVolume(upgraded, 50 * 30 * 12);
+        require(upgraded.features()[0].sketch.relations.empty(), "Legacy coordinates must load without inventing constraints");
+        upgraded.save(path);
+        require(QJsonDocument::fromJson(read(path)).object()["version"].toInt() == 3, "Legacy documents must save using the current schema");
         auto part = PartDocument::createEmpty();
         auto multiContourSketch = rectangle();
         auto otherRectangle = multiContourSketch.entities.front();
@@ -197,13 +258,13 @@ int main(int argc, char* argv[])
         rejected([&] { loaded.replaceFeature(badReference); });
 
         const auto goodRoot = QJsonDocument::fromJson(read(path)).object();
-        require(goodRoot.value("version").toInt() == 2, "New documents must use schema 2");
+        require(goodRoot.value("version").toInt() == 3, "New documents must use schema 3");
         const QString invalid = directory.filePath("invalid.thepart");
         const auto rejectRoot = [&](QJsonObject root) {
             write(invalid, QJsonDocument(root).toJson());
             rejected([&] { (void)PartDocument::load(invalid); });
         };
-        auto bad = goodRoot; bad["version"] = 3; rejectRoot(bad);
+        auto bad = goodRoot; bad["version"] = 4; rejectRoot(bad);
         bad = goodRoot; bad["version"] = 2.5; rejectRoot(bad);
         bad = goodRoot; bad["format"] = "TheCAD.Assembly"; rejectRoot(bad);
         bad = goodRoot; bad["units"] = "inch"; rejectRoot(bad);

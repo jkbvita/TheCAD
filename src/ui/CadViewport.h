@@ -4,6 +4,7 @@
 #include "modeling/ReferencePlanes.h"
 #include <array>
 #include <AIS_TextLabel.hxx>
+#include <AIS_Point.hxx>
 #include <optional>
 #include <QMetaType>
 #include <QPoint>
@@ -38,6 +39,8 @@ public:
     void beginSketch(const modeling::Sketch& sketch);
     void endSketch();
     void setSketchTool(modeling::EntityKind kind);
+    void selectSketchTool();
+    void selectSketchEntity(const QString& id);
     void setSketch(const modeling::Sketch& sketch);
     void beginContourSelection(const modeling::Sketch& sketch);
     void endContourSelection();
@@ -48,6 +51,10 @@ public:
 
 signals:
     void initializationFailed(const QString& message);
+    void sketchInteractionError(const QString& message);
+    void sketchChanged(const thecad::modeling::Sketch& sketch);
+    void sketchEntitySelected(const QString& id);
+    void sketchPointSelected(const QString& entityId, int role);
     void sketchEntityCreated(const thecad::modeling::SketchEntity& entity);
     void sketchRegionClicked(thecad::modeling::Point2 point);
     void referencePlaneSelected(thecad::modeling::SketchPlane plane);
@@ -67,6 +74,7 @@ protected:
 
 private:
     friend class CadViewportTest;
+    friend class SketchInteractionTest;
     friend class ModelingWorkflowTest;
     friend class GraphicalPlaneWorkflowTest;
     enum class Navigation { None, Orbit, Pan };
@@ -80,6 +88,13 @@ private:
     std::optional<modeling::ReferencePlaneHit> planeAt(const QPointF& position);
     void updateSketchPresentation(const std::optional<modeling::SketchEntity>& preview = {});
     std::optional<modeling::Point2> sketchPosition(const QPointF& position);
+    struct SnapHit { modeling::SketchPointRef reference; modeling::Point2 point; };
+    std::optional<SnapHit> pointAt(const QPointF& position) const;
+    std::optional<std::string> entityAt(const QPointF& position) const;
+    QPointF screenPoint(modeling::Point2 point) const;
+    modeling::Point2 drawingPoint(const QPointF& position, std::optional<modeling::SketchPointRef>& reference);
+    void updatePointPresentation();
+    void commitDrawing(modeling::Point2 point, const std::optional<modeling::SketchPointRef>& reference);
     QPoint nativePosition(const QPointF& position) const;
 
     TopoDS_Shape m_shape;
@@ -91,6 +106,12 @@ private:
     std::optional<modeling::Sketch> m_sketch;
     std::optional<modeling::EntityKind> m_sketchTool;
     std::optional<modeling::Point2> m_firstPoint;
+    std::optional<modeling::SketchPointRef> m_firstReference;
+    std::optional<modeling::SketchPointRef> m_hoveredPoint;
+    std::optional<modeling::SketchPointRef> m_selectedPoint;
+    std::string m_selectedEntity;
+    std::vector<Handle(AIS_Point)> m_pointPresentations;
+    Handle(AIS_Shape) m_selectedEntityPresentation;
     bool m_sketchEditing = false;
     bool m_regionSelecting = false;
     Handle(AIS_Shape) m_previewPresentation;
@@ -120,3 +141,5 @@ Q_DECLARE_METATYPE(thecad::modeling::SketchEntity)
 Q_DECLARE_METATYPE(thecad::modeling::Point2)
 
 Q_DECLARE_METATYPE(thecad::modeling::SketchPlane)
+
+Q_DECLARE_METATYPE(thecad::modeling::Sketch)

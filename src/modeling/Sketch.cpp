@@ -32,6 +32,9 @@
 #include <stdexcept>
 #include <string>
 #include <set>
+#include <map>
+#include <numeric>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -73,6 +76,7 @@ bool samePoint(Point2 first, Point2 second)
 void validate(const Sketch& sketch)
 {
     (void)sketchAxes(sketch.plane);
+    validateSketchRelations(sketch);
     if (sketch.entities.size() > maximumEntities) {
         fail("This prototype supports at most 1000 entities per sketch.");
     }
@@ -576,6 +580,166 @@ TopoDS_Shape makeCut(const TopoDS_Shape& base, const Sketch& sketch, double dept
     } catch (const Standard_Failure& error) {
         fail(std::string("Cannot cut the body: ") + error.GetMessageString());
     }
+}
+
+
+namespace {
+using PointKey = std::pair<std::string, int>;
+PointKey pointKey(const SketchPointRef& ref) { return {ref.entityId, static_cast<int>(ref.role)}; }
+bool stableIdentifier(const std::string& id)
+{
+    return !id.empty() && id.size() <= 128 && std::all_of(id.begin(), id.end(), [](unsigned char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+    });
+}
+struct EqualityGroups {
+    std::vector<std::pair<SketchPointRef, Point2>> points;
+    std::map<PointKey, std::size_t> indices;
+    std::vector<std::size_t> x, y;
+    explicit EqualityGroups(const Sketch& sketch) : points(sketchPoints(sketch)), x(points.size()), y(points.size())
+    {
+        std::iota(x.begin(), x.end(), 0);
+        std::iota(y.begin(), y.end(), 0);
+        for (std::size_t i = 0; i < points.size(); ++i) indices.emplace(pointKey(points[i].first), i);
+    }
+    static std::size_t root(std::vector<std::size_t>& parents, std::size_t index) {
+        if (parents[index] != index) parents[index] = root(parents, parents[index]);
+        return parents[index];
+    }
+    std::size_t index(const SketchPointRef& ref) const {
+        const auto found = indices.find(pointKey(ref));
+        if (found == indices.end()) fail("Sketch relation refers to a missing entity or invalid point role.");
+        return found->second;
+    }
+    void join(const SketchRelation& relation) {
+        const auto a = index(relation.first), b = index(relation.second);
+        if (a == b) fail("A sketch relation must refer to two distinct points.");
+        if (relation.kind == RelationKind::Coincident || relation.kind == RelationKind::Vertical)
+            x[root(x, a)] = root(x, b);
+        if (relation.kind == RelationKind::Coincident || relation.kind == RelationKind::Horizontal)
+            y[root(y, a)] = root(y, b);
+    }
+};
+void setPoint(Sketch& sketch, const SketchPointRef& ref, Point2 point) {
+    if (ref.role == PointRole::Origin) return;
+    auto found = std::find_if(sketch.entities.begin(), sketch.entities.end(), [&](const SketchEntity& entity) { return entity.id == ref.entityId; });
+    if (found == sketch.entities.end()) fail("Cannot update a missing sketch point.");
+    if (ref.role == PointRole::Second) found->second = point;
+    else found->first = point;
+}
+}
+
+Point2 sketchPointValue(const Sketch& sketch, const SketchPointRef& reference)
+{
+    if (reference.role == PointRole::Origin) {
+        if (!reference.entityId.empty()) fail("The sketch origin cannot have an entity ID.");
+        return {0, 0};
+    }
+    if (reference.entityId.empty()) fail("A sketch point requires a stable entity ID.");
+    const auto found = std::find_if(sketch.entities.begin(), sketch.entities.end(), [&](const SketchEntity& entity) { return entity.id == reference.entityId; });
+    if (found == sketch.entities.end()) fail("Sketch point refers to a missing entity.");
+    if (reference.role == PointRole::Center && found->kind == EntityKind::Circle) return found->first;
+    if (found->kind == EntityKind::Line || found->kind == EntityKind::Rectangle) {
+        if (reference.role == PointRole::First) return found->first;
+        if (reference.role == PointRole::Second) return found->second;
+    }
+    fail("Sketch point role does not belong to this entity type.");
+}
+
+std::vector<std::pair<SketchPointRef, Point2>> sketchPoints(const Sketch& sketch)
+{
+    std::vector<std::pair<SketchPointRef, Point2>> points{{SketchPointRef{}, Point2{}}};
+    std::set<std::string> ids;
+    for (const auto& entity : sketch.entities) {
+        // Relation-free legacy construction geometry may not yet have IDs.
+        if (entity.id.empty()) continue;
+        if (!stableIdentifier(entity.id) || !ids.insert(entity.id).second) fail("Sketch entity IDs must be valid and unique.");
+        if (entity.kind == EntityKind::Circle) points.push_back({{entity.id, PointRole::Center}, entity.first});
+        else {
+            points.push_back({{entity.id, PointRole::First}, entity.first});
+            points.push_back({{entity.id, PointRole::Second}, entity.second});
+        }
+    }
+    return points;
+}
+
+void validateSketchRelations(const Sketch& sketch)
+{
+    if (sketch.relations.size() > 4000) fail("This prototype supports at most 4000 relations per sketch.");
+    EqualityGroups groups(sketch);
+    std::set<std::string> ids;
+    std::set<std::tuple<int, PointKey, PointKey>> signatures;
+    for (const auto& relation : sketch.relations) {
+        if (!stableIdentifier(relation.id) || !ids.insert(relation.id).second) fail("Sketch relation IDs must be valid and unique.");
+        const auto first = sketchPointValue(sketch, relation.first), second = sketchPointValue(sketch, relation.second);
+        if (relation.kind == RelationKind::Horizontal || relation.kind == RelationKind::Vertical) {
+            if (relation.first.entityId != relation.second.entityId || relation.first.entityId.empty()
+                || !((relation.first.role == PointRole::First && relation.second.role == PointRole::Second)
+                    || (relation.first.role == PointRole::Second && relation.second.role == PointRole::First)))
+                fail("Horizontal and vertical relations require the two endpoints of one line.");
+            const auto entity = std::find_if(sketch.entities.begin(), sketch.entities.end(), [&](const SketchEntity& e) { return e.id == relation.first.entityId; });
+            if (entity == sketch.entities.end() || entity->kind != EntityKind::Line) fail("Horizontal and vertical relations apply to line entities only.");
+        } else if (relation.kind != RelationKind::Coincident) fail("Unsupported sketch relation type.");
+        auto a = pointKey(relation.first), b = pointKey(relation.second);
+        if (b < a) std::swap(a, b);
+        if (!signatures.emplace(static_cast<int>(relation.kind), a, b).second) fail("Duplicate sketch relation.");
+        groups.join(relation);
+        if ((relation.kind == RelationKind::Coincident || relation.kind == RelationKind::Vertical) && first.x != second.x)
+            fail("Sketch relation is not satisfied: connected X coordinates must be identical.");
+        if ((relation.kind == RelationKind::Coincident || relation.kind == RelationKind::Horizontal) && first.y != second.y)
+            fail("Sketch relation is not satisfied: connected Y coordinates must be identical.");
+    }
+}
+
+Sketch editSketchEntity(const Sketch& sketch, const SketchEntity& replacement)
+{
+    validate(sketch);
+    auto candidate = sketch;
+    const auto old = std::find_if(sketch.entities.begin(), sketch.entities.end(), [&](const SketchEntity& entity) { return entity.id == replacement.id; });
+    if (replacement.id.empty() || old == sketch.entities.end()) fail("Cannot edit a sketch entity without its existing stable ID.");
+    if (old->kind != replacement.kind) fail("Editing cannot change a sketch entity type.");
+    *std::find_if(candidate.entities.begin(), candidate.entities.end(), [&](const SketchEntity& entity) { return entity.id == replacement.id; }) = replacement;
+    EqualityGroups groups(sketch);
+    for (const auto& relation : sketch.relations) groups.join(relation);
+    std::map<std::size_t, double> anchorsX, anchorsY;
+    const auto anchor = [](auto& anchors, std::size_t group, double value) {
+        if (!std::isfinite(value) || std::abs(value) > coordinateLimit) fail("Sketch coordinates must be finite and within the prototype limit.");
+        const auto found = anchors.find(group);
+        if (found != anchors.end() && found->second != value)
+            fail("The edit conflicts with a coincident, horizontal, vertical, or fixed-origin relation.");
+        anchors[group] = value;
+    };
+    anchor(anchorsX, EqualityGroups::root(groups.x, 0), 0);
+    anchor(anchorsY, EqualityGroups::root(groups.y, 0), 0);
+    for (std::size_t i = 1; i < groups.points.size(); ++i) {
+        const auto& ref = groups.points[i].first;
+        if (ref.entityId != replacement.id) continue;
+        const auto before = groups.points[i].second, after = sketchPointValue(candidate, ref);
+        if (before.x != after.x) anchor(anchorsX, EqualityGroups::root(groups.x, i), after.x);
+        if (before.y != after.y) anchor(anchorsY, EqualityGroups::root(groups.y, i), after.y);
+    }
+    for (std::size_t i = 1; i < groups.points.size(); ++i) {
+        auto point = sketchPointValue(candidate, groups.points[i].first);
+        const auto x = anchorsX.find(EqualityGroups::root(groups.x, i)), y = anchorsY.find(EqualityGroups::root(groups.y, i));
+        if (x != anchorsX.end()) point.x = x->second;
+        if (y != anchorsY.end()) point.y = y->second;
+        setPoint(candidate, groups.points[i].first, point);
+    }
+    validate(candidate);
+    return candidate;
+}
+
+Sketch removeSketchEntity(const Sketch& sketch, const std::string& entityId)
+{
+    auto candidate = sketch;
+    const auto found = std::find_if(candidate.entities.begin(), candidate.entities.end(), [&](const SketchEntity& entity) { return entity.id == entityId; });
+    if (entityId.empty() || found == candidate.entities.end()) fail("Cannot remove an unknown sketch entity.");
+    candidate.entities.erase(found);
+    candidate.relations.erase(std::remove_if(candidate.relations.begin(), candidate.relations.end(), [&](const SketchRelation& relation) {
+        return relation.first.entityId == entityId || relation.second.entityId == entityId;
+    }), candidate.relations.end());
+    validate(candidate);
+    return candidate;
 }
 
 } // namespace thecad::modeling

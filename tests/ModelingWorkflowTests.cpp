@@ -139,18 +139,21 @@ private slots:
         QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, point(viewport, {-30, -20}));
         QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, point(viewport, {30, 20}));
         auto* entities = window.findChild<QListWidget*>("sketchEntities");
-        QCOMPARE(entities->count(), 1);
+        QCOMPARE(entities->count(), 4);
         entities->setCurrentRow(0);
-        editEntity(window, modeling::EntityKind::Rectangle, {-30, -20}, {30, 20});
+        editEntity(window, modeling::EntityKind::Line, {-30, -20}, {30, -20});
+        entities->setCurrentRow(2);
+        editEntity(window, modeling::EntityKind::Line, {30, 20}, {-30, 20});
         // A second independent region proves the feature does not consume the entire sketch.
         QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, point(viewport, {45, -10}));
         QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, point(viewport, {60, 10}));
-        QCOMPARE(entities->count(), 2);
+        QCOMPARE(entities->count(), 8);
         command(window, "actionFinishSketch");
-        QCOMPARE(window.document().features().front().sketch.entities.size(), std::size_t(2));
+        QCOMPARE(window.document().features().front().sketch.entities.size(), std::size_t(8));
         command(window, "actionExtrude");
         auto* operation = window.findChild<QDialog*>("operationDialog");
         QVERIFY(operation);
+        QVERIFY(operation->findChild<QCheckBox*>("featureThroughAll")->isHidden());
         auto* contours = operation->findChild<QComboBox*>("operationContour");
         QCOMPARE(contours->count(), 2);
         QCOMPARE(contours->currentIndex(), -1);
@@ -176,6 +179,7 @@ private slots:
         command(window, "actionExtrudedCut");
         operation = window.findChild<QDialog*>("operationDialog");
         QVERIFY(operation);
+        QVERIFY(!operation->findChild<QCheckBox*>("featureThroughAll")->isHidden());
         operation->findChild<QCheckBox*>("featureThroughAll")->setChecked(true);
         QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, point(viewport, {0, 0}));
         confirmOperation(window);
