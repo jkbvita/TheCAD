@@ -1,5 +1,4 @@
 #include "document/PartDocument.h"
-
 #include <BRepBndLib.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepGProp.hxx>
@@ -7,15 +6,12 @@
 #include <GProp_GProps.hxx>
 #include <Precision.hxx>
 #include <TopExp_Explorer.hxx>
-
 #include <QCoreApplication>
-#include <QDir>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTemporaryDir>
-
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -23,7 +19,7 @@
 #define NOMINMAX
 #endif
 #include <Windows.h>
-
+#include <algorithm>
 #include <cmath>
 #include <functional>
 #include <iostream>
@@ -31,70 +27,76 @@
 #include <stdexcept>
 
 namespace {
-using thecad::document::PartDocument;
-using thecad::document::BoxParameters;
-
-void require(bool condition, const char* message)
-{
-    if (!condition) {
-        throw std::runtime_error(message);
-    }
-}
-
+using namespace thecad::document;
+using namespace thecad::modeling;
+void require(bool condition, const char* message) { if (!condition) throw std::runtime_error(message); }
 QByteArray read(const QString& path)
 {
     QFile file(path);
     require(file.open(QIODevice::ReadOnly), "Test file must open");
     return file.readAll();
 }
-
 void write(const QString& path, const QByteArray& bytes)
 {
     QFile file(path);
     require(file.open(QIODevice::WriteOnly), "Test file must open for writing");
-    require(file.write(bytes) == bytes.size(), "Test file must be written");
+    require(file.write(bytes) == bytes.size(), "Test bytes must write");
 }
-
 void rejected(const std::function<void()>& action)
 {
     bool failed = false;
-    try {
-        action();
-    } catch (const std::runtime_error& error) {
-        failed = !QString::fromUtf8(error.what()).isEmpty();
-    }
-    require(failed, "Invalid operation must throw a clear runtime_error");
+    try { action(); } catch (const std::runtime_error& error) { failed = !QString::fromUtf8(error.what()).isEmpty(); }
+    require(failed, "Invalid operation must fail with a clear error");
 }
-
-void checkGeometry(const PartDocument& document, const BoxParameters& parameters)
+double volume(const PartDocument& document)
 {
-    require(document.parameters().width == parameters.width
-            && document.parameters().depth == parameters.depth
-            && document.parameters().height == parameters.height,
-            "Part parameters must survive saving/loading exactly");
     const auto& shape = document.shape();
-    require(!shape.IsNull() && BRepCheck_Analyzer(shape).IsValid(), "Loaded BRep must be valid");
+    require(!shape.IsNull() && BRepCheck_Analyzer(shape).IsValid(), "Regenerated solid must be valid BRep");
     int solids = 0;
-    int faces = 0;
-    for (TopExp_Explorer item(shape, TopAbs_SOLID); item.More(); item.Next()) { ++solids; }
-    for (TopExp_Explorer item(shape, TopAbs_FACE); item.More(); item.Next()) { ++faces; }
-    require(solids == 1 && faces == 6, "Loaded BRep must have one solid and six faces");
+    for (TopExp_Explorer explorer(shape, TopAbs_SOLID); explorer.More(); explorer.Next()) ++solids;
+    require(solids == 1, "Part must have one solid");
     GProp_GProps properties;
     BRepGProp::VolumeProperties(shape, properties);
-    const double volume = parameters.width * parameters.depth * parameters.height;
-    require(std::abs(properties.Mass() - volume) < volume * 1e-10,
-            "Loaded volume must match parameters");
+    return properties.Mass();
+}
+void closeVolume(const PartDocument& document, double expected)
+{
+    require(std::abs(volume(document) - expected) < std::max(1.0, expected) * 1e-8, "Regenerated volume must match parameters");
+}
+void checkBox(const PartDocument& document, BoxParameters dimensions)
+{
+    require(document.parameters().width == dimensions.width && document.parameters().depth == dimensions.depth
+            && document.parameters().height == dimensions.height, "Box parameters must survive exactly");
+    closeVolume(document, dimensions.width * dimensions.depth * dimensions.height);
     Bnd_Box bounds;
-    BRepBndLib::Add(shape, bounds);
+    BRepBndLib::Add(document.shape(), bounds);
     double xmin, ymin, zmin, xmax, ymax, zmax;
     bounds.Get(xmin, ymin, zmin, xmax, ymax, zmax);
-    const double tolerance = 10.0 * Precision::Confusion();
-    require(std::abs(xmin) < tolerance && std::abs(ymin) < tolerance && std::abs(zmin) < tolerance,
-            "Loaded geometry must start at origin");
-    require(std::abs(xmax - parameters.width) < tolerance
-            && std::abs(ymax - parameters.depth) < tolerance
-            && std::abs(zmax - parameters.height) < tolerance,
-            "Loaded geometry bounds must match parameters");
+    require(std::abs(xmin) < 1e-6 && std::abs(ymin) < 1e-6 && std::abs(zmin) < 1e-6
+            && std::abs(xmax - dimensions.width) < 1e-6 && std::abs(ymax - dimensions.depth) < 1e-6
+            && std::abs(zmax - dimensions.height) < 1e-6, "Box bounds must survive exactly");
+}
+Sketch rectangle()
+{
+    Sketch sketch;
+    sketch.plane = SketchPlane::XY;
+    SketchEntity entity;
+    entity.kind = EntityKind::Rectangle;
+    entity.first = {0, 0};
+    entity.second = {40, 30};
+    sketch.entities.push_back(entity);
+    return sketch;
+}
+Sketch circle()
+{
+    Sketch sketch;
+    sketch.plane = SketchPlane::XY;
+    SketchEntity entity;
+    entity.kind = EntityKind::Circle;
+    entity.first = {20, 15};
+    entity.radius = 4;
+    sketch.entities.push_back(entity);
+    return sketch;
 }
 }
 
@@ -104,107 +106,163 @@ int main(int argc, char* argv[])
     try {
         QTemporaryDir directory;
         require(directory.isValid(), "Temporary directory must exist");
-        const QString path = directory.filePath(QString::fromUtf8("příliš-žluťoučký.tcpart"));
-        const BoxParameters first{125.25, 21.5, 8.75};
-        const auto original = PartDocument::createBox(first);
-        original.save(path);
-        checkGeometry(PartDocument::load(path), first);
-        const QByteArray initialBytes = read(path);
-        const auto base = QJsonDocument::fromJson(initialBytes).object();
-        require(base.value("format").toString() == "TheCAD.Part", "Format marker must identify native part");
-        require(base.value("version").toInt() == 1, "Schema must be versioned");
-        require(!base.contains("mesh") && !base.contains("image"), "File must contain actual modeling inputs");
+        const QString path = directory.filePath(QString::fromUtf8("příliš-žluťoučký.thepart"));
+        auto empty = PartDocument::createEmpty();
+        require(empty.features().empty() && empty.shape().IsNull(), "New part must be empty");
+        empty.save(path);
+        require(PartDocument::load(path).shape().IsNull(), "Empty part must round-trip");
+        auto sketchOnly = PartDocument::createEmpty();
+        Sketch openSketch;
+        SketchEntity line;
+        line.kind = EntityKind::Line;
+        line.first = {0, 0}; line.second = {10, 0};
+        openSketch.entities.push_back(line);
+        const auto lineId = sketchOnly.addSketch(openSketch);
+        sketchOnly.save(path);
+        auto loadedSketch = PartDocument::load(path);
+        require(loadedSketch.shape().IsNull() && loadedSketch.features()[0].id == lineId,
+                "Open sketches must be saveable without pretending to be solids");
+        rejected([&] { sketchOnly.addExtrude(lineId, {sketchOnly.features()[0].sketch.entities[0].id}, 10, Direction::Positive); });
+        require(sketchOnly.features().size() == 1, "Failed append must preserve history");
 
-        const BoxParameters second{10.0, 20.0, 30.0};
-        const auto changed = PartDocument::createBox(second);
-        changed.save(path); // Save reuses the current file rather than appending.
-        checkGeometry(PartDocument::load(path), second);
-        const QString saveAs = directory.filePath("second.TCPART");
-        changed.save(saveAs);
-        checkGeometry(PartDocument::load(saveAs), second);
+        auto part = PartDocument::createEmpty();
+        auto multiContourSketch = rectangle();
+        auto otherRectangle = multiContourSketch.entities.front();
+        otherRectangle.first = {100, 100};
+        otherRectangle.second = {110, 110};
+        multiContourSketch.entities.push_back(otherRectangle);
+        const auto sketchId = part.addSketch(multiContourSketch);
+        const std::vector<std::string> rectangleContour{part.features()[0].sketch.entities[0].id};
+        const auto extrudeId = part.addExtrude(sketchId, rectangleContour, 20, Direction::Positive);
+        closeVolume(part, 40 * 30 * 20);
+        const auto circleId = part.addSketch(circle());
+        const std::vector<std::string> circleContour{part.features()[2].sketch.entities[0].id};
+        const auto cutId = part.addCut(circleId, circleContour, 5, true, Direction::Positive);
+        const double pi = std::acos(-1.0);
+        closeVolume(part, (40 * 30 - pi * 16) * 20);
+        require(part.features()[1].dependencies == std::vector<std::string>{sketchId}, "Extrude must depend on its sketch");
+        require(part.features()[3].dependencies == std::vector<std::string>({circleId, extrudeId}), "Cut must depend on sketch and prior body");
+        auto extrude = part.features()[1];
+        extrude.length = 30;
+        part.replaceFeature(extrude);
+        closeVolume(part, (40 * 30 - pi * 16) * 30);
+        auto cut = part.features()[3];
+        cut.throughAll = false;
+        cut.length = 5;
+        part.replaceFeature(cut);
+        closeVolume(part, 40 * 30 * 30 - pi * 16 * 5);
+        cut.throughAll = true;
+        part.replaceFeature(cut);
 
-        // Preserve a caller-provided stable feature identifier rather than renumbering.
-        auto withId = base;
-        auto feature = withId.value("features").toArray().first().toObject();
-        feature["id"] = "feature_custom_42";
-        withId["features"] = QJsonArray{feature};
-        withId["resultFeature"] = "feature_custom_42";
-        write(path, QJsonDocument(withId).toJson());
-        PartDocument::load(path).save(saveAs);
-        require(QJsonDocument::fromJson(read(saveAs)).object().value("resultFeature").toString()
-                == "feature_custom_42", "Feature IDs must survive round-trip");
+        part.save(path);
+        auto loaded = PartDocument::load(path);
+        require(loaded.features().size() == 4 && loaded.features()[0].id == sketchId && loaded.features()[1].id == extrudeId
+                && loaded.features()[2].id == circleId && loaded.features()[3].id == cutId,
+                "Feature IDs and order must survive round-trip");
+        require(loaded.features()[1].contour == rectangleContour && loaded.features()[3].contour == circleContour,
+                "Explicit contour references must survive round-trip");
+        require(loaded.features()[1].length == 30 && loaded.features()[3].throughAll
+                && loaded.features()[0].sketch.entities[0].second.x == 40
+                && loaded.features()[2].sketch.entities[0].radius == 4, "Editable feature and sketch parameters must survive");
+        closeVolume(loaded, (40 * 30 - pi * 16) * 30);
+        extrude = loaded.features()[1]; extrude.length = 45; loaded.replaceFeature(extrude);
+        closeVolume(loaded, (40 * 30 - pi * 16) * 45);
 
-        const QString invalidPath = directory.filePath("invalid.tcpart");
+        const auto priorShape = loaded.shape();
+        const auto oldLength = loaded.features()[1].length;
+        extrude.length = 0;
+        rejected([&] { loaded.replaceFeature(extrude); });
+        require(loaded.shape().IsSame(priorShape) && loaded.features()[1].length == oldLength,
+                "Invalid feature edit must preserve shape and parameters");
+        auto badSketch = loaded.features()[0];
+        badSketch.sketch.entities[0].second = badSketch.sketch.entities[0].first;
+        rejected([&] { loaded.replaceFeature(badSketch); });
+        require(loaded.shape().IsSame(priorShape), "Invalid source-sketch edit must preserve current part");
+        auto removedContour = loaded.features()[0];
+        removedContour.sketch.entities.erase(removedContour.sketch.entities.begin());
+        rejected([&] { loaded.replaceFeature(removedContour); });
+        require(loaded.shape().IsSame(priorShape), "Missing selected contour must fail rather than switching to another profile");
+        auto replacedContour = loaded.features()[0];
+        replacedContour.sketch.entities.erase(replacedContour.sketch.entities.begin());
+        auto replacementRectangle = rectangle().entities.front();
+        replacementRectangle.first = {-20, -20};
+        replacementRectangle.second = {60, 60};
+        replacementRectangle.id.clear();
+        replacedContour.sketch.entities.push_back(replacementRectangle);
+        rejected([&] { loaded.replaceFeature(replacedContour); });
+        require(loaded.shape().IsSame(priorShape), "New entities must not inherit a removed contour's persistent identity");
+        auto badContour = loaded.features()[1]; badContour.contour = {"missing-entity"};
+        rejected([&] { loaded.replaceFeature(badContour); });
+        auto badReference = loaded.features()[1]; badReference.sketchId = "missing";
+        rejected([&] { loaded.replaceFeature(badReference); });
+
+        const auto goodRoot = QJsonDocument::fromJson(read(path)).object();
+        require(goodRoot.value("version").toInt() == 2, "New documents must use schema 2");
+        const QString invalid = directory.filePath("invalid.thepart");
         const auto rejectRoot = [&](QJsonObject root) {
-            write(invalidPath, QJsonDocument(root).toJson());
-            rejected([&] { (void)PartDocument::load(invalidPath); });
-            checkGeometry(original, first); // Failed loads cannot mutate an existing document.
+            write(invalid, QJsonDocument(root).toJson());
+            rejected([&] { (void)PartDocument::load(invalid); });
         };
-        auto bad = base; bad["version"] = 2; rejectRoot(bad);
-        bad = base; bad["version"] = 1.5; rejectRoot(bad);
-        bad = base; bad["version"] = "1"; rejectRoot(bad);
-        bad = base; bad["format"] = "TheCAD.Assembly"; rejectRoot(bad);
-        bad = base; bad["units"] = "inch"; rejectRoot(bad);
-        bad = base; bad["resultFeature"] = "missing"; rejectRoot(bad);
-        bad = base; bad["features"] = QJsonArray{}; rejectRoot(bad);
-        bad = base; bad["features"] = QJsonArray{feature, feature}; rejectRoot(bad);
-        bad = base; bad["futureState"] = 1; rejectRoot(bad);
-        bad = base; bad.remove("units"); rejectRoot(bad);
-        const auto rejectFeature = [&](QJsonObject box) {
-            auto root = base;
-            root["features"] = QJsonArray{box};
-            rejectRoot(root);
-        };
-        feature = base.value("features").toArray().first().toObject();
-        auto badFeature = feature; badFeature["type"] = "extrusion"; rejectFeature(badFeature);
-        badFeature = feature; badFeature["dependencies"] = QJsonArray{"box-1"}; rejectFeature(badFeature);
-        badFeature = feature; badFeature["dependencies"] = ""; rejectFeature(badFeature);
-        badFeature = feature; badFeature["id"] = ""; rejectFeature(badFeature);
-        badFeature = feature; badFeature["id"] = "bad id"; rejectFeature(badFeature);
-        badFeature = feature; badFeature["id"] = "box-1\n"; rejectFeature(badFeature);
-        badFeature = feature; badFeature["id"] = 42; rejectFeature(badFeature);
-        badFeature = feature; badFeature["id"] = QString(129, QChar('a')); rejectFeature(badFeature);
-        badFeature = feature; badFeature["futureFlag"] = true; rejectFeature(badFeature);
-        badFeature = feature; badFeature["parameters"] = 123; rejectFeature(badFeature);
-        const auto parameters = feature.value("parameters").toObject();
-        for (const QJsonValue value : {QJsonValue(0.0), QJsonValue(-1.0),
-                QJsonValue(Precision::Confusion()), QJsonValue("ten"), QJsonValue(QJsonValue::Null),
-                QJsonValue(1e300)}) {
-            auto badParameters = parameters;
-            badParameters["width"] = value;
-            badFeature = feature;
-            badFeature["parameters"] = badParameters;
-            rejectFeature(badFeature);
+        auto bad = goodRoot; bad["version"] = 3; rejectRoot(bad);
+        bad = goodRoot; bad["version"] = 2.5; rejectRoot(bad);
+        bad = goodRoot; bad["format"] = "TheCAD.Assembly"; rejectRoot(bad);
+        bad = goodRoot; bad["units"] = "inch"; rejectRoot(bad);
+        bad = goodRoot; bad["resultFeature"] = sketchId.c_str(); rejectRoot(bad);
+        bad = goodRoot; bad["futureState"] = 42; rejectRoot(bad);
+        auto history = goodRoot.value("features").toArray();
+        auto feature = history.at(1).toObject(); feature["dependencies"] = QJsonArray{"missing"}; history[1] = feature;
+        bad = goodRoot; bad["features"] = history; rejectRoot(bad);
+        history = goodRoot.value("features").toArray();
+        feature = history.at(1).toObject(); feature["sketch"] = circleId.c_str(); history[1] = feature;
+        bad = goodRoot; bad["features"] = history; rejectRoot(bad); // forward dependency
+        history = goodRoot.value("features").toArray();
+        feature = history.at(0).toObject(); feature["id"] = "bad\n"; history[0] = feature;
+        bad = goodRoot; bad["features"] = history; rejectRoot(bad);
+        history = goodRoot.value("features").toArray();
+        feature = history.at(2).toObject(); feature["id"] = sketchId.c_str(); history[2] = feature;
+        bad = goodRoot; bad["features"] = history; rejectRoot(bad);
+        history = goodRoot.value("features").toArray();
+        feature = history.at(1).toObject(); feature["type"] = "fillet"; history[1] = feature;
+        bad = goodRoot; bad["features"] = history; rejectRoot(bad);
+        for (const auto bytes : {QByteArray(), QByteArray("not JSON"), QByteArray("[]"), QByteArray("{}")}) {
+            write(invalid, bytes); rejected([&] { (void)PartDocument::load(invalid); });
         }
-        for (const QByteArray bytes : {QByteArray("not JSON"), QByteArray("[]"), QByteArray("{}"),
-                                      QByteArray()}) {
-            write(invalidPath, bytes);
-            rejected([&] { (void)PartDocument::load(invalidPath); });
-        }
-        write(invalidPath, QByteArray(1024 * 1024 + 1, ' '));
-        rejected([&] { (void)PartDocument::load(invalidPath); });
-        rejected([&] { (void)PartDocument::load(directory.filePath("missing.tcpart")); });
-        rejected([&] { original.save(directory.filePath("assembly.tcasmb")); });
+        write(invalid, QByteArray(1024 * 1024 + 1, ' ')); rejected([&] { (void)PartDocument::load(invalid); });
+        rejected([&] { (void)PartDocument::load(directory.filePath("missing.thepart")); });
         rejected([&] { (void)PartDocument::createBox({std::numeric_limits<double>::quiet_NaN(), 2, 3}); });
 
-        // Deny deletion/replacement while permitting reads. Atomic save must fail
-        // without truncating the old file when Windows blocks the final replace.
-        const QByteArray beforeFailure = read(saveAs);
-        HANDLE locked = CreateFileW(reinterpret_cast<LPCWSTR>(saveAs.utf16()), GENERIC_READ,
-                                    FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-        require(locked != INVALID_HANDLE_VALUE, "Existing document must lock for failed-save check");
-        bool failureWasReported = false;
-        try {
-            original.save(saveAs);
-        } catch (const std::runtime_error&) {
-            failureWasReported = true;
-        }
+        // Genuine schema-1 legacy fixture is read-only. Conversion changes the
+        // destination extension and schema, preserving the original bytes/ID.
+        const QJsonObject legacyFeature{{"id", "feature_custom_42"}, {"type", "box"},
+            {"parameters", QJsonObject{{"width", 125.25}, {"depth", 21.5}, {"height", 8.75}}}, {"dependencies", QJsonArray{}}};
+        const QJsonObject legacy{{"format", "TheCAD.Part"}, {"version", 1}, {"units", "mm"},
+            {"features", QJsonArray{legacyFeature}}, {"resultFeature", "feature_custom_42"}};
+        const auto legacyPath = directory.filePath("original.tcpart");
+        const auto legacyBytes = QJsonDocument(legacy).toJson();
+        write(legacyPath, legacyBytes);
+        auto legacyPart = PartDocument::load(legacyPath);
+        checkBox(legacyPart, {125.25, 21.5, 8.75});
+        rejected([&] { legacyPart.save(legacyPath); });
+        require(read(legacyPath) == legacyBytes, "Save must never overwrite a legacy .tcpart file");
+        const auto converted = directory.filePath("converted.THEPART");
+        legacyPart.save(converted);
+        checkBox(PartDocument::load(converted), {125.25, 21.5, 8.75});
+        require(PartDocument::load(converted).features()[0].id == "feature_custom_42", "Legacy stable ID must survive conversion");
+        require(read(legacyPath) == legacyBytes, "Conversion must retain original legacy file bytes");
+        auto invalidLegacy = legacy; invalidLegacy["features"] = QJsonArray{}; rejectRoot(invalidLegacy);
+        auto invalidBox = legacyFeature; invalidBox["dependencies"] = QJsonArray{"feature_custom_42"};
+        invalidLegacy = legacy; invalidLegacy["features"] = QJsonArray{invalidBox}; rejectRoot(invalidLegacy);
+        rejected([&] { legacyPart.save(directory.filePath("assembly.theasmb")); });
+
+        const auto priorBytes = read(converted);
+        HANDLE locked = CreateFileW(reinterpret_cast<LPCWSTR>(converted.utf16()), GENERIC_READ, FILE_SHARE_READ,
+                                    nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        require(locked != INVALID_HANDLE_VALUE, "Existing native document must lock");
+        bool failed = false;
+        try { part.save(converted); } catch (const std::runtime_error&) { failed = true; }
         CloseHandle(locked);
-        require(failureWasReported, "Locked destination save must fail clearly");
-        require(read(saveAs) == beforeFailure, "Failed atomic replacement must leave original bytes intact");
-        checkGeometry(PartDocument::load(saveAs), first);
-        std::cout << "PASS: parameter/BRep round-trip, Save/Save As, Unicode paths, stable IDs, "
-                     "invalid files, unsupported schema/features/dependencies, atomic failure safety\n";
+        require(failed && read(converted) == priorBytes, "Failed atomic save must preserve the existing file");
+        std::cout << "PASS: empty/sketch/box history, extrude/cut regeneration, transactional edits, schema/IDs/dependencies, legacy conversion, atomic save safety\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';

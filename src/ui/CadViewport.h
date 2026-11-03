@@ -1,5 +1,8 @@
 #pragma once
 
+#include "modeling/Sketch.h"
+#include <optional>
+#include <QMetaType>
 #include <QPoint>
 #include <QString>
 #include <QWidget>
@@ -25,11 +28,21 @@ public:
     QString initializationError() const;
     bool setShape(const TopoDS_Shape& shape);
     void releaseGraphics();
+    void beginSketch(const modeling::Sketch& sketch);
+    void endSketch();
+    void setSketchTool(modeling::EntityKind kind);
+    void setSketch(const modeling::Sketch& sketch);
+    void beginContourSelection(const modeling::Sketch& sketch);
+    void endContourSelection();
+    void previewShape(const TopoDS_Shape& shape);
+    void clearPreview();
     void fitAll();
     void resetView();
 
 signals:
     void initializationFailed(const QString& message);
+    void sketchEntityCreated(const thecad::modeling::SketchEntity& entity);
+    void sketchRegionClicked(thecad::modeling::Point2 point);
 
 protected:
     QPaintEngine* paintEngine() const override;
@@ -45,10 +58,14 @@ protected:
 
 private:
     friend class CadViewportTest;
+    friend class ModelingWorkflowTest;
     enum class Navigation { None, Orbit, Pan };
     void initialize();
     void releaseViewer();
     void synchronizeSurface();
+    void orientSketch();
+    void updateSketchPresentation(const std::optional<modeling::SketchEntity>& preview = {});
+    std::optional<modeling::Point2> sketchPosition(const QPointF& position);
     QPoint nativePosition(const QPointF& position) const;
 
     TopoDS_Shape m_shape;
@@ -56,6 +73,13 @@ private:
     Handle(V3d_View) m_view;
     Handle(AIS_InteractiveContext) m_context;
     Handle(AIS_Shape) m_presentation;
+    Handle(AIS_Shape) m_sketchPresentation;
+    std::optional<modeling::Sketch> m_sketch;
+    std::optional<modeling::EntityKind> m_sketchTool;
+    std::optional<modeling::Point2> m_firstPoint;
+    bool m_sketchEditing = false;
+    bool m_regionSelecting = false;
+    Handle(AIS_Shape) m_previewPresentation;
     QSize m_renderSize;
     QString m_error;
     Navigation m_navigation = Navigation::None;
@@ -65,3 +89,7 @@ private:
 };
 
 } // namespace thecad::ui
+
+Q_DECLARE_METATYPE(thecad::modeling::SketchEntity)
+
+Q_DECLARE_METATYPE(thecad::modeling::Point2)

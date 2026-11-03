@@ -89,8 +89,41 @@ private slots:
         QVERIFY(viewport->setShape(modeling::makeBox(32.5, 16.0, 8.25)));
         QVERIFY(viewport->m_presentation->Shape().IsSame(viewport->m_shape));
         const auto previousShape = viewport->m_shape;
-        QVERIFY(!viewport->setShape(TopoDS_Shape()));
-        QVERIFY(viewport->m_shape.IsSame(previousShape));
+        QVERIFY(viewport->setShape(TopoDS_Shape()));
+        QVERIFY(viewport->m_shape.IsNull());
+        QVERIFY(viewport->setShape(modeling::makeBox(100, 70, 40)));
+    }
+    void sketchMouseInputUsesModelCoordinates()
+    {
+        QVERIFY(viewport->setShape({}));
+        QSignalSpy entities(viewport.get(), &CadViewport::sketchEntityCreated);
+        for (const auto plane : {modeling::SketchPlane::XY, modeling::SketchPlane::XZ, modeling::SketchPlane::YZ}) {
+            for (const auto kind : {modeling::EntityKind::Line, modeling::EntityKind::Rectangle, modeling::EntityKind::Circle}) {
+                viewport->beginSketch({plane, {}});
+                viewport->setSketchTool(kind);
+                QApplication::processEvents();
+                const auto toPixel = [&](modeling::Point2 point) {
+                    const auto world = modeling::sketchPoint(plane, point);
+                    int x, y;
+                    viewport->m_view->Convert(world.X(), world.Y(), world.Z(), x, y);
+                    return QPoint(qRound(x / viewport->devicePixelRatioF()), qRound(y / viewport->devicePixelRatioF()));
+                };
+                entities.clear();
+                QTest::mouseClick(viewport.get(), Qt::LeftButton, Qt::NoModifier, toPixel({-20, -15}));
+                QTest::mouseClick(viewport.get(), Qt::LeftButton, Qt::NoModifier, toPixel({20, 15}));
+                QCOMPARE(entities.count(), 1);
+                const auto entity = qvariant_cast<modeling::SketchEntity>(entities.takeFirst().at(0));
+                QCOMPARE(entity.kind, kind);
+                QVERIFY(std::abs(entity.first.x + 20) < 0.5);
+                QVERIFY(std::abs(entity.first.y + 15) < 0.5);
+                QVERIFY(std::abs(entity.second.x - 20) < 0.5);
+                QVERIFY(std::abs(entity.second.y - 15) < 0.5);
+                if (kind == modeling::EntityKind::Circle) {
+                    QVERIFY(std::abs(entity.radius - 50) < 0.5);
+                }
+            }
+        }
+        viewport->endSketch();
         QVERIFY(viewport->setShape(modeling::makeBox(100, 70, 40)));
     }
     void orbitChangesDirection()

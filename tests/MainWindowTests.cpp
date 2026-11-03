@@ -3,6 +3,12 @@
 #include "document/PartDocument.h"
 
 #include <QAction>
+#include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QLabel>
+#include <QPushButton>
+#include <QTreeWidget>
 #include <QFile>
 #include <QFileInfo>
 #include <QMenuBar>
@@ -63,7 +69,7 @@ private slots:
         QTemporaryDir directory;
         QVERIFY(directory.isValid());
         TestWindow window;
-        window.savePath = directory.filePath(QString::fromUtf8("díl.tcpart"));
+        window.savePath = directory.filePath(QString::fromUtf8("díl.thepart"));
         window.trigger("actionSave");
         QCOMPARE(window.errors.size(), 0);
         QVERIFY(!window.isWindowModified());
@@ -71,10 +77,11 @@ private slots:
         QCOMPARE(window.saveDialogCount, 1);
         QVERIFY(QFileInfo::exists(window.savePath));
         const auto original = document::PartDocument::load(window.savePath);
-        QCOMPARE(original.parameters().width, 100.0);
+        QVERIFY(original.features().empty());
+        QVERIFY(original.shape().IsNull());
 
         const QString firstPath = window.currentPath();
-        window.savePath = directory.filePath("second.tcpart");
+        window.savePath = directory.filePath("second.thepart");
         window.setWindowModified(true);
         window.trigger("actionSave");
         QCOMPARE(window.currentPath(), firstPath);
@@ -88,7 +95,7 @@ private slots:
         QVERIFY(QFileInfo::exists(firstPath));
         QVERIFY(QFileInfo::exists(window.savePath));
         const auto second = document::PartDocument::load(window.savePath);
-        QCOMPARE(second.parameters().depth, 70.0);
+        QVERIFY(second.features().empty());
         window.trigger("actionFitAll");
         window.trigger("actionIsometric");
         QVERIFY(!window.isWindowModified());
@@ -98,7 +105,7 @@ private slots:
     {
         QTemporaryDir directory;
         QVERIFY(directory.isValid());
-        const QString fixture = directory.filePath("custom.tcpart");
+        const QString fixture = directory.filePath("custom.thepart");
         document::PartDocument::createBox({12.5, 34.0, 56.0}).save(fixture);
         TestWindow window;
         window.show();
@@ -120,14 +127,15 @@ private slots:
         QCOMPARE(window.promptCount, 1);
         QVERIFY(window.currentPath().isEmpty());
         QVERIFY(window.isWindowModified());
-        QCOMPARE(window.document().parameters().width, 100.0);
+        QVERIFY(window.document().features().empty());
+        QVERIFY(window.document().shape().IsNull());
     }
 
     void dirtySamePathOpenSavesCurrentModelBeforeReload()
     {
         QTemporaryDir directory;
         QVERIFY(directory.isValid());
-        const QString path = directory.filePath("same-part.tcpart");
+        const QString path = directory.filePath("same-part.thepart");
         document::PartDocument::createBox({17.0, 19.0, 23.0}).save(path);
         TestWindow window;
         window.openPath = path;
@@ -160,7 +168,7 @@ private slots:
         QTemporaryDir directory;
         QVERIFY(directory.isValid());
         TestWindow window;
-        window.savePath = directory.filePath("current.tcpart");
+        window.savePath = directory.filePath("current.thepart");
         window.trigger("actionSave");
         QCOMPARE(window.errors.size(), 0);
         const QString originalPath = window.currentPath();
@@ -171,13 +179,14 @@ private slots:
         originalFile.close();
 
         window.setWindowModified(true);
-        window.savePath = directory.filePath("missing/subdirectory/failed.tcpart");
+        window.savePath = directory.filePath("missing/subdirectory/failed.thepart");
         window.trigger("actionSaveAs");
         QCOMPARE(window.errors.size(), 1);
         QCOMPARE(window.currentPath(), originalPath);
         QVERIFY(window.isWindowModified());
-        QVERIFY(window.document().shape().IsSame(originalShape));
-        QCOMPARE(window.document().parameters().width, 100.0);
+        QCOMPARE(window.document().shape().IsNull(), originalShape.IsNull());
+        QVERIFY(window.document().features().empty());
+        QVERIFY(window.document().shape().IsNull());
         QVERIFY(!QFileInfo::exists(window.savePath));
         QVERIFY(originalFile.open(QIODevice::ReadOnly));
         QCOMPARE(originalFile.readAll(), originalBytes);
@@ -198,7 +207,7 @@ private slots:
     {
         QTemporaryDir directory;
         QVERIFY(directory.isValid());
-        const QString good = directory.filePath("good.tcpart");
+        const QString good = directory.filePath("good.thepart");
         document::PartDocument::createBox({17.0, 19.0, 23.0}).save(good);
         TestWindow window;
         window.openPath = good;
@@ -206,7 +215,7 @@ private slots:
         window.setWindowModified(true);
         const int prompts = window.promptCount;
         const auto previousShape = window.document().shape();
-        const QString invalid = directory.filePath("invalid.tcpart");
+        const QString invalid = directory.filePath("invalid.thepart");
         QFile file(invalid);
         QVERIFY(file.open(QIODevice::WriteOnly));
         file.write("not a part document");
@@ -225,7 +234,7 @@ private slots:
     {
         QTemporaryDir directory;
         QVERIFY(directory.isValid());
-        const QString fixture = directory.filePath("other.tcpart");
+        const QString fixture = directory.filePath("other.thepart");
         document::PartDocument::createBox({3.0, 4.0, 5.0}).save(fixture);
         TestWindow window;
         window.choice = TestWindow::Choice::Cancel;
@@ -234,7 +243,8 @@ private slots:
         window.trigger("actionOpen");
         QCOMPARE(window.promptCount, 2);
         QVERIFY(window.currentPath().isEmpty());
-        QCOMPARE(window.document().parameters().width, 100.0);
+        QVERIFY(window.document().features().empty());
+        QVERIFY(window.document().shape().IsNull());
         QVERIFY(window.isWindowModified());
     }
 
@@ -244,7 +254,7 @@ private slots:
         QVERIFY(directory.isValid());
         TestWindow window;
         window.choice = TestWindow::Choice::Save;
-        window.savePath = directory.filePath("saved.tcpart");
+        window.savePath = directory.filePath("saved.thepart");
         window.trigger("actionNew");
         QCOMPARE(window.promptCount, 1);
         QCOMPARE(window.errors.size(), 0);
@@ -261,12 +271,12 @@ private slots:
         window.choice = TestWindow::Choice::Save;
         const auto previousShape = window.document().shape();
         window.trigger("actionNew");
-        QVERIFY(window.document().shape().IsSame(previousShape));
+        QCOMPARE(window.document().shape().IsNull(), previousShape.IsNull());
         QVERIFY(window.isWindowModified());
         QCOMPARE(window.errors.size(), 0);
-        window.savePath = directory.filePath("missing/part.tcpart");
+        window.savePath = directory.filePath("missing/part.thepart");
         window.trigger("actionNew");
-        QVERIFY(window.document().shape().IsSame(previousShape));
+        QCOMPARE(window.document().shape().IsNull(), previousShape.IsNull());
         QVERIFY(window.isWindowModified());
         QVERIFY(window.currentPath().isEmpty());
         QCOMPARE(window.errors.size(), 1);
@@ -279,10 +289,10 @@ private slots:
         TestWindow window;
         window.savePath = directory.filePath("part");
         window.trigger("actionSaveAs");
-        QCOMPARE(window.currentPath(), window.savePath + ".tcpart");
+        QCOMPARE(window.currentPath(), window.savePath + ".thepart");
         QVERIFY(!window.isWindowModified());
         const QString previousPath = window.currentPath();
-        window.savePath = directory.filePath("unsupported.tcasmb");
+        window.savePath = directory.filePath("unsupported.theasmb");
         window.trigger("actionSaveAs");
         QCOMPARE(window.errors.size(), 1);
         QCOMPARE(window.currentPath(), previousPath);
@@ -293,6 +303,95 @@ private slots:
         QCOMPARE(window.currentPath(), previousPath);
     }
 
+    void emptyPartAndContextualModelingCommands()
+    {
+        TestWindow window;
+        QVERIFY(window.document().features().empty());
+        QVERIFY(window.document().shape().IsNull());
+        QVERIFY(window.findChild<QAction*>("actionCreateSketch")->isEnabled());
+        QVERIFY(!window.findChild<QAction*>("actionExtrude")->isEnabled());
+        QVERIFY(!window.findChild<QAction*>("actionExtrudedCut")->isEnabled());
+        QVERIFY(!window.findChild<QAction*>("actionLine")->isEnabled());
+        QVERIFY(!window.findChild<QAction*>("actionFinishSketch")->isEnabled());
+    }
+
+    void operationRequiresExplicitSketchAndContour()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        auto part = document::PartDocument::createEmpty();
+        modeling::Sketch rectangle;
+        rectangle.entities.push_back({modeling::EntityKind::Rectangle, {0, 0}, {20, 10}, 1});
+        part.addSketch(rectangle);
+        modeling::Sketch open;
+        open.entities.push_back({modeling::EntityKind::Line, {0, 0}, {10, 0}, 1});
+        part.addSketch(open);
+        const QString path = directory.filePath("profiles.thepart");
+        part.save(path);
+        TestWindow window;
+        window.openPath = path;
+        window.trigger("actionOpen");
+        QCOMPARE(window.errors.size(), 0);
+        auto* tree = window.findChild<QTreeWidget*>("featureTree");
+        QVERIFY(tree);
+        tree->setCurrentItem(tree->topLevelItem(0));
+        QVERIFY(window.findChild<QAction*>("actionExtrude")->isEnabled());
+        window.trigger("actionExtrude");
+        auto* dialog = window.findChild<QDialog*>("operationDialog");
+        QVERIFY(dialog);
+        QVERIFY(dialog->isVisible());
+        auto* source = dialog->findChild<QComboBox*>("operationSketch");
+        auto* contours = dialog->findChild<QComboBox*>("operationContour");
+        auto* buttons = dialog->findChild<QDialogButtonBox*>("operationButtons");
+        auto* status = dialog->findChild<QLabel*>("operationStatus");
+        QVERIFY(source && contours && buttons && status);
+        QCOMPARE(source->currentIndex(), -1);
+        QVERIFY(!buttons->button(QDialogButtonBox::Ok)->isEnabled());
+        QVERIFY(!status->text().isEmpty());
+        source->setCurrentIndex(0);
+        QCOMPARE(contours->count(), 1);
+        QCOMPARE(contours->currentIndex(), -1);
+        QVERIFY(!buttons->button(QDialogButtonBox::Ok)->isEnabled());
+        source->setCurrentIndex(1);
+        QCOMPARE(contours->count(), 0);
+        QVERIFY(!buttons->button(QDialogButtonBox::Ok)->isEnabled());
+        QVERIFY2(status->text().contains("no valid closed contour"), qPrintable(status->text()));
+        dialog->reject();
+        QCOMPARE(window.document().features().size(), std::size_t(2));
+        QVERIFY(window.document().shape().IsNull());
+        QVERIFY(!window.isWindowModified());
+    }
+    void legacyBoxConversionDoesNotOverwriteOriginal()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString legacy = directory.filePath("legacy.tcpart");
+        QFile file(legacy);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        const QByteArray original = R"({"format":"TheCAD.Part","version":1,"units":"mm","features":[{"id":"box-old","type":"box","parameters":{"width":11,"depth":22,"height":33},"dependencies":[]}],"resultFeature":"box-old"})";
+        QCOMPARE(file.write(original), original.size());
+        file.close();
+        TestWindow window;
+        window.openPath = legacy;
+        window.trigger("actionOpen");
+        QCOMPARE(window.errors.size(), 0);
+        QCOMPARE(window.currentPath(), legacy);
+        QCOMPARE(window.document().parameters().width, 11.0);
+        window.savePath = directory.filePath("converted.thepart");
+        window.trigger("actionSave");
+        QCOMPARE(window.errors.size(), 0);
+        QCOMPARE(window.saveDialogCount, 1);
+        QCOMPARE(window.currentPath(), window.savePath);
+        QCOMPARE(document::PartDocument::load(window.savePath).parameters().height, 33.0);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QCOMPARE(file.readAll(), original);
+        file.close();
+        window.savePath = legacy;
+        window.trigger("actionSaveAs");
+        QCOMPARE(window.errors.size(), 1);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QCOMPARE(file.readAll(), original);
+    }
     void closeWarningCancelDiscardAndSave()
     {
         TestWindow window;
@@ -312,7 +411,7 @@ private slots:
         saved.show();
         QVERIFY(QTest::qWaitForWindowExposed(&saved));
         saved.choice = TestWindow::Choice::Save;
-        saved.savePath = directory.filePath("closed.tcpart");
+        saved.savePath = directory.filePath("closed.thepart");
         saved.trigger("actionExit");
         QVERIFY(!saved.isVisible());
         QVERIFY(QFileInfo::exists(saved.savePath));

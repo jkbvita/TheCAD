@@ -4,6 +4,8 @@
 #include <Aspect_DisplayConnection.hxx>
 #include <Aspect_GradientFillMethod.hxx>
 #include <OpenGl_GraphicDriver.hxx>
+#include <Graphic3d_Camera.hxx>
+#include <gp_Vec.hxx>
 #include <Prs3d_Drawer.hxx>
 #include <Quantity_Color.hxx>
 #include <Standard_Failure.hxx>
@@ -28,6 +30,8 @@ CadViewport::CadViewport(const TopoDS_Shape& shape, QWidget* parent)
     setAttribute(Qt::WA_NativeWindow);
     setAttribute(Qt::WA_PaintOnScreen);
     setAttribute(Qt::WA_NoSystemBackground);
+    qRegisterMetaType<modeling::SketchEntity>();
+    setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
     setMinimumSize(320, 240);
     setObjectName("cadViewport");
@@ -80,6 +84,8 @@ void CadViewport::initialize()
         if (!setShape(m_shape)) {
             Standard_Failure::Raise(m_error.toUtf8().constData());
         }
+        updateSketchPresentation();
+        if (m_sketchEditing) { orientSketch(); }
     } catch (const Standard_Failure& failure) {
         m_error = QString::fromUtf8(failure.GetMessageString());
         if (m_error.isEmpty()) {
@@ -98,6 +104,8 @@ void CadViewport::releaseGraphics()
 
 void CadViewport::releaseViewer()
 {
+    m_previewPresentation.Nullify();
+    m_sketchPresentation.Nullify();
     m_presentation.Nullify();
     m_context.Nullify();
     m_renderSize = {};
@@ -156,8 +164,14 @@ void CadViewport::synchronizeSurface()
 bool CadViewport::setShape(const TopoDS_Shape& shape)
 {
     if (shape.IsNull()) {
-        m_error = "Cannot display an empty shape.";
-        return false;
+        if (isReady() && !m_presentation.IsNull()) {
+            m_context->Remove(m_presentation, Standard_False);
+            m_presentation.Nullify();
+        }
+        m_shape.Nullify();
+        m_error.clear();
+        update();
+        return true;
     }
     if (!isReady()) {
         m_shape = shape;
@@ -189,6 +203,146 @@ bool CadViewport::setShape(const TopoDS_Shape& shape)
     m_error.clear();
     return true;
 }
+void CadViewport::beginSketch(const modeling::Sketch& sketch)
+{
+    clearPreview();
+    m_regionSelecting = false;
+    m_sketchEditing = true;
+    m_sketchTool.reset();
+    m_firstPoint.reset();
+    setSketch(sketch);
+    orientSketch();
+    setFocus(Qt::OtherFocusReason);
+}
+
+void CadViewport::endSketch()
+{
+    m_sketchEditing = false;
+    m_sketchTool.reset();
+    m_firstPoint.reset();
+    m_sketch.reset();
+    updateSketchPresentation();
+    unsetCursor();
+    resetView();
+}
+
+void CadViewport::beginContourSelection(const modeling::Sketch& sketch)
+{
+    m_sketchEditing = false;
+    m_regionSelecting = true;
+    m_firstPoint.reset();
+    setSketch(sketch);
+    orientSketch();
+}
+
+void CadViewport::endContourSelection()
+{
+    m_regionSelecting = false;
+    m_sketch.reset();
+    updateSketchPresentation();
+}
+
+void CadViewport::previewShape(const TopoDS_Shape& shape)
+{
+    if (!isReady() || shape.IsNull()) { return; }
+    const bool firstPreview = m_previewPresentation.IsNull();
+    clearPreview();
+    m_previewPresentation = new AIS_Shape(shape);
+    m_previewPresentation->SetColor(Quantity_Color(0.30, 0.75, 0.83, Quantity_TOC_RGB));
+    m_previewPresentation->Attributes()->SetFaceBoundaryDraw(Standard_True);
+    if (!m_presentation.IsNull()) { m_context->Erase(m_presentation, Standard_False); }
+    m_context->Display(m_previewPresentation, Standard_False);
+    if (firstPreview) { resetView(); }
+    update();
+}
+
+void CadViewport::clearPreview()
+{
+    if (!isReady()) { return; }
+    if (!m_previewPresentation.IsNull()) {
+        m_context->Remove(m_previewPresentation, Standard_False);
+        m_previewPresentation.Nullify();
+        if (!m_presentation.IsNull()) { m_context->Display(m_presentation, Standard_False); }
+        update();
+    }
+}
+void CadViewport::setSketchTool(modeling::EntityKind kind)
+{
+    m_sketchTool = kind;
+    m_firstPoint.reset();
+    if (m_sketchEditing) { setCursor(Qt::CrossCursor); }
+    updateSketchPresentation();
+}
+
+void CadViewport::setSketch(const modeling::Sketch& sketch)
+{
+    m_sketch = sketch;
+    updateSketchPresentation();
+}
+
+void CadViewport::orientSketch()
+{
+    if (!isReady() || !m_sketch) { return; }
+    const auto axes = modeling::sketchAxes(m_sketch->plane);
+    const auto normal = axes.Direction();
+    const auto up = axes.YDirection();
+    m_view->Camera()->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);
+    m_view->SetProj(normal.X(), normal.Y(), normal.Z());
+    m_view->SetUp(up.X(), up.Y(), up.Z());
+    if (m_shape.IsNull() && m_sketch->entities.empty()) {
+        m_view->SetAt(0.0, 0.0, 0.0);
+        m_view->Camera()->SetScale(150.0); // Initial model-space span in mm, not a pixel rectangle.
+    } else {
+        fitAll();
+    }
+    update();
+}
+
+void CadViewport::updateSketchPresentation(const std::optional<modeling::SketchEntity>& preview)
+{
+    if (!isReady()) { return; }
+    if (!m_sketchPresentation.IsNull()) {
+        m_context->Remove(m_sketchPresentation, Standard_False);
+        m_sketchPresentation.Nullify();
+    }
+    if (m_sketch) {
+        try {
+            auto visible = *m_sketch;
+            if (preview) { visible.entities.push_back(*preview); }
+            const auto shape = modeling::sketchShape(visible);
+            if (!shape.IsNull()) {
+                m_sketchPresentation = new AIS_Shape(shape);
+                m_sketchPresentation->SetColor(Quantity_NOC_ORANGE);
+                m_sketchPresentation->SetWidth(3.0);
+                m_context->Display(m_sketchPresentation, AIS_WireFrame, -1, Standard_False);
+                m_context->SetDisplayPriority(m_sketchPresentation, Graphic3d_DisplayPriority_Topmost);
+            }
+        } catch (const std::exception&) {
+            // A zero-size pointer preview is transient, never stored as model data.
+        } catch (const Standard_Failure&) {
+        }
+    }
+    update();
+}
+
+std::optional<modeling::Point2> CadViewport::sketchPosition(const QPointF& position)
+{
+    if (!isReady() || !m_sketch) { return {}; }
+    synchronizeSurface();
+    const QPoint pixel = nativePosition(position);
+    double x, y, z, dx, dy, dz;
+    m_view->ConvertWithProj(pixel.x(), pixel.y(), x, y, z, dx, dy, dz);
+    const auto axes = modeling::sketchAxes(m_sketch->plane);
+    const gp_Vec normal(axes.Direction());
+    const gp_Vec ray(dx, dy, dz);
+    const double divisor = ray.Dot(normal);
+    if (std::abs(divisor) < 1e-10) { return {}; }
+    const gp_Pnt origin(x, y, z);
+    const double distance = gp_Vec(origin, axes.Location()).Dot(normal) / divisor;
+    const auto onPlane = origin.Translated(ray * distance);
+    const gp_Vec local(axes.Location(), onPlane);
+    return modeling::Point2{local.Dot(gp_Vec(axes.XDirection())), local.Dot(gp_Vec(axes.YDirection()))};
+}
 QPoint CadViewport::nativePosition(const QPointF& position) const
 {
     // Qt events use device-independent coordinates; OCCT uses native pixels.
@@ -199,6 +353,32 @@ QPoint CadViewport::nativePosition(const QPointF& position) const
 void CadViewport::mousePressEvent(QMouseEvent* event)
 {
     if (!isReady() || m_navigation != Navigation::None) {
+        return;
+    }
+    if (event->button() == Qt::LeftButton && m_regionSelecting) {
+        const auto point = sketchPosition(event->position());
+        if (point) { emit sketchRegionClicked(*point); }
+        event->accept();
+        return;
+    }
+    if (event->button() == Qt::LeftButton && m_sketchEditing) {
+        setFocus(Qt::MouseFocusReason);
+        const auto point = sketchPosition(event->position());
+        if (m_sketchTool && point) {
+            if (!m_firstPoint) {
+                m_firstPoint = point;
+            } else {
+                modeling::SketchEntity entity;
+                entity.kind = *m_sketchTool;
+                entity.first = *m_firstPoint;
+                entity.second = *point;
+                entity.radius = std::hypot(point->x - m_firstPoint->x, point->y - m_firstPoint->y);
+                m_firstPoint.reset();
+                emit sketchEntityCreated(entity);
+                updateSketchPresentation();
+            }
+        }
+        event->accept();
         return;
     }
     if (event->button() == Qt::LeftButton) {
@@ -219,6 +399,18 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
 
 void CadViewport::mouseMoveEvent(QMouseEvent* event)
 {
+    if (isReady() && m_sketchEditing && m_navigation == Navigation::None && m_sketchTool && m_firstPoint) {
+        const auto point = sketchPosition(event->position());
+        if (point) {
+            modeling::SketchEntity preview;
+            preview.kind = *m_sketchTool;
+            preview.first = *m_firstPoint;
+            preview.second = *point;
+            preview.radius = std::hypot(point->x - m_firstPoint->x, point->y - m_firstPoint->y);
+            updateSketchPresentation(preview);
+        }
+        return;
+    }
     if (!isReady() || m_navigation == Navigation::None) {
         return;
     }
@@ -273,7 +465,10 @@ void CadViewport::wheelEvent(QWheelEvent* event)
 
 void CadViewport::keyPressEvent(QKeyEvent* event)
 {
-    if (event->key() == Qt::Key_F) {
+    if (event->key() == Qt::Key_Escape && m_sketchEditing) {
+        m_firstPoint.reset();
+        updateSketchPresentation();
+    } else if (event->key() == Qt::Key_F) {
         fitAll();
     } else if (event->key() == Qt::Key_Home) {
         resetView();
@@ -295,6 +490,7 @@ void CadViewport::fitAll()
 void CadViewport::resetView()
 {
     if (isReady()) {
+        if (m_sketchEditing) { orientSketch(); return; }
         m_view->SetProj(V3d_XposYnegZpos);
         fitAll();
     }

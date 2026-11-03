@@ -1,74 +1,151 @@
 # Native TheCAD documents
 
-The project owner approved three permanent filename extensions on 2026-11-02:
+The project owner superseded the previous naming convention and approved these
+permanent extensions for the parametric modeling milestone:
 
 | Extension | Document kind | Current support |
 | --- | --- | --- |
-| `.tcpart` | Part | Version 1 box-part saving and loading |
-| `.tcasmb` | Assembly | Naming reserved; no implementation |
-| `.tcdrw` | Technical drawing | Naming reserved; no implementation |
+| `.thepart` | Part | Version 2 parametric part saving/loading; version 1 box import |
+| `.theasmb` | Assembly | Reserved; no assembly implementation |
+| `.thedrw` | Technical drawing | Reserved; no drawing implementation |
 
-These naming conventions do not approve assembly or drawing functionality.
-Only `.tcpart` is accepted by the current application. The internal serialization
-is provisional and may evolve; the `.tcpart` extension is permanent.
+Existing `.tcpart` files remain readable legacy input. Save never writes to a
+`.tcpart` path: conversion must use a `.thepart` destination. The UI prompts for a
+new path when saving an opened legacy document and retains the original legacy
+file unchanged. The old `.tcasmb` and `.tcdrw` names have no implemented readers.
 
-## Part structure, version 1
+The filename extensions are permanent. The internal serialization remains
+provisional; it does not settle a final parametric architecture, feature-reference
+strategy, or topological naming scheme.
 
-A `.tcpart` is a UTF-8 JSON document. For example:
+## Version 2 part structure
+
+A `.thepart` is a UTF-8 JSON object with these root fields:
+
+- `format`: exactly `TheCAD.Part`.
+- `version`: exactly `2` for current writers.
+- `units`: exactly `mm`.
+- `features`: ordered array of feature records.
+- `resultFeature`: the ID of the last solid-producing feature, or an empty string
+  for an empty or sketch-only part.
+
+For example, a rectangle extruded into a solid and cut with a circular profile:
 
 ```json
 {
-    "format": "TheCAD.Part",
-    "version": 1,
-    "units": "mm",
-    "features": [
-        {
-            "id": "box-1",
-            "type": "box",
-            "parameters": { "width": 100, "depth": 70, "height": 40 },
-            "dependencies": []
-        }
-    ],
-    "resultFeature": "box-1"
+  "format": "TheCAD.Part",
+  "version": 2,
+  "units": "mm",
+  "features": [
+    {
+      "id": "sketch-1", "name": "Sketch1", "type": "sketch",
+      "plane": "XY", "dependencies": [],
+      "entities": [
+        { "id": "entity-1", "type": "rectangle", "first": [0, 0], "second": [40, 30] }
+      ]
+    },
+    {
+      "id": "extrude-1", "name": "Extrude1", "type": "extrude",
+      "sketch": "sketch-1", "contour": ["entity-1"],
+      "length": 20, "direction": "positive", "dependencies": ["sketch-1"]
+    },
+    {
+      "id": "sketch-2", "name": "Sketch2", "type": "sketch",
+      "plane": "XY", "dependencies": [],
+      "entities": [
+        { "id": "entity-1", "type": "circle", "center": [20, 15], "radius": 4 }
+      ]
+    },
+    {
+      "id": "cut-1", "name": "ExtrudedCut1", "type": "cut",
+      "sketch": "sketch-2", "contour": ["entity-1"],
+      "length": 5, "throughAll": true, "direction": "positive",
+      "dependencies": ["sketch-2", "extrude-1"]
+    }
+  ],
+  "resultFeature": "cut-1"
 }
 ```
 
-The feature parameters are authoritative exact modeling inputs, not display-mesh
-vertices. Opening a document regenerates an actual Open CASCADE boundary
-representation solid from those dimensions and checks its topology. Thus the
-supported geometry and editable parameters survive saving without relying on a
-screenshot, tessellation, or opaque binary snapshot. Camera position is not model
-data and is not serialized; opening resets the view to fit the restored solid.
+## Sketch data and references
 
-Version 1 deliberately supports exactly one box feature. Its ID is a stable,
-nonempty identifier of at most 128 ASCII letters, digits, underscores, or hyphens;
-its dependencies must be an empty array. `resultFeature` must reference that ID.
-The width, depth, and height are finite positive millimeter lengths above OCCT's
-linear tolerance and at most 1,000,000,000 mm per axis. This prototype safety limit
-rejects extreme numeric inputs before invoking the geometry kernel. The feature ID
-is preserved on round-trip.
+Sketch entity coordinates are exact model-space millimeters on the sketch's
+origin plane. The right-handed mappings are:
 
-The feature list, stable IDs, explicit dependencies, and result reference provide
-places for future parametric operations and dependency references. This milestone
-does not implement a general feature graph or approve future feature behavior.
-Adding feature types, dependency processing, or changed semantics requires a
-versioned reader/writer update and appropriate owner approval. Current readers
-reject unsupported versions, unknown fields, feature types, nonempty dependencies,
-incorrect references, invalid geometry, and files larger than 1 MiB rather than
-silently discarding data. Version and format checks prevent assembly, drawing,
-foreign, or future documents from being misinterpreted as supported parts.
+| Plane | Sketch X coordinate | Sketch Y coordinate | Positive normal |
+| --- | --- | --- | --- |
+| XY | World X | World Y | +Z |
+| XZ | World X | World Z | -Y |
+| YZ | World Y | World Z | +X |
 
-## Safe replacement and file operations
+A line stores `first` and `second` coordinate pairs. A rectangle stores two
+opposite corners in those fields. A circle stores `center` and `radius`.
+Every entity has an explicit stable ID scoped to its sketch. New entities receive
+IDs when committed; valid existing IDs are preserved. A sketch may contain
+multiple independent closed contours and open geometry.
 
-Saving uses Qt `QSaveFile` with direct-write fallback disabled. The completed
-file replaces its destination atomically; a failed write does not truncate the
-previous document. The active UI document and path change only after a successful
-load or save. Loading builds and validates a candidate document before replacing
-the current one, so invalid files leave the current document intact.
+Extrude/Cut explicitly reference both a source sketch ID and a nonempty `contour`
+array of its entity IDs. A rectangle or circle contour has one entity ID; a
+line-loop contour references all member line IDs. The selected IDs must still
+identify a valid closed contour on recomputation. The reader and evaluator never
+silently choose another profile if that contour becomes invalid or is removed.
+These references deliberately name model entities, not screen pixels or transient
+rendered objects.
 
-New documents begin with the prototype box and count as unsaved. Save reuses the
-current path, while Save As requests a new `.tcpart` path using a normal Windows
-file dialog. Navigation changes only the view and does not mark a part modified.
-New, Open, Exit, and closing the window offer Save, Discard, or Cancel before
-replacing or closing a modified part. This prototype does not introduce parameter
-editing controls or additional modeling tools.
+## Feature records and recomputation
+
+Each feature has `id`, `name`, `type`, and `dependencies`. IDs contain 1–128 ASCII
+letters, digits, underscores, or hyphens. IDs are unique in the part. Names contain
+1–128 printable characters. Additional supported fields are:
+
+| Type | Fields |
+| --- | --- |
+| `box` | `parameters` object with `width`, `depth`, `height`; retained for legacy box documents |
+| `sketch` | `plane` (`XY`, `XZ`, `YZ`), `entities` array |
+| `extrude` | `sketch`, `contour`, positive `length`, `direction` (`positive` or `negative`) |
+| `cut` | Extrude fields plus Boolean `throughAll`; `length` is specified depth, retained even when through-all is active |
+
+This provisional evaluator walks the ordered history. Sketches do not replace
+the current solid. An initial extrusion generates a precise OCCT BRep solid;
+subsequent additive extrusions join the prior solid. A cut applies an OCCT Boolean
+to the prior body. Solid operations must retain one valid, positive-volume solid.
+Open, unsuitable, or invalid selected contours are rejected. Direction is explicit
+relative to the origin-plane normal; through-all computes its required extent
+from the existing body's bounds rather than using a fixed guessed depth.
+
+Sketches have no dependencies in this origin-plane milestone. An extrusion's
+dependencies are its source sketch followed by the prior solid feature when one
+exists. A cut's dependencies are its source sketch followed by the prior body.
+The reader validates those exact backward references and feature order. There is
+no suppression, rollback UI, reordering, face attachment, or general dependency
+solver. Future planar-face support and permanent topology naming need separately
+approved semantics; neither is encoded implicitly in the current origin planes.
+
+Editing a sketch or feature recomputes a candidate history from its parameters.
+Only a fully successful recomputation replaces the active document and shape.
+Failure preserves the previous feature data and BRep. On reopen, the complete
+editable history is read and the actual solid is reconstructed. No mesh,
+screenshot, or opaque geometric snapshot is used as the authoritative model.
+Camera position is view state and is not saved.
+
+## Legacy version 1 and safe file operations
+
+Version 1 consists of the original root fields with `version: 1`, exactly one
+`box` feature, an empty dependency list, and `resultFeature` referencing the box.
+It has no feature `name` field. Valid legacy boxes are loaded with their IDs and
+exact dimensions preserved. Conversion writes the equivalent editable box as a
+version 2 `.thepart`; it does not reinterpret a box as an unapproved extrusion.
+
+Save uses Qt `QSaveFile` with direct-write fallback disabled. Failed atomic
+replacement preserves an existing destination. Save reuses the active `.thepart`
+path; Save As selects another path. New, Open, Exit, and close honor unsaved
+Save/Discard/Cancel choices. Invalid/unsupported files are validated before active
+document replacement.
+
+Readers reject unsupported formats/versions/units, unknown or missing fields,
+invalid IDs/references/order, unsupported features, invalid numeric geometry,
+and oversized input. Prototype limits are 1 MiB per document, 500 features,
+1000 entities per sketch, and finite coordinates/lengths within 1e9 mm. Open
+sketches are valid document data but are not automatically valid extrusion
+profiles. No constraint solver, automatic dimensioning, or advanced relations
+are implied by this schema.

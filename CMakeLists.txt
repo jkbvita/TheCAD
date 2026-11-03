@@ -18,10 +18,10 @@ find_package(OpenCASCADE 7.9.3 EXACT REQUIRED COMPONENTS
 add_library(thecad_occt INTERFACE)
 target_include_directories(thecad_occt SYSTEM INTERFACE "${OpenCASCADE_INCLUDE_DIR}")
 
-add_library(thecad_modeling STATIC src/modeling/Box.cpp)
+add_library(thecad_modeling STATIC src/modeling/Box.cpp src/modeling/Sketch.cpp)
 set_target_properties(thecad_modeling PROPERTIES AUTOMOC OFF)
 target_include_directories(thecad_modeling PUBLIC src)
-target_link_libraries(thecad_modeling PUBLIC thecad_occt TKPrim TKTopAlgo TKBRep)
+target_link_libraries(thecad_modeling PUBLIC thecad_occt TKPrim TKTopAlgo TKBRep TKBO TKBool TKShHealing)
 
 add_library(thecad_document STATIC src/document/PartDocument.cpp)
 set_target_properties(thecad_document PROPERTIES AUTOMOC OFF)
@@ -52,6 +52,11 @@ if(BUILD_TESTING)
     target_link_libraries(thecad_modeling_tests PRIVATE thecad_modeling)
     add_test(NAME modeling.box COMMAND thecad_modeling_tests)
 
+    add_executable(thecad_sketch_tests tests/SketchGeometryTests.cpp)
+    set_target_properties(thecad_sketch_tests PROPERTIES AUTOMOC OFF)
+    target_link_libraries(thecad_sketch_tests PRIVATE thecad_modeling)
+    add_test(NAME modeling.sketch COMMAND thecad_sketch_tests)
+
     add_executable(thecad_document_tests tests/PartDocumentTests.cpp)
     set_target_properties(thecad_document_tests PROPERTIES AUTOMOC OFF)
     target_link_libraries(thecad_document_tests PRIVATE thecad_document)
@@ -71,6 +76,12 @@ if(BUILD_TESTING)
         set_tests_properties(ui.viewport.hidpi PROPERTIES TIMEOUT 60 LABELS "gui;opengl;hidpi"
             ENVIRONMENT "QT_SCALE_FACTOR=1.5;THECAD_TEST_ARTIFACT_DIR=${CMAKE_BINARY_DIR}/test-artifacts/hidpi")
         set_tests_properties(ui.documents PROPERTIES TIMEOUT 60 LABELS "gui;documents")
+        add_executable(thecad_workflow_tests tests/ModelingWorkflowTests.cpp)
+        target_link_libraries(thecad_workflow_tests PRIVATE thecad_ui Qt6::Test)
+        add_test(NAME ui.modeling-workflow COMMAND thecad_workflow_tests
+            -o "${CMAKE_BINARY_DIR}/modeling-workflow-results.txt,txt")
+        set_tests_properties(ui.modeling-workflow PROPERTIES TIMEOUT 120 LABELS "gui;modeling" RUN_SERIAL TRUE
+            ENVIRONMENT "THECAD_TEST_ARTIFACT_DIR=${CMAKE_BINARY_DIR}/test-artifacts")
         # Desktop tests must not race for focus or native windows.
         set_tests_properties(ui.viewport ui.viewport.hidpi ui.documents PROPERTIES RUN_SERIAL TRUE)
         set_tests_properties(ui.viewport PROPERTIES

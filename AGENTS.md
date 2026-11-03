@@ -7,9 +7,10 @@ CAD application with parts, assemblies and drawings.
 
 ## Development principles
 
-- Do not assume SolidWorks workflows are optimal.
-- Treat existing CAD systems as references, not
-  specifications.
+- Reproduce the SolidWorks workflows explicitly approved and liked by the
+  project owner as the initial baseline; discuss redesigns individually.
+- Do not assume any workflow is permanently optimal. Unapproved CAD behavior
+  remains reference material, not a specification.
 - Prefer modular, testable architecture.
 - Keep the CAD engine separate from the UI where
   practical.
