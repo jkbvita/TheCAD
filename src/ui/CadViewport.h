@@ -48,11 +48,20 @@ public:
     void previewShape(const TopoDS_Shape& shape);
     void clearPreview();
     void setConstraintPicking(bool enabled);
+    void setSmartDimensionPicking(bool enabled);
+    void setDimensionPreview(const std::optional<modeling::SketchDimension>& dimension);
+    void setDimensionSelection(const std::vector<std::string>& entities,const std::vector<modeling::SketchPointRef>& points);
+    QPoint dimensionScreenPoint(modeling::Point2 point) const;
+    std::string selectedSketchEntity() const {return m_selectedEntity;}
+    std::optional<modeling::SketchPointRef> selectedSketchPoint() const {return m_selectedPoint;}
     void setConstraintErrors(const std::vector<std::string>& ids);
     void fitAll();
     void resetView();
 
 signals:
+    void dimensionReferencePicked(const QString& id,int role);
+    void dimensionPointerMoved(thecad::modeling::Point2 point);
+    void dimensionVariantRequested(bool radius);
     void constraintPickingCanceled();
     void dimensionPlacementRequested(thecad::modeling::Point2 point);
     void dimensionEditRequested(const QString& id);
@@ -96,6 +105,10 @@ private:
     std::vector<Handle(AIS_TextLabel)> m_constraintLabels;
     std::vector<Handle(AIS_Shape)> m_dimensionGuides;
     bool m_constraintPicking = false;
+    bool m_smartDimensionPicking = false;
+    std::optional<modeling::SketchDimension> m_dimensionPreview;
+    std::vector<std::string> m_dimensionEntities;
+    std::vector<modeling::SketchPointRef> m_dimensionPoints;
     bool m_sketchFullyDefined = false;
     std::vector<std::string> m_constraintErrors;
     void updateSketchAxes();

@@ -69,10 +69,39 @@ public:
             }
         }
     }
+    bool parallelImplied(const SketchDimension& dimension) const {
+        // Avoid introducing a duplicate derived parallel equation where existing
+        // orientation relations already imply it. No owner constraint is removed.
+        std::map<std::string,std::vector<std::pair<std::string,int>>> graph;
+        const auto join=[&](const std::string& a,const std::string& b,int parity){graph[a].push_back({b,parity});graph[b].push_back({a,parity});};
+        for(const auto& r:sketch.relations) {
+            if(r.kind==RelationKind::Parallel || r.kind==RelationKind::Perpendicular)join(r.first.entityId,r.second.entityId,r.kind==RelationKind::Perpendicular?1:0);
+            if(r.kind==RelationKind::Horizontal || r.kind==RelationKind::Vertical)join(r.first.entityId,"world-horizontal",r.kind==RelationKind::Vertical?1:0);
+        }
+        std::set<std::pair<std::string,int>> pinned;
+        for(const auto& r:sketch.relations)if(r.kind==RelationKind::FixedPoint)pinned.insert({r.first.entityId,int(r.first.role)});
+        for(const auto& e:sketch.entities)if(e.kind==EntityKind::Line && pinned.count({e.id,int(PointRole::First)}) && pinned.count({e.id,int(PointRole::Second)})) {
+            if(std::abs(e.second.y-e.first.y)<1e-9)join(e.id,"world-horizontal",0);
+            if(std::abs(e.second.x-e.first.x)<1e-9)join(e.id,"world-horizontal",1);
+        }
+        for(const auto& d:sketch.dimensions){if(d.id==dimension.id)break;if(d.driving && d.kind==DimensionKind::LineDistance)join(d.first.entityId,d.second.entityId,0);}
+        std::map<std::string,int> seen;std::vector<std::string> queue{dimension.first.entityId};seen[queue.front()]=0;
+        for(std::size_t i=0;i<queue.size();++i)for(const auto& edge:graph[queue[i]])if(!seen.count(edge.first)){seen[edge.first]=seen[queue[i]]^edge.second;queue.push_back(edge.first);}
+        const auto found=seen.find(dimension.second.entityId);return found!=seen.end() && found->second==0;
+    }
     void addDimensions(GCS::System& system) {
         for(const auto& d:sketch.dimensions)if(d.driving) {
             const int id=tag(d.id);auto& a=point(d.first);auto& b=point(d.second);
             switch(d.kind) {
+            case DimensionKind::LineDistance:
+                if(!parallelImplied(d))system.addConstraintParallel(lines.at(d.first.entityId),lines.at(d.second.entityId),id);
+                system.addConstraintP2LDistance(point(d.second),lines.at(d.first.entityId),constant(d.value),d.sense>0,id);break;
+            case DimensionKind::LineAngle: {
+                auto first=lines.at(d.first.entityId),second=lines.at(d.second.entityId);
+                if(d.first.role==PointRole::Second)std::swap(first.p1,first.p2);if(d.second.role==PointRole::Second)std::swap(second.p1,second.p2);
+                system.addConstraintL2LAngle(first,second,constant(d.value*d.sense*3.14159265358979323846/180.0),id);break;
+            }
+            case DimensionKind::PointDistance:
             case DimensionKind::LineLength:system.addConstraintP2PDistance(a,b,constant(d.value),id);break;
             case DimensionKind::HorizontalDistance:system.addConstraintDifference(a.x,b.x,constant(d.value*d.sense),id);break;
             case DimensionKind::VerticalDistance:system.addConstraintDifference(a.y,b.y,constant(d.value*d.sense),id);break;

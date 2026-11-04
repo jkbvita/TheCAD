@@ -30,6 +30,8 @@ approved scope do not need repeated approval.
 - [0009: Provisional PlaneGCS, dimensions and future 3D seam](0009-planegcs-parametric-dimensions.md).
 - [0010: Multiple selected regions and solid bodies](0010-multiple-regions-and-bodies.md).
 
+- [0011: Shared-edge regions and direct Smart Dimension](0011-shared-regions-direct-dimensions.md).
+
 ## Pending owner decisions
 
 - Resilient face references beyond the approved conservative planar-face strategy.

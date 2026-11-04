@@ -316,12 +316,12 @@ MainWindow::MainWindow(QWidget* parent)
     m_finishSketch = action("Exit Sketch", "actionFinishSketch", [this] { finishSketch(); });
     commandButton(m_createSketch, sketchGrid, 0, 0, true);
     commandButton(m_finishSketch, sketchGrid, 0, 1, true);
-    commandButton(action("Smart Dimension", "actionSmartDimension", [this]{startConstraints();}), sketchGrid, 0, 2, true);
+    commandButton(action("Smart Dimension", "actionSmartDimension", [this]{startSmartDimension();}), sketchGrid, 0, 2, true);
     commandGroup(sketchButtons, "Draw", drawGrid);
-    m_selectEntity = action("Select", "actionSelectSketchEntity", [this] { m_viewport->selectSketchTool(); });
-    m_line = action("Line", "actionLine", [this] { m_viewport->setSketchTool(modeling::EntityKind::Line); });
-    m_rectangle = action("Rectangle", "actionRectangle", [this] { m_viewport->setSketchTool(modeling::EntityKind::Rectangle); });
-    m_circle = action("Circle", "actionCircle", [this] { m_viewport->setSketchTool(modeling::EntityKind::Circle); });
+    m_selectEntity = action("Select", "actionSelectSketchEntity", [this] { closeSmartDimension();m_viewport->selectSketchTool(); });
+    m_line = action("Line", "actionLine", [this] { closeSmartDimension();m_viewport->setSketchTool(modeling::EntityKind::Line); });
+    m_rectangle = action("Rectangle", "actionRectangle", [this] { closeSmartDimension();m_viewport->setSketchTool(modeling::EntityKind::Rectangle); });
+    m_circle = action("Circle", "actionCircle", [this] { closeSmartDimension();m_viewport->setSketchTool(modeling::EntityKind::Circle); });
     commandButton(m_selectEntity, drawGrid, 0, 0);
     commandButton(m_line, drawGrid, 1, 0);
     commandButton(m_rectangle, drawGrid, 2, 0);
@@ -495,9 +495,12 @@ MainWindow::MainWindow(QWidget* parent)
             .arg(role == int(modeling::PointRole::Second) ? "Endpoint" : role == int(modeling::PointRole::Center) ? "Center" : "Start point", id);
         statusBar()->showMessage(pointName + " selected. Snapping uses exact sketch coordinates.");
     });
-    connect(m_viewport,&CadViewport::constraintPickingCanceled,this,[this]{closeConstraints();});
-    connect(m_viewport,&CadViewport::dimensionPlacementRequested,this,[this](modeling::Point2 point){if(m_constraints){m_constraints->annotation=point;updateConstraintDraft();}});
-    connect(m_viewport,&CadViewport::dimensionEditRequested,this,[this](const QString& id){if(m_editSketch){closeConstraints();startConstraints(id.toStdString());}});
+    connect(m_viewport,&CadViewport::constraintPickingCanceled,this,[this]{closeConstraints();closeSmartDimension();});
+    connect(m_viewport,&CadViewport::dimensionPlacementRequested,this,[this](modeling::Point2 point){placeSmartDimension(point);});
+    connect(m_viewport,&CadViewport::dimensionReferencePicked,this,[this](const QString& id,int role){smartReferencePicked(id,role);});
+    connect(m_viewport,&CadViewport::dimensionPointerMoved,this,[this](modeling::Point2 point){updateSmartPreview(point);});
+    connect(m_viewport,&CadViewport::dimensionVariantRequested,this,[this](bool radius){if(m_smartDimension && !m_smartDimension->editor){m_smartDimension->radius=radius;if(m_smartDimension->pending)updateSmartPreview(m_smartDimension->pending->annotation);}});
+    connect(m_viewport,&CadViewport::dimensionEditRequested,this,[this](const QString& id){if(m_editSketch)editSmartDimension(id.toStdString());});
     connect(m_viewport, &CadViewport::sketchChanged, this, [this](const modeling::Sketch& sketch) {
         if (!m_editSketch) return;
         try {
@@ -544,6 +547,7 @@ MainWindow::MainWindow(QWidget* parent)
 
 MainWindow::~MainWindow()
 {
+    closeSmartDimension();
     if (m_operation) {
         auto* panel = m_operation->panel;
         m_operation.reset();
@@ -889,8 +893,8 @@ void MainWindow::updateActions()
             if (profile) break;
         }
     }
-    m_extrude->setEnabled(profile && !m_constraints);
-    m_cut->setEnabled(profile && !m_constraints && !m_document.shape().IsNull());
+    m_extrude->setEnabled(profile && !m_constraints && !m_smartDimension);
+    m_cut->setEnabled(profile && !m_constraints && !m_smartDimension && !m_document.shape().IsNull());
 }
 void MainWindow::createSketch()
 {
@@ -977,6 +981,7 @@ void MainWindow::startSketchEditing(const document::Feature& feature)
 bool MainWindow::finishSketch()
 {
     if(m_constraints)return false;
+    closeSmartDimension();
     if (!m_editSketch) return true;
     try {
         auto candidate = m_document;

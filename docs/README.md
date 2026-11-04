@@ -17,6 +17,8 @@ automatically.
 
 ## Current guides
 
+- [Shared regions and direct Smart Dimension](decisions/0011-shared-regions-direct-dimensions.md)
+
 - [Reference faces and contour verification](verification/reference-faces-contours.md)
 - [Face attachment and contour decision](decisions/0008-reference-face-attachments.md)
 - [Parametric constraints and Smart Dimension](requirements/parametric-constraints.md)

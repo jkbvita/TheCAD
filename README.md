@@ -26,7 +26,7 @@ The finite reference graphics do not limit the infinite sketching plane. See the
 - Select-mode endpoint dragging, transactional joining and connected-geometry updates.
 - Rectangles made of four connected edges, and circles with snappable centers.
 - Persistent geometric relations, PlaneGCS solving, editable driving/reference Smart Dimensions and constrained dragging.
-- Multiple selected regions, strict nested loops/holes and multiple solid bodies per part.
+- Multiple selected regions, shared line boundaries, nested loops/holes and multiple solid bodies per part.
 - Light Features, Sketch and Evaluate command tabs, native menus and actual feature history.
 - Context entity properties and a docked Extrude/Cut PropertyManager with live previews.
 - Direct active-sketch Extrude/Cut with safe cancel/resume; unfinished tools stay disabled.
@@ -96,12 +96,14 @@ completed geometry intact. Tab switching alone does not finish a sketch.
 
 ## Smart Dimension
 
-In an edited sketch select a line/circle and click Smart Dimension, or start the
-tool first. Choose a type, click empty viewport space to place the annotation,
-enter mm and Confirm dimension. For H/V distances select two points (including
-the origin). Double-click an existing annotation to edit. Reference measures
-without driving geometry. Display/Delete Relations opens supported relation
-controls and the constraint list. Cancel or Escape preserves the last valid sketch.
+Activate Smart Dimension and select one line/circle, two points or two lines.
+Move to preview, then click empty space to place. Enter the value in the small
+Modify editor beside the annotation; Enter confirms and Escape/Cancel rejects.
+Placement chooses horizontal/vertical/aligned point distance or the angular
+sector. Parallel lines give perpendicular spacing; nonparallel lines give angle.
+A circle defaults to diameter; R chooses radius and D diameter before placement.
+The command stays active for repeated dimensions. Double-click an annotation to
+edit it. Display/Delete Relations remains available for relation management.
 
 See [current behavior and limits](docs/requirements/parametric-constraints.md) and
 [verification](docs/verification/parametric-constraints.md). Whole-sketch DOF=0 is
@@ -143,7 +145,8 @@ docs/decisions/    Approval records and unresolved decisions
 `.theasmb` and `.thedrw` are reserved names. Assemblies, drawings, spatial sketches,
 automatic dimensioning, resilient face reattachment, and permanent topology naming
 are outside this milestone. Independent simple closed contours are supported;
-strictly nested loops and multiple bodies are supported; touching or intersecting boundaries are rejected clearly.
+strictly nested loops and multiple bodies are supported; shared existing line boundaries are supported; unsplit crossings/overlaps and
+touching circle or legacy rectangle boundaries are rejected clearly.
 
 ## License status
 

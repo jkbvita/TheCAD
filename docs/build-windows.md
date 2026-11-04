@@ -184,19 +184,20 @@ See the [current sketcher/feature workflow checks](verification/sketcher-feature
 In normal part mode, select a planar face and click Sketch, or click Sketch first
 and then select the face. Draw in its local frame and use Extrude/Cut as usual.
 Faces take picking priority over origin-plane graphics. Curved faces are rejected.
-Saving now writes version 5, including solver-independent sketch dimensions and metadata. Changing its upstream support may
+Saving now writes version 6, including solver-independent sketch dimensions and metadata. Changing its upstream support may
 reject rather than reattach; see the documented conservative reference strategy.
 Valid closed line profiles can be selected even with attached dangling lines.
-Multiple regions, strict nested loops/holes and disconnected bodies are supported. General crossings and touching/shared boundaries remain unsupported.
+Multiple regions, strict nested loops/holes and disconnected bodies are supported. Adjacent line-bounded cells may share existing complete edges/vertices; unsplit crossings and overlapping segments remain unsupported.
 
 ## Smart Dimension and solver relations
 
 See [the current sketch interaction guide](requirements/parametric-constraints.md).
-Select a line/circle or start Smart Dimension first, place the label on empty
-viewport space and confirm the numeric mm value. Use the type selector and two
-point clicks for H/V distances. Reference dimensions measure without constraining.
-Double-click a label to edit; Cancel keeps the prior value. Display/Delete Relations
-opens the same manager for supported relation creation, inspection and deletion.
+Activate Smart Dimension, select geometry and move to preview. Click empty space
+to place, then enter mm (or degrees for an angle) in the floating Modify editor.
+Enter confirms; Escape/Cancel preserves the prior model. Two parallel lines give
+spacing, two nonparallel lines angle, two points H/V/aligned distance. Placement
+chooses orientation/sector. Double-click a label to edit. No dimension form is
+required on the left. Display/Delete Relations opens relation controls separately.
 
 Fully defined color is based on whole-sketch DOF=0, not per-entity inference.
 The adapter is Qt independent. Only the isolated PlaneGCS DLL compiles as C++20;

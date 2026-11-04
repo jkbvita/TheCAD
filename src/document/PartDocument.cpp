@@ -209,19 +209,22 @@ const char* dimensionName(modeling::DimensionKind kind) {
     case modeling::DimensionKind::VerticalDistance:return "vertical";
     case modeling::DimensionKind::CircleRadius:return "radius";
     case modeling::DimensionKind::CircleDiameter:return "diameter";
+    case modeling::DimensionKind::PointDistance:return "distance";
+    case modeling::DimensionKind::LineDistance:return "line-distance";
+    case modeling::DimensionKind::LineAngle:return "angle";
     } fail("Unsupported dimension type.");
 }
 QJsonObject writeDimension(const modeling::SketchDimension& d) {
     return {{"id",q(d.id)},{"type",dimensionName(d.kind)},{"first",writePointRef(d.first)},
         {"second",writePointRef(d.second)},{"value",d.value},{"driving",d.driving},{"annotation",point(d.annotation)},{"sense",d.sense}};
 }
-modeling::SketchDimension readDimension(const QJsonValue& value) {
+modeling::SketchDimension readDimension(const QJsonValue& value,int version) {
     if(!value.isObject())fail("Dimension must be an object.");
     const auto o=value.toObject();fields(o,{"id","type","first","second","value","driving","annotation","sense"},"Dimension");
     modeling::SketchDimension d;d.id=stringValue(o.value("id"),"Dimension ID").toStdString();validId(d.id);
     const auto type=stringValue(o.value("type"),"Dimension type");bool found=false;
-    for(const auto kind:{modeling::DimensionKind::LineLength,modeling::DimensionKind::HorizontalDistance,modeling::DimensionKind::VerticalDistance,modeling::DimensionKind::CircleRadius,modeling::DimensionKind::CircleDiameter})
-        if(type==dimensionName(kind)){d.kind=kind;found=true;}
+    for(const auto kind:{modeling::DimensionKind::LineLength,modeling::DimensionKind::HorizontalDistance,modeling::DimensionKind::VerticalDistance,modeling::DimensionKind::CircleRadius,modeling::DimensionKind::CircleDiameter,modeling::DimensionKind::PointDistance,modeling::DimensionKind::LineDistance,modeling::DimensionKind::LineAngle})
+        if(type==dimensionName(kind) && (version>=6 || int(kind)<=int(modeling::DimensionKind::CircleDiameter))){d.kind=kind;found=true;}
     if(!found)fail("Unsupported dimension type.");
     d.first=readPointRef(o.value("first"));d.second=readPointRef(o.value("second"));d.value=number(o.value("value"),"Dimension value");
     if(!o.value("driving").isBool())fail("Dimension driving status must be boolean.");d.driving=o.value("driving").toBool();
@@ -505,7 +508,7 @@ PartDocument PartDocument::load(const QString& path)
     if (root.value("format") != QJsonValue("TheCAD.Part")) fail("Unsupported document format; expected TheCAD.Part.");
     if (root.value("units") != QJsonValue("mm")) fail("Unsupported units; this prototype supports millimeters only.");
     const auto versionValue = root.value("version");
-    if (!versionValue.isDouble() || (versionValue.toDouble() != 1 && versionValue.toDouble() != 2 && versionValue.toDouble() != 3 && versionValue.toDouble() != 4 && versionValue.toDouble() != 5)) fail("Unsupported part document version; expected versions 1 through 5.");
+    if (!versionValue.isDouble() || (versionValue.toDouble() != 1 && versionValue.toDouble() != 2 && versionValue.toDouble() != 3 && versionValue.toDouble() != 4 && versionValue.toDouble() != 5 && versionValue.toDouble() != 6)) fail("Unsupported part document version; expected versions 1 through 6.");
     const int version = versionValue.toInt();
     if (!root.value("features").isArray()) fail("Part features must be an ordered array.");
     const auto array = root.value("features").toArray();
@@ -532,7 +535,8 @@ PartDocument PartDocument::load(const QString& path)
             } else if (type == "sketch") {
                 QSet<QString> expected{"id", "name", "type", "plane", "entities", "dependencies"};
                 if (version >= 3) expected.insert("relations");
-                if(version>=5)for(const auto* key:{"space","dimensions"})if(object.contains(key))expected.insert(key);
+                if(version>=6){expected.insert("space");expected.insert("dimensions");}
+                else if(version>=5)for(const auto* key:{"space","dimensions"})if(object.contains(key))expected.insert(key);
                 if(version>=4 && object.contains("attachment")) expected.insert("attachment");
                 fields(object, expected, "Sketch feature");
                 feature.kind = FeatureKind::Sketch;
@@ -540,7 +544,7 @@ PartDocument PartDocument::load(const QString& path)
                 if(object.contains("space") && object.value("space")!=QJsonValue("planar2d"))fail("Spatial or unsupported sketch space requires a future TheCAD version.");
                 if(object.contains("dimensions")){
                     if(!object.value("dimensions").isArray() || object.value("dimensions").toArray().size()>4000)fail("Invalid dimension array (maximum 4000).");
-                    for(const auto& d:object.value("dimensions").toArray())feature.sketch.dimensions.push_back(readDimension(d));
+                    for(const auto& d:object.value("dimensions").toArray())feature.sketch.dimensions.push_back(readDimension(d,version));
                 }
                 if(object.contains("attachment")) {
                     if(!object.value("attachment").isObject()) fail("Invalid face attachment.");
@@ -640,7 +644,7 @@ void PartDocument::save(const QString& path) const
         if (feature.kind != FeatureKind::Sketch) resultId = feature.id;
         features.append(object);
     }
-    const QJsonObject root{{"format", "TheCAD.Part"}, {"version", 5}, {"units", "mm"}, {"features", features}, {"resultFeature", q(resultId)}};
+    const QJsonObject root{{"format", "TheCAD.Part"}, {"version", 6}, {"units", "mm"}, {"features", features}, {"resultFeature", q(resultId)}};
     const auto bytes = QJsonDocument(root).toJson(QJsonDocument::Indented);
     if (bytes.size() > maximumDocumentBytes) fail("Part document exceeds the 1 MiB prototype size limit.");
     QSaveFile file(path);

@@ -7,6 +7,7 @@
 #include <memory>
 
 class QLabel;
+class QDialog;
 class QComboBox;
 class QCheckBox;
 class QWidget;
@@ -45,26 +46,40 @@ protected:
     void closeEvent(QCloseEvent* event) override;
 
 private:
-    void startConstraints(const std::string& dimensionId = {});
+    void startSmartDimension();
+    void closeSmartDimension();
+    void smartReferencePicked(const QString& id,int role);
+    void updateSmartPreview(modeling::Point2 point);
+    void placeSmartDimension(modeling::Point2 point);
+    void editSmartDimension(const std::string& id);
+    void openDimensionEditor(const modeling::SketchDimension& dimension);
+    void resetSmartSelection();
+    struct SmartDimensionDraft {
+        std::vector<modeling::SketchPointRef> points;
+        std::vector<std::string> entities;
+        QDialog* editor = nullptr;
+        std::optional<modeling::SketchDimension> pending;
+        bool radius = false;
+        bool resume = true;
+        bool editingExisting = false;
+    };
+    std::unique_ptr<SmartDimensionDraft> m_smartDimension;
+    void startConstraints();
     void closeConstraints();
     void constraintEntitySelected(const QString& id);
     void constraintPointSelected(const modeling::SketchPointRef& point);
     void updateConstraintDraft();
-    void applyDimension();
     void applyRelation();
     void acceptConstrainedSketch(const modeling::Sketch& candidate);
     void constraintError(const QString& error);
     struct ConstraintDraft {
         QWidget* page = nullptr;
-        QComboBox *kind = nullptr, *relation = nullptr;
-        QDoubleSpinBox* value = nullptr;
-        QCheckBox* reference = nullptr;
+        QComboBox* relation = nullptr;
         QLabel *selection = nullptr, *error = nullptr;
         QListWidget* constraints = nullptr;
         std::vector<modeling::SketchPointRef> points;
         std::vector<std::string> entities;
-        std::optional<modeling::Point2> annotation;
-        std::string editingId;
+
     };
     std::unique_ptr<ConstraintDraft> m_constraints;
     std::optional<modeling::SketchPointRef> m_constraintPoint;

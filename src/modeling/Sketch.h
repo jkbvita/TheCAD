@@ -35,7 +35,7 @@ struct SketchRelation {
     Point2 fixedPosition; // Used only by FixedPoint; independent of solver storage.
 };
 enum class SketchSpace { Planar2D, Spatial3D }; // Spatial3D is reserved, not implemented.
-enum class DimensionKind { LineLength, HorizontalDistance, VerticalDistance, CircleRadius, CircleDiameter };
+enum class DimensionKind { LineLength, HorizontalDistance, VerticalDistance, CircleRadius, CircleDiameter, PointDistance, LineDistance, LineAngle };
 struct SketchDimension {
     std::string id;
     DimensionKind kind = DimensionKind::LineLength;

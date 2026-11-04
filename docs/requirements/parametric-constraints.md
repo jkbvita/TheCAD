@@ -7,14 +7,19 @@ The owner's detailed milestone attachment is the authority for this implementati
 TheCAD remains an independent C++/Qt/OCCT application. Only a standalone PlaneGCS
 component solves supported planar constraints. No solver-specific types appear in
 the public sketch model or versioned .thepart data. 3D sketching is future scope.
+Current workflow extension: [direct dimension and shared-region approval](../decisions/0011-shared-regions-direct-dimensions.md).
 
 In an edited sketch, select a line/circle then Smart Dimension, or start Smart
-Dimension then select geometry. For horizontal/vertical distance choose that type
-and click two endpoints, centers or the origin. Click empty viewport space to
-place the annotation, enter millimeters and Confirm dimension. Choose Reference
-for a measurement that does not drive geometry. Double-click an annotation (or
-its list entry) to edit its value; Close/Cancel or Escape discards a pending edit.
-The panel also adds supported geometric relations and lists/deletes constraints.
+Dimension then select geometry. Two points support horizontal/vertical/aligned
+distance, two parallel lines perpendicular spacing, and nonparallel lines angle.
+Move the cursor to choose orientation/sector and preview, then click empty space
+to place. Enter a value in the floating Modify editor beside the annotation;
+Enter confirms and Escape/Cancel rejects. The command stays active for subsequent
+dimensions until Escape or another tool. No dimension form is required on the left.
+A circle defaults to diameter; R selects radius and D diameter before placement.
+Choose Reference in the floating editor for measurement without driving geometry.
+Double-click an annotation (or relation-list dimension) to edit its existing value.
+The separate relation manager adds, inspects and deletes supported constraints.
 Fixed point uses the selected point's current exact coordinates. H/V relations
 apply to one line; H/V dimensions can reference distinct entities' points.
 

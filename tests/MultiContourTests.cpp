@@ -11,6 +11,7 @@
 #include <iostream>
 #include <cmath>
 #include <functional>
+#include <algorithm>
 using namespace thecad::modeling;
 using namespace thecad::document;
 constexpr double pi=3.14159265358979323846;
@@ -41,6 +42,18 @@ int main(int argc,char** argv){QCoreApplication app(argc,argv);try{
  closeVolume(volume(makeExtrusions(nested,{rings[0].entityIds},2,Direction::Positive)),128*pi);closeVolume(volume(makeExtrusions(nested,{rings[1].entityIds},2,Direction::Positive)),64*pi);
  closeVolume(volume(makeExtrusions(nested,{rings[0].entityIds,rings[1].entityIds,rings[2].entityIds},2,Direction::Positive)),200*pi);
  reject([&]{makeExtrusions(nested,{},2,Direction::Positive);});reject([&]{makeExtrusions(nested,{{"missing"}},2,Direction::Positive);});reject([&]{makeExtrusions(nested,{rings[0].entityIds,rings[0].entityIds},2,Direction::Positive);});
+ // Owner regression: rectangular wall and triangular roof share their top edge.
+ Sketch house;house.entities={{EntityKind::Line,{0,0},{30,0},1,"bottom"},{EntityKind::Line,{30,0},{30,30},1,"right"},{EntityKind::Line,{30,30},{0,30},1,"shared"},{EntityKind::Line,{0,30},{0,0},1,"left"},{EntityKind::Line,{0,30},{15,40},1,"roof-left"},{EntityKind::Line,{15,40},{30,30},1,"roof-right"}};
+ for(auto plane:{SketchPlane::XY,SketchPlane::XZ,SketchPlane::YZ}) {
+  house.plane=plane;const auto cells=closedContours(house);require(cells.size()==2,"Shared-edge house must have two bounded cells");RegionReferences both;int wall=-1,roof=-1;
+  for(std::size_t i=0;i<cells.size();++i){both.push_back(cells[i].entityIds);if(contourContains(cells[i],house,{15,15}))wall=int(i);if(contourContains(cells[i],house,{15,35}))roof=int(i);}
+  require(wall>=0 && roof>=0 && wall!=roof,"Wall/roof actual region classification");closeVolume(volume(makeExtrusions(house,{cells[wall].entityIds},10,Direction::Positive)),9000);closeVolume(volume(makeExtrusions(house,{cells[roof].entityIds},10,Direction::Positive)),1500);
+  auto document=PartDocument::createEmpty();const auto sketchId=document.addSketch(house);document.addExtrudeRegions(sketchId,both,10,Direction::Positive);closeVolume(volume(document.shape()),10500);require(bodies(document.shape())==1,"Adjacent regions must fuse to one body");document.save(path);closeVolume(volume(PartDocument::load(path).shape()),10500);
+ }
+ house.plane=SketchPlane::XY;house.entities.push_back({EntityKind::Line,{0,30},{-10,35},1,"branch"});require(closedContours(house).size()==2,"Shared regions survive dangling branches");
+ auto enclosed=house;enclosed.entities.push_back({EntityKind::Rectangle,{-20,-20},{50,60},1,"enclosure"});const auto enclosedRegions=closedContours(enclosed);require(enclosedRegions.size()==3,"Enclosing loop and adjacent internal cells");
+ for(const auto& region:enclosedRegions)if(contourContains(region,enclosed,{-15,-15})){require(std::find(region.entityIds.begin(),region.entityIds.end(),"shared")==region.entityIds.end(),"A shared internal edge is not part of the enclosing hole boundary");closeVolume(volume(makeExtrusions(enclosed,{region.entityIds},10,Direction::Positive)),45500);}
+ auto strip=house;strip.entities={{EntityKind::Line,{0,0},{10,0},1,"a"},{EntityKind::Line,{10,0},{20,0},1,"b"},{EntityKind::Line,{20,0},{20,10},1,"c"},{EntityKind::Line,{20,10},{10,10},1,"d"},{EntityKind::Line,{10,10},{0,10},1,"e"},{EntityKind::Line,{0,10},{0,0},1,"f"},{EntityKind::Line,{10,0},{10,10},1,"divider"}};require(closedContours(strip).size()==2,"Internal divider produces two regions");
  auto many=PartDocument::createBox({40,30,10});Sketch pattern;pattern.entities={{EntityKind::Rectangle,{0,0},{40,30},1,"outline"}};RegionReferences refs;
  for(int y=0;y<4;++y)for(int x=0;x<10;++x){const auto name="hole-"+std::to_string(y*10+x);pattern.entities.push_back({EntityKind::Circle,{2.0+3.5*x,3.0+6*y},{},0.75,name});refs.push_back({name});}
  require(closedContours(pattern).size()==41,"Forty contours must coexist with enclosing region");auto patternId=many.addSketch(pattern);many.addCutRegions(patternId,refs,10,true,Direction::Positive);closeVolume(volume(many.shape()),12000-40*pi*0.75*0.75*10);

@@ -6,12 +6,12 @@ inputs: conversion saves to a separate .thepart path, retaining the original fil
 No assembly/drawing reader or placeholder is implemented. Internal serialization
 is provisional and versioned; filename conventions are permanent.
 
-## Version 5 part structure
+## Version 6 part structure
 
-The UTF-8 JSON root contains exactly format: "TheCAD.Part", version: 5, units:
+The UTF-8 JSON root contains exactly format: "TheCAD.Part", version: 6, units:
 "mm", features (ordered array) and resultFeature (last solid feature ID, or empty
-for empty/sketch-only documents). Writers always emit version 5. Readers accept
-versions 1–5 and reject unknown versions, fields, units and unsupported features.
+for empty/sketch-only documents). Writers always emit version 6. Readers accept
+versions 1–6 and reject unknown versions, fields, units and unsupported features.
 
 Every feature has stable id, printable name, type and explicit dependencies.
 Types and additional fields:
@@ -47,6 +47,7 @@ space is planar2d. Spatial sketch kinds require a future version and backend;
 this reader rejects them explicitly. GCS, Eigen and Boost types or solver handles
 are never serialized. Version 5 readers accept omitted space/dimensions as
 planar2d/empty for compatibility with the earlier multi-contour version-5 writer.
+Version 6 requires both space and dimensions; a missing array is an invalid file.
 Current writers always include them.
 
 ## Relations and dimensions
@@ -59,7 +60,8 @@ of two distinct lines. Tangent supports a line and circle, or external circles;
 the previous geometry supplies the side for a line/circle solve.
 
 Dimensions contain exactly id, type, first, second, value, driving, annotation
-and sense. Supported types: length, horizontal, vertical, radius, diameter.
+and sense. Supported types: length, horizontal, vertical, radius, diameter, distance,
+line-distance, angle. The final three require version 6.
 Length references one line's first/second endpoints; H/V reference two distinct
 points, including centers or the origin. Radius/diameter reference a circle
 center; second is the origin placeholder. A reference dimension has driving=false
@@ -74,10 +76,15 @@ Example driving line length:
  "value":50,"driving":true,"annotation":[25,15],"sense":1}
 ~~~
 
-Value is mm; length/radius/diameter must exceed kernel tolerance. H/V values are
+Linear values are mm; angular values are degrees. Length/radius/diameter must exceed kernel tolerance. H/V values are
 nonnegative, with sense +1 or -1 retaining the coordinate side. Annotation is an
 independent local [x,y] location; moving it never changes the target equation.
-No transient drag target, graphics presentation or camera state is stored.
+Distance references two points and measures true aligned length. Line-distance
+references two distinct lines and preserves their perpendicular spacing and
+parallelism. Angle references two lines; first/second endpoint roles choose each
+ray direction, sense chooses its signed rotation, and value is degrees strictly
+between 0 and 180. Other values remain mm. No transient drag target, graphics
+presentation or camera state is stored.
 
 The reader reconstructs and solves every sketch before dependent operations.
 Legacy Coincident/H/V coordinates must already agree exactly; malformed equality
@@ -96,8 +103,10 @@ Unrelated open branches remain sketch data and do not become feature boundaries.
 
 Selections are explicit and exact. Missing/changing boundaries, including a new
 hole that changes an existing selected region, fail instead of silently selecting
-a different profile. Independent and strictly nested closed loops work; crossing,
-touching and shared-edge arrangements remain unsupported. Invalid/open selected
+a different profile. Independent and strictly nested closed loops work; unsplit overlaps and crossings
+remain unsupported. Adjacent line-bounded cells sharing
+complete existing edges/vertices are supported; shared internal edges are omitted
+when their union forms an enclosing hole boundary. Invalid/open selected
 geometry never produces a stored solid.
 
 Extrude fuses selected prisms and the existing result. A result may contain several
@@ -120,8 +129,9 @@ permanent topology naming. See decision 0008.
 Version 1 is exactly one legacy box with no feature name. Version 2 adds named
 parametric history/entities but no relations. Version 3 adds Coincident/H/V;
 version 4 adds face attachments. These are read without inventing constraints or
-features. Saving intentionally writes version 5 .thepart to the selected path.
-The older application versions reject version 5 safely.
+features. Saving intentionally writes version 6 .thepart to the selected path.
+Version 5 adds dimensions and multiple region selections. Older applications
+reject version 6 safely; readers retain all supported older records.
 
 Only a fully successful candidate history replaces the document and precise OCCT
 BRep. Opening invalid files, dimensional edits and failed dependent regeneration
@@ -132,4 +142,4 @@ path, Save As switches paths, and unsaved changes use Save/Discard/Cancel.
 Limits: 1 MiB input/output, 500 features, 1000 entities and at most 4000 relations
 and 4000 dimensions per sketch; finite coordinates/values within 1e9 mm.
 There is no undo/redo, suppression, history reordering, spatial sketching,
-assembly/drawing implementation, angular dimension, trimming or automatic repair.
+assembly/drawing implementation, straight/reflex angular sectors, trimming or automatic repair.

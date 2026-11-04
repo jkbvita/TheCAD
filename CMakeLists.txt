@@ -20,7 +20,7 @@ find_package(OpenCASCADE 7.9.3 EXACT REQUIRED COMPONENTS
 add_library(thecad_occt INTERFACE)
 target_include_directories(thecad_occt SYSTEM INTERFACE "${OpenCASCADE_INCLUDE_DIR}")
 
-add_library(thecad_modeling STATIC src/modeling/Box.cpp src/modeling/Sketch.cpp src/modeling/ReferencePlanes.cpp src/modeling/ConstraintSolver.cpp)
+add_library(thecad_modeling STATIC src/modeling/Box.cpp src/modeling/Sketch.cpp src/modeling/ReferencePlanes.cpp src/modeling/ConstraintSolver.cpp src/modeling/DimensionInference.cpp)
 set_target_properties(thecad_modeling PROPERTIES AUTOMOC OFF)
 target_include_directories(thecad_modeling PUBLIC src)
 target_link_libraries(thecad_modeling PRIVATE thecad_planegcs PUBLIC thecad_occt TKPrim TKTopAlgo TKBRep TKBO TKBool TKShHealing)
@@ -32,7 +32,7 @@ target_link_libraries(thecad_document PUBLIC thecad_modeling Qt6::Core)
 
 add_library(thecad_ui STATIC
     src/ui/CadViewport.cpp src/ui/CadViewport.h
-    src/ui/MainWindow.cpp src/ui/MainWindow.h src/ui/SketchConstraintsUi.cpp)
+    src/ui/MainWindow.cpp src/ui/MainWindow.h src/ui/SketchConstraintsUi.cpp src/ui/SmartDimensionUi.cpp)
 target_include_directories(thecad_ui PUBLIC src)
 target_link_libraries(thecad_ui PUBLIC Qt6::Widgets thecad_document thecad_occt TKV3d TKOpenGl)
 

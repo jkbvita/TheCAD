@@ -9,6 +9,7 @@
 
 #include <BRep_Builder.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
+#include <BRepAlgoAPI_Common.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepClass_FaceClassifier.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
@@ -510,17 +511,37 @@ std::vector<Contour> closedContours(const Sketch& sketch)
             for(auto i:entities){candidate.entities.push_back(sketch.entities[i]);contour.entityIds.push_back(identifiers[i]);}
             contour.face=simpleProfileFace(candidate);result.push_back(std::move(contour));
         };
-        std::vector<bool> visited(edges.size(),false);
-        for(std::size_t seed=0;seed<edges.size();++seed) {
-            if(bridge[seed] || visited[seed])continue;
-            std::vector<int> component{int(seed)};visited[seed]=true;
-            for(std::size_t j=0;j<component.size();++j)for(int node:{edges[component[j]].a,edges[component[j]].b}) {
-                int degree=0;for(int index:incident[node])if(!bridge[index]) {
-                    ++degree;if(!visited[index]){visited[index]=true;component.push_back(index);}
-                }
-                if(degree!=2)fail("Touching cycles or shared region boundaries are unsupported. Use independent simple closed regions.");
-            }
-            std::vector<std::size_t> entities;for(int index:component)entities.push_back(edges[index].entity);append(entities);
+        // Traverse the left face of each directed edge in the planar embedding.
+        // The clockwise successor of the reverse edge keeps a bounded face on
+        // the left. Shared edges participate in both adjacent bounded regions.
+        std::vector<std::vector<int>> outgoing(nodes.size());
+        for(std::size_t i=0;i<edges.size();++i)if(!bridge[i]) {
+            outgoing[edges[i].a].push_back(int(i)*2);
+            outgoing[edges[i].b].push_back(int(i)*2+1);
+        }
+        const auto from=[&](int half){const auto& e=edges[std::size_t(half/2)];return half%2?e.b:e.a;};
+        const auto to=[&](int half){const auto& e=edges[std::size_t(half/2)];return half%2?e.a:e.b;};
+        for(auto& list:outgoing)std::sort(list.begin(),list.end(),[&](int a,int b){
+            const auto origin=nodes[from(a)],pa=nodes[to(a)],pb=nodes[to(b)];
+            return std::atan2(pa.y-origin.y,pa.x-origin.x)<std::atan2(pb.y-origin.y,pb.x-origin.x);
+        });
+        std::vector<bool> visited(edges.size()*2,false);
+        for(std::size_t seed=0;seed<visited.size();++seed) {
+            if(visited[seed] || bridge[seed/2])continue;
+            std::vector<std::size_t> entities;std::set<int> vertices;double twiceArea=0;int current=int(seed);
+            do {
+                if(visited[std::size_t(current)])fail("The sketch graph cannot form a closed planar region.");
+                visited[std::size_t(current)]=true;
+                const int a=from(current),b=to(current);vertices.insert(a);
+                twiceArea+=nodes[a].x*nodes[b].y-nodes[b].x*nodes[a].y;
+                entities.push_back(edges[std::size_t(current/2)].entity);
+                const auto& choices=outgoing[b];const auto reverse=std::find(choices.begin(),choices.end(),current^1);
+                if(reverse==choices.end() || choices.empty())fail("Incomplete planar sketch boundary.");
+                const auto index=std::size_t(reverse-choices.begin());current=choices[(index+choices.size()-1)%choices.size()];
+            }while(current!=int(seed));
+            if(twiceArea<=joiningTolerance*joiningTolerance)continue; // exterior/unbounded walk
+            if(vertices.size()!=entities.size())fail("A bounded region has an invalid repeated vertex.");
+            std::sort(entities.begin(),entities.end());append(entities);
         }
         for(std::size_t i=0;i<sketch.entities.size();++i)if(sketch.entities[i].kind!=EntityKind::Line)append({i});
         // Boundary contact/crossing is ambiguous; strict containment is not.
@@ -539,7 +560,15 @@ std::vector<Contour> closedContours(const Sketch& sketch)
             if(aBounds.IsOut(bBounds))continue;
             BRepExtrema_DistShapeShape distance(BRepTools::OuterWire(simple[i].face),BRepTools::OuterWire(simple[j].face));
             if(!distance.IsDone())fail("Cannot validate sketch boundaries.");
-            if(distance.Value()<=joiningTolerance)fail("Touching or intersecting contour boundaries are ambiguous. Separate or trim their boundaries first.");
+            if(distance.Value()<=joiningTolerance) {
+                const auto linesOnly=[&](std::size_t index){return std::all_of(simple[index].entityIds.begin(),simple[index].entityIds.end(),[&](const auto& id){const auto found=std::find(identifiers.begin(),identifiers.end(),id);return found!=identifiers.end() && sketch.entities[std::size_t(found-identifiers.begin())].kind==EntityKind::Line;});};
+                if(!linesOnly(i) || !linesOnly(j))fail("Touching circle or legacy rectangle boundaries are unsupported. Use explicit connected line boundaries.");
+                BRepAlgoAPI_Common common(simple[i].face,simple[j].face);common.SetNonDestructive(Standard_True);common.Build();
+                if(!common.IsDone() || common.HasErrors())fail("Cannot validate adjacent sketch regions.");
+                GProp_GProps overlap;BRepGProp::SurfaceProperties(common.Shape(),overlap);
+                if(overlap.Mass()>joiningTolerance*joiningTolerance)fail("Adjacent regions have overlapping interiors.");
+                continue; // Valid adjacent cells cannot contain each other's interior.
+            }
             for(const auto pair:{std::pair<std::size_t,std::size_t>{i,j},{j,i}}) {
                 BRepClass_FaceClassifier classifier(simple[pair.first].face,pointOnBoundary(simple[pair.second].face),joiningTolerance);
                 if(classifier.State()==TopAbs_IN && (parent[pair.second]<0 || areas[pair.first]<areas[std::size_t(parent[pair.second])]))parent[pair.second]=int(pair.first);
@@ -548,9 +577,19 @@ std::vector<Contour> closedContours(const Sketch& sketch)
         for(std::size_t i=0;i<simple.size();++i) {
             BRepBuilderAPI_MakeFace builder(gp_Pln(sketchAxes(sketch)),BRepTools::OuterWire(simple[i].face),Standard_True);
             result[i].entityIds=simple[i].entityIds;
-            for(std::size_t j=0;j<simple.size();++j)if(parent[j]==int(i)) {
-                builder.Add(TopoDS::Wire(BRepTools::OuterWire(simple[j].face).Reversed()));
-                result[i].entityIds.insert(result[i].entityIds.end(),simple[j].entityIds.begin(),simple[j].entityIds.end());
+            // Adjacent child cells form one hole boundary. Shared internal edges
+            // cancel; retaining each child wire would create overlapping holes.
+            std::vector<std::size_t> children;for(std::size_t j=0;j<simple.size();++j)if(parent[j]==int(i))children.push_back(j);
+            std::vector<int> groups(children.size());std::iota(groups.begin(),groups.end(),0);
+            const auto root=[&](int index){while(groups[std::size_t(index)]!=index)index=groups[std::size_t(index)];return index;};
+            std::map<std::string,int> owners;
+            for(std::size_t n=0;n<children.size();++n)for(const auto& id:simple[children[n]].entityIds){const auto found=owners.find(id);if(found==owners.end())owners[id]=int(n);else groups[std::size_t(root(int(n)))]=root(found->second);}
+            std::map<int,std::map<std::string,int>> boundaries;
+            for(std::size_t n=0;n<children.size();++n)for(const auto& id:simple[children[n]].entityIds)++boundaries[root(int(n))][id];
+            for(const auto& group:boundaries) {
+                Sketch boundary;boundary.plane=sketch.plane;boundary.attachment=sketch.attachment;
+                for(std::size_t index=0;index<identifiers.size();++index){const auto found=group.second.find(identifiers[index]);if(found!=group.second.end() && found->second==1){boundary.entities.push_back(sketch.entities[index]);result[i].entityIds.push_back(identifiers[index]);}}
+                const auto hole=simpleProfileFace(boundary);builder.Add(TopoDS::Wire(BRepTools::OuterWire(hole).Reversed()));
             }
             if(!builder.IsDone() || !BRepCheck_Analyzer(builder.Face()).IsValid())fail("The nested boundaries do not form a valid planar region.");
             result[i].face=builder.Face();
@@ -821,7 +860,14 @@ void validDimension(const Sketch& sketch,const SketchDimension& d) {
     } else {
         (void)sketchPointValue(sketch,d.second);
         if(pointKey(d.first)==pointKey(d.second))fail("A distance needs two distinct point references.");
-        if(d.kind==DimensionKind::LineLength) {
+        if(d.kind==DimensionKind::LineDistance || d.kind==DimensionKind::LineAngle) {
+            const auto& first=referencedEntity(sketch,d.first);const auto& second=referencedEntity(sketch,d.second);
+            if(first.kind!=EntityKind::Line || second.kind!=EntityKind::Line || first.id==second.id ||
+               (d.first.role!=PointRole::First && d.first.role!=PointRole::Second) || (d.second.role!=PointRole::First && d.second.role!=PointRole::Second))fail("A two-line dimension requires two distinct line references.");
+            if(d.kind==DimensionKind::LineAngle){if(d.value<=1e-6 || d.value>=180-1e-6)fail("Angular dimension must be between 0 and 180 degrees.");}
+            else positiveLength(d.value,"Line spacing");
+        } else if(d.kind==DimensionKind::PointDistance)positiveLength(d.value,"Point distance");
+        else if(d.kind==DimensionKind::LineLength) {
             if(d.first.entityId!=d.second.entityId || d.first.role!=PointRole::First || d.second.role!=PointRole::Second || referencedEntity(sketch,d.first).kind!=EntityKind::Line)fail("Line length must reference the endpoints of one line.");
             positiveLength(d.value,"Line length");
         } else if(d.kind==DimensionKind::HorizontalDistance || d.kind==DimensionKind::VerticalDistance) {
@@ -831,6 +877,13 @@ void validDimension(const Sketch& sketch,const SketchDimension& d) {
 }
 }
 double dimensionMeasurement(const Sketch& sketch,const SketchDimension& d) {
+    if(d.kind==DimensionKind::LineDistance || d.kind==DimensionKind::LineAngle) {
+        const auto& a=referencedEntity(sketch,d.first);const auto& b=referencedEntity(sketch,d.second);
+        if(d.kind==DimensionKind::LineDistance)return std::abs(cross(a.first,a.second,b.first))/distance(a.first,a.second);
+        Point2 u{a.second.x-a.first.x,a.second.y-a.first.y},v{b.second.x-b.first.x,b.second.y-b.first.y};
+        if(d.first.role==PointRole::Second){u.x=-u.x;u.y=-u.y;}if(d.second.role==PointRole::Second){v.x=-v.x;v.y=-v.y;}
+        return std::abs(std::atan2(u.x*v.y-u.y*v.x,u.x*v.x+u.y*v.y))*180.0/3.14159265358979323846;
+    }
     if(d.kind==DimensionKind::CircleRadius || d.kind==DimensionKind::CircleDiameter) {
         const auto& e=referencedEntity(sketch,d.first);return e.radius*(d.kind==DimensionKind::CircleDiameter?2:1);
     }
@@ -915,7 +968,17 @@ void validateSketchRelations(const Sketch& sketch)
     }
     for(const auto& d:sketch.dimensions)if(d.driving) {
         double actual=dimensionMeasurement(sketch,d),expected=d.value;
-        if(d.kind==DimensionKind::HorizontalDistance || d.kind==DimensionKind::VerticalDistance) {
+        if(d.kind==DimensionKind::LineDistance) {
+            const auto& a=referencedEntity(sketch,d.first);const auto& b=referencedEntity(sketch,d.second);
+            const Point2 u{a.second.x-a.first.x,a.second.y-a.first.y},v{b.second.x-b.first.x,b.second.y-b.first.y};
+            if(std::abs(u.x*v.y-u.y*v.x)>1e-7*std::hypot(u.x,u.y)*std::hypot(v.x,v.y))fail("Line spacing requires parallel lines; add or preserve a parallel relation.");
+            actual=cross(a.first,a.second,b.first)/distance(a.first,a.second);expected*=d.sense;
+        } else if(d.kind==DimensionKind::LineAngle) {
+            const auto& a=referencedEntity(sketch,d.first);const auto& b=referencedEntity(sketch,d.second);
+            Point2 u{a.second.x-a.first.x,a.second.y-a.first.y},v{b.second.x-b.first.x,b.second.y-b.first.y};
+            if(d.first.role==PointRole::Second){u.x=-u.x;u.y=-u.y;}if(d.second.role==PointRole::Second){v.x=-v.x;v.y=-v.y;}
+            actual=std::atan2(u.x*v.y-u.y*v.x,u.x*v.x+u.y*v.y)*180.0/3.14159265358979323846;expected*=d.sense;
+        } else if(d.kind==DimensionKind::HorizontalDistance || d.kind==DimensionKind::VerticalDistance) {
             const auto a=sketchPointValue(sketch,d.first),b=sketchPointValue(sketch,d.second);actual=d.kind==DimensionKind::HorizontalDistance?b.x-a.x:b.y-a.y;expected*=d.sense;
         }
         if(!std::isfinite(actual)||std::abs(actual-expected)>1e-6)fail("Driving dimension is not satisfied: "+d.id);
