@@ -13,20 +13,21 @@ namespace thecad::modeling {
 
 enum class SketchPlane { XY, XZ, YZ };
 struct Point2 { double x = 0.0; double y = 0.0; };
-enum class EntityKind { Line, Rectangle, Circle };
+enum class EntityKind { Line, Rectangle, Circle, Point, Polygon }; // Polygon is a creation tool; stored boundaries are lines.
 struct SketchEntity {
     EntityKind kind = EntityKind::Line;
     Point2 first;
     Point2 second;
     double radius = 1.0;
     std::string id;
+    bool construction = false;
 };
 enum class PointRole { Origin, First, Second, Center };
 struct SketchPointRef {
     std::string entityId;
     PointRole role = PointRole::Origin;
 };
-enum class RelationKind { Coincident, Horizontal, Vertical, FixedPoint, Parallel, Perpendicular, Tangent };
+enum class RelationKind { Coincident, Horizontal, Vertical, FixedPoint, Parallel, Perpendicular, Tangent, PointOnLine, PointOnCircle };
 struct SketchRelation {
     std::string id;
     RelationKind kind = RelationKind::Coincident;
@@ -59,6 +60,8 @@ struct Sketch {
     std::optional<FaceAttachment> attachment;
     std::vector<SketchDimension> dimensions;
     SketchSpace space = SketchSpace::Planar2D;
+    struct RegularPolygon { std::string id,centerId; std::vector<std::string> edges; };
+    std::vector<RegularPolygon> polygons;
 };
 // Point references address the immutable local origin or stable entity IDs.
 Point2 sketchPointValue(const Sketch& sketch, const SketchPointRef& reference);

@@ -1,3 +1,4 @@
+#include "modeling/SketchTools.h"
 #include "modeling/DimensionAnnotation.h"
 #include <QFontMetricsF>
 #include "modeling/ConstraintSolver.h"
@@ -202,7 +203,7 @@ void CadViewport::releaseViewer()
     m_selectedEntityPresentation.Nullify();
     m_hoveredEntityPresentation.Nullify();
     m_previewPresentation.Nullify();
-    m_sketchPresentation.Nullify();
+    m_sketchPresentation.Nullify();m_constructionPresentation.Nullify();
     m_presentation.Nullify();
     m_context.Nullify();
     m_renderSize = {};
@@ -505,7 +506,7 @@ void CadViewport::beginSketch(const modeling::Sketch& sketch)
     clearPreview();
     m_regionSelecting = false;
     m_sketchEditing = true;
-    m_sketchTool.reset();
+    m_sketchTool.reset();m_constructionTool=false;m_drawingPreview.reset();
     m_firstPoint.reset();
     m_firstReference.reset();
     m_hoveredPoint.reset();
@@ -685,17 +686,17 @@ void CadViewport::updateConstraintPresentation() {
     if(m_sketchEditing)for(const auto& r:m_sketch->relations) {
         auto a=modeling::sketchPointValue(*m_sketch,r.first);const auto b=modeling::sketchPointValue(*m_sketch,r.second);
         if(r.kind==modeling::RelationKind::Horizontal || r.kind==modeling::RelationKind::Vertical)a={(a.x+b.x)/2,(a.y+b.y)/2};
-        const QStringList names{"C","H","V","F","∥","⊥","T"};
+        const QStringList names{"C","H","V","F","∥","⊥","T","On","On"};
         const bool selected=r.first.entityId==m_selectedEntity || r.second.entityId==m_selectedEntity;
         const bool error=std::find(m_constraintErrors.begin(),m_constraintErrors.end(),r.id)!=m_constraintErrors.end();
         label({a.x+8*unit,a.y+8*unit},names.at(int(r.kind)),Quantity_Color(error?Quantity_NOC_RED:selected?Quantity_NOC_GREEN4:Quantity_NOC_GRAY40),10);
     }
 }
 
-void CadViewport::setSketchTool(modeling::EntityKind kind)
+void CadViewport::setSketchTool(modeling::EntityKind kind,bool construction)
 {
     cancelDimensionDrag();cancelPointDrag(); resetSketchInference();
-    m_sketchTool = kind;
+    m_sketchTool = kind;m_constructionTool=construction;m_drawingPreview.reset();
     m_smartDimensionPicking=false;m_constraintPicking=false;
     m_firstPoint.reset();
     m_firstReference.reset();
@@ -704,10 +705,35 @@ void CadViewport::setSketchTool(modeling::EntityKind kind)
     updateSketchPresentation();
 }
 
+void CadViewport::setPolygonSides(int sides) {
+    if(sides<3 || sides>999)return;m_polygonSides=sides;
+    if(m_sketchTool==modeling::EntityKind::Polygon && m_firstPoint && m_drawingPreview)updateSketchPresentation(m_drawingPreview);
+}
+void CadViewport::placeSketchPoint(const QPointF& position) {
+    if(!m_sketch)return;
+    std::optional<modeling::SketchPointRef> reference;auto point=drawingPoint(position,reference);auto candidate=*m_sketch;
+    modeling::SketchEntity entity{modeling::EntityKind::Point,point,{},1,QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString()};
+    const auto relationId=QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
+    if(reference)candidate.relations.push_back({relationId,modeling::RelationKind::Coincident,{entity.id,modeling::PointRole::First},*reference});
+    else if(const auto id=entityAt(position)) {
+        const auto e=std::find_if(candidate.entities.begin(),candidate.entities.end(),[&](const auto& v){return v.id==*id;});
+        if(e!=candidate.entities.end() && e->kind==modeling::EntityKind::Line){
+            const double dx=e->second.x-e->first.x,dy=e->second.y-e->first.y,t=std::clamp(((point.x-e->first.x)*dx+(point.y-e->first.y)*dy)/(dx*dx+dy*dy),0.0,1.0);
+            entity.first={e->first.x+t*dx,e->first.y+t*dy};candidate.relations.push_back({relationId,modeling::RelationKind::PointOnLine,{entity.id,modeling::PointRole::First},{e->id,modeling::PointRole::First}});
+        }else if(e!=candidate.entities.end() && e->kind==modeling::EntityKind::Circle){
+            const double angle=std::atan2(point.y-e->first.y,point.x-e->first.x);entity.first={e->first.x+e->radius*std::cos(angle),e->first.y+e->radius*std::sin(angle)};
+            candidate.relations.push_back({relationId,modeling::RelationKind::PointOnCircle,{entity.id,modeling::PointRole::First},{e->id,modeling::PointRole::Center}});
+        }
+    }
+    candidate.entities.push_back(entity);
+    try{modeling::validateSketchRelations(candidate);(void)modeling::sketchShape(candidate);m_sketch=candidate;emit sketchChanged(candidate);emit sketchEntityCreated(entity);updateSketchPresentation();}
+    catch(const std::exception& e){emit sketchInteractionError(QString::fromUtf8(e.what()));}
+}
+
 void CadViewport::selectSketchTool()
 {
     cancelDimensionDrag();cancelPointDrag(); resetSketchInference();
-    m_sketchTool.reset(); m_firstPoint.reset(); m_firstReference.reset();
+    m_sketchTool.reset(); m_firstPoint.reset(); m_firstReference.reset();m_constructionTool=false;m_drawingPreview.reset();
     m_smartDimensionPicking=false;m_constraintPicking=false;
     unsetCursor(); updateSketchPresentation();emit sketchToolChanged();
 }
@@ -788,11 +814,28 @@ void CadViewport::updateSketchPresentation(const std::optional<modeling::SketchE
         m_context->Remove(m_sketchPresentation, Standard_False);
         m_sketchPresentation.Nullify();
     }
+    if(!m_constructionPresentation.IsNull()){m_context->Remove(m_constructionPresentation,Standard_False);m_constructionPresentation.Nullify();}
     if(m_sketch)m_sketchFullyDefined=modeling::solvePlanarSketch(*m_sketch).diagnostics.state==modeling::SolveState::FullyConstrained;
     if (m_sketch) {
         try {
             auto visible = *m_sketch;
-            if (preview) { visible.entities.push_back(*preview); }
+            if(preview){
+                if(preview->kind==modeling::EntityKind::Polygon && preview->radius>1e-6)
+                    visible=modeling::addRegularPolygon(visible,"preview-polygon",{preview->first,preview->radius,std::atan2(preview->second.y-preview->first.y,preview->second.x-preview->first.x),m_polygonSides});
+                else if(preview->kind!=modeling::EntityKind::Polygon)visible.entities.push_back(*preview);
+            }
+            auto construction=visible;
+            construction.entities.erase(std::remove_if(construction.entities.begin(),construction.entities.end(),[](const auto& e){return !e.construction || e.kind==modeling::EntityKind::Point;}),construction.entities.end());
+            construction.relations.clear();construction.dimensions.clear();construction.polygons.clear();
+            if(!construction.entities.empty()){
+                m_constructionPresentation=new AIS_Shape(modeling::sketchShape(construction));
+                const Quantity_Color color(0.30,0.40,0.62,Quantity_TOC_RGB);
+                const Handle(Prs3d_LineAspect) aspect=new Prs3d_LineAspect(color,Aspect_TOL_DOTDASH,1.5*devicePixelRatioF());
+                m_constructionPresentation->Attributes()->SetWireAspect(aspect);m_constructionPresentation->Attributes()->SetLineAspect(aspect);
+                m_constructionPresentation->SetZLayer(Graphic3d_ZLayerId_Topmost);m_context->Display(m_constructionPresentation,AIS_WireFrame,-1,Standard_False);
+            }
+            visible.entities.erase(std::remove_if(visible.entities.begin(),visible.entities.end(),[](const auto& e){return e.construction || e.kind==modeling::EntityKind::Point;}),visible.entities.end());
+            visible.relations.clear();visible.dimensions.clear();visible.polygons.clear();
             const auto shape = modeling::sketchShape(visible);
             if (!shape.IsNull()) {
                 m_sketchPresentation = new AIS_Shape(shape);
@@ -859,6 +902,7 @@ std::optional<std::string> CadViewport::entityAt(const QPointF& position) const
     for (const auto& entity : m_sketch->entities) {
         double distance = 1e100;
         if (entity.kind == modeling::EntityKind::Line) distance = distanceToSegment(entity.first,entity.second);
+        else if(entity.kind==modeling::EntityKind::Point)distance=QLineF(position,screenPoint(entity.first)).length();
         else if (entity.kind == modeling::EntityKind::Rectangle) {
             const std::array<modeling::Point2,4> corners{entity.first,{entity.second.x,entity.first.y},entity.second,{entity.first.x,entity.second.y}};
             for(int n=0;n<4;++n) distance=std::min(distance,distanceToSegment(corners[n],corners[(n+1)%4]));
@@ -876,6 +920,10 @@ std::optional<std::string> CadViewport::entityAt(const QPointF& position) const
 std::optional<CadViewport::SnapHit> CadViewport::selectionPointAt(const QPointF& position) const
 {
     auto hit=pointAt(position);
+    if(hit && hit->reference.role==modeling::PointRole::Origin){
+        for(const auto& e:m_sketch->entities)if(e.kind==modeling::EntityKind::Point && QLineF(position,screenPoint(e.first)).length()<=QLineF(position,screenPoint(hit->point)).length()+0.1)
+            return SnapHit{{e.id,modeling::PointRole::First},e.first};
+    }
     // A small circle's center tolerance must not swallow its circumference.
     // Exact center picks and the existing drawing/snapping policy are retained.
     if(hit && hit->reference.role==modeling::PointRole::Center) {
@@ -950,12 +998,16 @@ void CadViewport::updatePointPresentation()
     }
     if(m_sketchEditing && m_sketch) {
         if(!m_hoveredEntity.empty()) {
-            auto only=*m_sketch;only.entities.clear();only.relations.clear();only.dimensions.clear();
+            auto only=*m_sketch;only.entities.clear();only.relations.clear();only.dimensions.clear();only.polygons.clear();
             for(const auto& e:m_sketch->entities)if(e.id==m_hoveredEntity)only.entities.push_back(e);
             if(!only.entities.empty()) {
                 m_hoveredEntityPresentation=new AIS_Shape(modeling::sketchShape(only));
                 m_hoveredEntityPresentation->SetColor(Quantity_NOC_ORANGE);
                 m_hoveredEntityPresentation->SetWidth(3*devicePixelRatioF());
+                if(only.entities.front().construction){
+                    const Handle(Prs3d_LineAspect) aspect=new Prs3d_LineAspect(Quantity_NOC_ORANGE,Aspect_TOL_DOTDASH,3*devicePixelRatioF());
+                    m_hoveredEntityPresentation->Attributes()->SetWireAspect(aspect);m_hoveredEntityPresentation->Attributes()->SetLineAspect(aspect);
+                }
                 m_hoveredEntityPresentation->SetZLayer(Graphic3d_ZLayerId_Topmost);
                 m_context->Display(m_hoveredEntityPresentation,AIS_WireFrame,-1,Standard_False);
             }
@@ -967,7 +1019,8 @@ void CadViewport::updatePointPresentation()
             const bool lineEndpoint=std::any_of(m_sketch->entities.begin(),m_sketch->entities.end(),[&](const auto& entity) {
                 return entity.id==entry.first.entityId && entity.kind==modeling::EntityKind::Line;
             });
-            if(!origin && !hovered && !selected && !lineEndpoint && entry.first.entityId!=m_selectedEntity) continue;
+            const bool standalone=std::any_of(m_sketch->entities.begin(),m_sketch->entities.end(),[&](const auto& e){return e.id==entry.first.entityId && e.kind==modeling::EntityKind::Point;});
+            if(!origin && !hovered && !selected && !lineEndpoint && !standalone && entry.first.entityId!=m_selectedEntity) continue;
             Handle(AIS_Point) marker=new AIS_Point(new Geom_CartesianPoint(modeling::sketchPoint(*m_sketch,entry.second)));
             Quantity_Color color(hovered ? Quantity_NOC_ORANGE : origin ? Quantity_NOC_RED3 : m_sketchFullyDefined ? Quantity_NOC_BLACK : Quantity_NOC_BLUE);
             if(selected && !origin)color=Quantity_Color(0.25,0.72,1.0,Quantity_TOC_RGB);
@@ -984,6 +1037,10 @@ void CadViewport::updatePointPresentation()
             m_selectedEntityPresentation=new AIS_Shape(modeling::sketchShape(only));
             m_selectedEntityPresentation->SetZLayer(Graphic3d_ZLayerId_Topmost);
             m_selectedEntityPresentation->SetColor(Quantity_Color(0.25,0.72,1.0,Quantity_TOC_RGB)); m_selectedEntityPresentation->SetWidth(2.5 * devicePixelRatioF());
+            if(std::all_of(only.entities.begin(),only.entities.end(),[](const auto& e){return e.construction;})){
+                const Handle(Prs3d_LineAspect) aspect=new Prs3d_LineAspect(Quantity_Color(0.25,0.72,1.0,Quantity_TOC_RGB),Aspect_TOL_DOTDASH,2.5*devicePixelRatioF());
+                m_selectedEntityPresentation->Attributes()->SetWireAspect(aspect);m_selectedEntityPresentation->Attributes()->SetLineAspect(aspect);
+            }
             m_selectedEntityPresentation->Attributes()->SetDeviationCoefficient(1e-5);
             m_selectedEntityPresentation->Attributes()->SetDeviationAngle(0.015);
             m_context->Display(m_selectedEntityPresentation,AIS_WireFrame,-1,Standard_False);
@@ -1105,8 +1162,15 @@ void CadViewport::commitDrawing(modeling::Point2 point, const std::optional<mode
         if(b) relation(modeling::RelationKind::Coincident,a,*b);
     };
     modeling::SketchEntity entity; entity.id=sketchId(); entity.kind=*m_sketchTool;
-    entity.first=first; entity.second=point; entity.radius=std::hypot(point.x-first.x,point.y-first.y);
-    if(entity.kind==modeling::EntityKind::Rectangle) {
+    entity.first=first; entity.second=point;entity.construction=m_constructionTool; entity.radius=std::hypot(point.x-first.x,point.y-first.y);
+    if(entity.kind==modeling::EntityKind::Polygon) {
+        try {
+            candidate=modeling::addRegularPolygon(candidate,entity.id,{first,entity.radius,std::atan2(point.y-first.y,point.x-first.x),m_polygonSides});
+            const auto& group=candidate.polygons.back();
+            attach({group.centerId,modeling::PointRole::First},m_firstReference);
+            attach({group.edges.front(),modeling::PointRole::First},reference);
+        }catch(const std::exception& e){emit sketchInteractionError(QString::fromUtf8(e.what()));return;}
+    } else if(entity.kind==modeling::EntityKind::Rectangle) {
         if(std::abs(first.x-point.x)<1e-7 || std::abs(first.y-point.y)<1e-7) return;
         const std::array<modeling::Point2,4> corners{first,{point.x,first.y},point,{first.x,point.y}};
         std::array<std::string,4> ids;
@@ -1125,7 +1189,7 @@ void CadViewport::commitDrawing(modeling::Point2 point, const std::optional<mode
         attach({ids[0],modeling::PointRole::First},m_firstReference);
         attach({ids[1],modeling::PointRole::Second},reference);
     } else if(entity.kind==modeling::EntityKind::Line) {
-        for(const auto& old:candidate.entities) if(old.kind==modeling::EntityKind::Line &&
+        for(const auto& old:candidate.entities) if(old.kind==modeling::EntityKind::Line && old.construction==entity.construction &&
             ((samePoint(old.first,first)&&samePoint(old.second,point)) ||
              (samePoint(old.first,point)&&samePoint(old.second,first)))) return;
         candidate.entities.push_back(entity);
@@ -1225,6 +1289,7 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
         setFocus(Qt::MouseFocusReason);
         std::optional<modeling::SketchPointRef> reference;
         const auto raw = sketchPosition(event->position());
+        if(m_sketchTool==modeling::EntityKind::Point && raw){placeSketchPoint(event->position());event->accept();return;}
         if (m_sketchTool && raw) {
             const auto point = drawingPoint(event->position(), reference);
             if (!m_firstPoint) { m_firstPoint = point; m_firstReference = reference; }
@@ -1246,7 +1311,7 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
             emit sketchSelectionChanged();
             if(hit && !toggle && hit->reference.role!=modeling::PointRole::Origin) {
                 const auto entity=std::find_if(m_sketch->entities.begin(),m_sketch->entities.end(),[&](const auto& e){return e.id==hit->reference.entityId;});
-                if(entity!=m_sketch->entities.end() && (entity->kind==modeling::EntityKind::Line || entity->kind==modeling::EntityKind::Circle)) {
+                if(entity!=m_sketch->entities.end() && (entity->kind==modeling::EntityKind::Line || entity->kind==modeling::EntityKind::Circle || entity->kind==modeling::EntityKind::Point)) {
                     m_pointDrag=PointDrag{*m_sketch,hit->reference,event->position(),false,*m_sketch,{},{}};
                     std::set<std::pair<std::string,int>> excluded;
                     for(const auto& ref:modeling::coincidentSketchPoints(*m_sketch,hit->reference)) excluded.insert({ref.entityId,int(ref.role)});
@@ -1311,7 +1376,7 @@ void CadViewport::mouseMoveEvent(QMouseEvent* event)
             modeling::SketchEntity preview;
             preview.kind = *m_sketchTool;
             preview.first = *m_firstPoint; preview.second = point;
-            preview.radius = std::hypot(point.x - m_firstPoint->x, point.y - m_firstPoint->y);
+            preview.radius = std::hypot(point.x - m_firstPoint->x, point.y - m_firstPoint->y);preview.construction=m_constructionTool;m_drawingPreview=preview;
             updateSketchPresentation(preview);
             updateInteractionPresentation();
         } else { updatePointPresentation(); }

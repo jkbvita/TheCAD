@@ -32,7 +32,7 @@ public:
             unknowns.push_back(&entity.first.x);unknowns.push_back(&entity.first.y);
             if(entity.kind==EntityKind::Circle) {
                 unknowns.push_back(&entity.radius);GCS::Circle circle;circle.center=point({entity.id,PointRole::Center});circle.rad=&entity.radius;circles.emplace(entity.id,circle);
-            } else {
+            } else if(entity.kind!=EntityKind::Point) {
                 points.emplace(std::make_pair(entity.id,int(PointRole::Second)),GCS::Point(&entity.second.x,&entity.second.y));
                 unknowns.push_back(&entity.second.x);unknowns.push_back(&entity.second.y);
                 if(entity.kind==EntityKind::Line){GCS::Line line;line.p1=point({entity.id,PointRole::First});line.p2=point({entity.id,PointRole::Second});lines.emplace(entity.id,line);}
@@ -48,6 +48,8 @@ public:
         for(const auto& relation:sketch.relations) {
             const int id=tag(relation.id);auto& a=point(relation.first);auto& b=point(relation.second);
             switch(relation.kind) {
+            case RelationKind::PointOnLine:system.addConstraintPointOnLine(a,lines.at(relation.second.entityId),id);break;
+            case RelationKind::PointOnCircle:system.addConstraintPointOnCircle(a,circles.at(relation.second.entityId),id);break;
             case RelationKind::Coincident:system.addConstraintP2PCoincident(a,b,id);break;
             case RelationKind::Horizontal:system.addConstraintHorizontal(a,b,id);break;
             case RelationKind::Vertical:system.addConstraintVertical(a,b,id);break;
@@ -66,6 +68,17 @@ public:
                     const double side=(*line.p2.x-*line.p1.x)*(*circle.center.y-*line.p1.y)-(*line.p2.y-*line.p1.y)*(*circle.center.x-*line.p1.x);
                     system.addConstraintTangent(line,circle,side>=0,id);
                 }break;
+            }
+        }
+    }
+    void addPolygons(GCS::System& system) {
+        for(const auto& g:sketch.polygons) {
+            auto& center=point({g.centerId,PointRole::First});auto& first=lines.at(g.edges.front());
+            GCS::Line firstRadius;firstRadius.p1=center;firstRadius.p2=first.p1;
+            for(std::size_t i=1;i<g.edges.size();++i){
+                auto& edge=lines.at(g.edges[i]);GCS::Line radius;radius.p1=center;radius.p2=edge.p1;
+                system.addConstraintEqualLength(first,edge,tag(g.id));
+                system.addConstraintEqualLength(firstRadius,radius,tag(g.id));
             }
         }
     }
@@ -137,12 +150,12 @@ SketchSolveResult solvePlanarSketch(const Sketch& input,const SolveOptions& opti
         if(input.space!=SketchSpace::Planar2D){result.diagnostics.state=SolveState::UnsupportedSpace;result.diagnostics.message="Spatial sketches require a future 3D solver adapter.";return result;}
         if(options.maximumIterations<1 || options.maximumIterations>10000 || !std::isfinite(options.tolerance) || options.tolerance<1e-12 || options.tolerance>1e-4)throw std::runtime_error("Invalid solver iteration limit or tolerance.");
         validateSketchConstraintReferences(input);
-        auto geometry=input;geometry.relations.clear();geometry.dimensions.clear();(void)sketchShape(geometry);
+        auto geometry=input;geometry.relations.clear();geometry.dimensions.clear();geometry.polygons.clear();(void)sketchShape(geometry);
         if(input.entities.empty()){result.success=true;result.diagnostics.state=SolveState::FullyConstrained;result.diagnostics.degreesOfFreedom=0;result.diagnostics.message="Empty sketch.";return result;}
         WorkingSketch work(input);GCS::System system;
         system.maxIter=options.maximumIterations;system.maxIterRedundant=options.maximumIterations;
         system.convergence=options.tolerance;system.debugMode=GCS::NoDebug;
-        work.addRelations(system);work.addDimensions(system);work.addTargets(system,options);
+        work.addRelations(system);work.addPolygons(system);work.addDimensions(system);work.addTargets(system,options);
         system.declareUnknowns(work.unknowns);solving=true;system.initSolution();
         const auto status=system.solve();
         if(status==GCS::SolveStatus::Success || status==GCS::SolveStatus::Converged)system.applySolution();

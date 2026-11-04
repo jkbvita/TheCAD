@@ -71,7 +71,7 @@ void MainWindow::updateConstraintDraft() {
     const auto current=d.constraints->currentRow();d.constraints->clear();
     const auto add=[&](QString text,QString key){auto* item=new QListWidgetItem(text,d.constraints);item->setData(Qt::UserRole,key);};
     for(const auto& dim:m_editSketch->dimensions)add(QString("%1: %2 = %3%4").arg(QString::fromStdString(dim.id),dimensionTitle(dim.kind)).arg(dim.value).arg(dim.driving?"":" (reference)"),"d:"+QString::fromStdString(dim.id));
-    const QStringList names{"Coincident","Horizontal","Vertical","Fixed","Parallel","Perpendicular","Tangent"};for(const auto& rel:m_editSketch->relations)add(QString::fromStdString(rel.id)+": "+names.at(int(rel.kind)),"r:"+QString::fromStdString(rel.id));
+    const QStringList names{"Coincident","Horizontal","Vertical","Fixed","Parallel","Perpendicular","Tangent","Point on line","Point on circle"};for(const auto& rel:m_editSketch->relations)add(QString::fromStdString(rel.id)+": "+names.at(int(rel.kind)),"r:"+QString::fromStdString(rel.id));
     d.constraints->setCurrentRow(current);statusBar()->showMessage(QString::fromStdString(modeling::solvePlanarSketch(*m_editSketch).diagnostics.message));
 }
 void MainWindow::constraintError(const QString& error) {

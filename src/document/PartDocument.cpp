@@ -105,33 +105,27 @@ modeling::Point2 readPoint(const QJsonValue& value)
 }
 QJsonObject writeEntity(const modeling::SketchEntity& entity)
 {
-    switch (entity.kind) {
-    case modeling::EntityKind::Line: return {{"id", q(entity.id)}, {"type", "line"}, {"first", point(entity.first)}, {"second", point(entity.second)}};
-    case modeling::EntityKind::Rectangle: return {{"id", q(entity.id)}, {"type", "rectangle"}, {"first", point(entity.first)}, {"second", point(entity.second)}};
-    case modeling::EntityKind::Circle: return {{"id", q(entity.id)}, {"type", "circle"}, {"center", point(entity.first)}, {"radius", entity.radius}};
+    QJsonObject object{{"id",q(entity.id)},{"construction",entity.construction}};
+    switch(entity.kind){
+    case modeling::EntityKind::Line:object["type"]="line";object["first"]=point(entity.first);object["second"]=point(entity.second);break;
+    case modeling::EntityKind::Rectangle:object["type"]="rectangle";object["first"]=point(entity.first);object["second"]=point(entity.second);break;
+    case modeling::EntityKind::Circle:object["type"]="circle";object["center"]=point(entity.first);object["radius"]=entity.radius;break;
+    case modeling::EntityKind::Point:object["type"]="point";object["position"]=point(entity.first);break;
+    default:fail("Unsupported stored entity type.");
     }
-    fail("Unsupported sketch entity type.");
+    return object;
 }
-modeling::SketchEntity readEntity(const QJsonValue& value)
+modeling::SketchEntity readEntity(const QJsonValue& value,int version)
 {
-    if (!value.isObject()) fail("Sketch entity must be an object.");
-    const auto object = value.toObject();
-    const auto type = stringValue(object.value("type"), "Sketch entity type");
-    modeling::SketchEntity entity;
-    entity.id = stringValue(object.value("id"), "Sketch entity ID").toStdString();
-    validId(entity.id);
-    if (type == "circle") {
-        fields(object, {"id", "type", "center", "radius"}, "Circle");
-        entity.kind = modeling::EntityKind::Circle;
-        entity.first = readPoint(object.value("center"));
-        entity.radius = number(object.value("radius"), "Circle radius");
-    } else if (type == "line" || type == "rectangle") {
-        fields(object, {"id", "type", "first", "second"}, "Sketch entity");
-        entity.kind = type == "line" ? modeling::EntityKind::Line : modeling::EntityKind::Rectangle;
-        entity.first = readPoint(object.value("first"));
-        entity.second = readPoint(object.value("second"));
-    } else fail("Unsupported sketch entity type.");
-    return entity;
+    if(!value.isObject())fail("Sketch entity must be an object.");
+    const auto object=value.toObject();const auto type=stringValue(object.value("type"),"Entity type");
+    modeling::SketchEntity entity;entity.id=stringValue(object.value("id"),"Entity ID").toStdString();validId(entity.id);
+    QSet<QString> expected{"id","type"};if(version>=8){expected.insert("construction");if(!object.value("construction").isBool())fail("Construction status must be boolean.");entity.construction=object.value("construction").toBool();}
+    if(type=="circle"){expected.insert("center");expected.insert("radius");entity.kind=modeling::EntityKind::Circle;entity.first=readPoint(object.value("center"));entity.radius=number(object.value("radius"),"Radius");}
+    else if(type=="line" || type=="rectangle"){expected.insert("first");expected.insert("second");entity.kind=type=="line"?modeling::EntityKind::Line:modeling::EntityKind::Rectangle;entity.first=readPoint(object.value("first"));entity.second=readPoint(object.value("second"));}
+    else if(type=="point" && version>=8){expected.insert("position");entity.kind=modeling::EntityKind::Point;entity.first=readPoint(object.value("position"));}
+    else fail("Unsupported entity type.");
+    fields(object,expected,"Sketch entity");return entity;
 }
 QJsonObject writePointRef(const modeling::SketchPointRef& ref)
 {
@@ -173,6 +167,8 @@ QJsonObject writeRelation(const modeling::SketchRelation& relation)
     case modeling::RelationKind::FixedPoint: type = "fixed"; break;
     case modeling::RelationKind::Parallel: type = "parallel"; break;
     case modeling::RelationKind::Perpendicular: type = "perpendicular"; break;
+    case modeling::RelationKind::PointOnLine: type="point-on-line";break;
+    case modeling::RelationKind::PointOnCircle:type="point-on-circle";break;
     case modeling::RelationKind::Tangent: type = "tangent"; break;
     default: fail("Unsupported sketch relation type.");
     }
@@ -198,6 +194,8 @@ modeling::SketchRelation readRelation(const QJsonValue& value, int version)
     else if(version>=5 && type=="parallel")relation.kind=modeling::RelationKind::Parallel;
     else if(version>=5 && type=="perpendicular")relation.kind=modeling::RelationKind::Perpendicular;
     else if(version>=5 && type=="tangent")relation.kind=modeling::RelationKind::Tangent;
+    else if(version>=8 && type=="point-on-line")relation.kind=modeling::RelationKind::PointOnLine;
+    else if(version>=8 && type=="point-on-circle")relation.kind=modeling::RelationKind::PointOnCircle;
     else fail("Unsupported sketch relation type.");
     relation.first = readPointRef(object.value("first"));
     relation.second = readPointRef(object.value("second"));
@@ -513,7 +511,7 @@ PartDocument PartDocument::load(const QString& path)
     if (root.value("format") != QJsonValue("TheCAD.Part")) fail("Unsupported document format; expected TheCAD.Part.");
     if (root.value("units") != QJsonValue("mm")) fail("Unsupported units; this prototype supports millimeters only.");
     const auto versionValue = root.value("version");
-    if (!versionValue.isDouble() || (versionValue.toDouble() != 1 && versionValue.toDouble() != 2 && versionValue.toDouble() != 3 && versionValue.toDouble() != 4 && versionValue.toDouble() != 5 && versionValue.toDouble() != 6 && versionValue.toDouble() != 7)) fail("Unsupported part document version; expected versions 1 through 7.");
+    if (!versionValue.isDouble() || (versionValue.toDouble() != 1 && versionValue.toDouble() != 2 && versionValue.toDouble() != 3 && versionValue.toDouble() != 4 && versionValue.toDouble() != 5 && versionValue.toDouble() != 6 && versionValue.toDouble() != 7 && versionValue.toDouble() != 8)) fail("Unsupported part document version; expected versions 1 through 8.");
     const int version = versionValue.toInt();
     if (!root.value("features").isArray()) fail("Part features must be an ordered array.");
     const auto array = root.value("features").toArray();
@@ -540,6 +538,7 @@ PartDocument PartDocument::load(const QString& path)
             } else if (type == "sketch") {
                 QSet<QString> expected{"id", "name", "type", "plane", "entities", "dependencies"};
                 if (version >= 3) expected.insert("relations");
+                if(version>=8)expected.insert("polygons");
                 if(version>=6){expected.insert("space");expected.insert("dimensions");}
                 else if(version>=5)for(const auto* key:{"space","dimensions"})if(object.contains(key))expected.insert(key);
                 if(version>=4 && object.contains("attachment")) expected.insert("attachment");
@@ -565,7 +564,16 @@ PartDocument PartDocument::load(const QString& path)
                 }
                 if (!object.value("entities").isArray() || object.value("entities").toArray().size() > int(maximumEntities))
                     fail("Sketch entities must be an array of no more than 1000 elements.");
-                for (const auto& entity : object.value("entities").toArray()) feature.sketch.entities.push_back(readEntity(entity));
+                for (const auto& entity : object.value("entities").toArray()) feature.sketch.entities.push_back(readEntity(entity,version));
+                if(version>=8){
+                    if(!object.value("polygons").isArray() || object.value("polygons").toArray().size()>1000)fail("Invalid polygon array.");
+                    for(const auto& polygonValue:object.value("polygons").toArray()){
+                        if(!polygonValue.isObject())fail("Polygon must be an object.");const auto o=polygonValue.toObject();fields(o,{"id","center","edges"},"Polygon");
+                        modeling::Sketch::RegularPolygon group;group.id=stringValue(o.value("id"),"Polygon ID").toStdString();validId(group.id);group.centerId=stringValue(o.value("center"),"Polygon center").toStdString();validId(group.centerId);
+                        if(!o.value("edges").isArray() || o.value("edges").toArray().size()>999)fail("Invalid polygon edge array.");
+                        for(const auto& id:o.value("edges").toArray()){const auto edge=stringValue(id,"Polygon edge").toStdString();validId(edge);group.edges.push_back(edge);}feature.sketch.polygons.push_back(group);
+                    }
+                }
                 if (version >= 3) {
                     if (!object.value("relations").isArray() || object.value("relations").toArray().size() > 4000)
                         fail("Sketch relations must be an array of no more than 4000 elements.");
@@ -624,6 +632,7 @@ void PartDocument::save(const QString& path) const
         } else if (feature.kind == FeatureKind::Sketch) {
             object["plane"] = planeName(feature.sketch.plane);
             object["space"]="planar2d";
+            QJsonArray polygons;for(const auto& g:feature.sketch.polygons){QJsonArray edges;for(const auto& id:g.edges)edges.append(q(id));polygons.append(QJsonObject{{"id",q(g.id)},{"center",q(g.centerId)},{"edges",edges}});}object["polygons"]=polygons;
             QJsonArray dimensions;for(const auto& d:feature.sketch.dimensions)dimensions.append(writeDimension(feature.sketch,d));object["dimensions"]=dimensions;
             if(feature.sketch.attachment) {
                 const auto& a=*feature.sketch.attachment;const auto& f=a.frame;const auto p=f.Location();const auto n=f.Direction();const auto x=f.XDirection();
@@ -649,7 +658,7 @@ void PartDocument::save(const QString& path) const
         if (feature.kind != FeatureKind::Sketch) resultId = feature.id;
         features.append(object);
     }
-    const QJsonObject root{{"format", "TheCAD.Part"}, {"version", 7}, {"units", "mm"}, {"features", features}, {"resultFeature", q(resultId)}};
+    const QJsonObject root{{"format", "TheCAD.Part"}, {"version", 8}, {"units", "mm"}, {"features", features}, {"resultFeature", q(resultId)}};
     const auto bytes = QJsonDocument(root).toJson(QJsonDocument::Indented);
     if (bytes.size() > maximumDocumentBytes) fail("Part document exceeds the 1 MiB prototype size limit.");
     QSaveFile file(path);

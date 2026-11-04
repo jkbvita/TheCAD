@@ -91,7 +91,7 @@ private slots:
         auto* commands = window.findChild<QToolBar*>("modelingToolbar");
         QVERIFY(commands && !commands->isMovable() && !commands->isFloatable());
         for (const auto* name : {"actionArc", "actionSpline",
-                "actionCenterline", "actionConstructionLine", "actionTrimEntities", "actionConvertEntities", "actionOffsetEntities",
+                "actionTrimEntities", "actionConvertEntities", "actionOffsetEntities",
                 "actionMirrorEntities", "actionLinearSketchPattern", "actionMoveEntities",
                 "actionRepairSketch", "actionShadedSketchContours",
                 "actionMeasure", "actionMassProperties", "actionCheckGeometry"}) {

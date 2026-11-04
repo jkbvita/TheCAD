@@ -31,7 +31,10 @@ void MainWindow::startSmartDimension() {
     closeConstraints();
     const auto point=m_viewport->selectedSketchPoint();const auto entity=m_viewport->selectedSketchEntity();
     m_smartDimension=std::make_unique<SmartDimensionDraft>();
-    if(point)m_smartDimension->points.push_back(*point);else if(!entity.empty())m_smartDimension->entities.push_back(entity);
+    if(point)m_smartDimension->points.push_back(*point);else if(!entity.empty()){
+        const auto selected=std::find_if(m_editSketch->entities.begin(),m_editSketch->entities.end(),[&](const auto& e){return e.id==entity;});
+        if(selected!=m_editSketch->entities.end() && selected->kind==modeling::EntityKind::Point)m_smartDimension->points.push_back({entity,modeling::PointRole::First});else m_smartDimension->entities.push_back(entity);
+    }
     m_viewport->setSmartDimensionPicking(true);m_viewport->setDimensionSelection(m_smartDimension->entities,m_smartDimension->points);
     auto* action=findChild<QAction*>("actionSmartDimension");action->setCheckable(true);action->setChecked(true);
     statusBar()->showMessage("Smart Dimension: select one line/circle, two lines or two points; move and click to place. Esc exits.");updateActions();

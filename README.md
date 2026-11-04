@@ -83,7 +83,17 @@ edit that conflicts with the fixed origin or other equalities is rejected.
 The provisional standalone PlaneGCS adapter solves supported dimensions and relations,
 regenerating dependent features before accepting changes.
 
-Centerline, Construction Line, Arc, Spline, Trim, Convert,
+Point places selectable, draggable, dimensionable points with persistent snapping.
+Centerline draws construction lines using the usual Line interaction; select a
+line and use **For Construction** to convert it in either direction. Points and
+construction geometry are excluded from extrusion boundaries.
+
+Polygon starts with six sides: click the center, then radius/orientation. Change
+**Sides** for other regular polygons, or select a member and use **Edit Polygon**
+for numeric parameters. Edges/vertices support ordinary selection and constraints;
+driving dimensions preserve regularity. See [basic sketch tool checks](docs/verification/basic-sketch-tools.md).
+
+Arc, Spline, Trim, Convert,
 Offset, Mirror, Linear Sketch Pattern, Move, Repair
 Sketch, Shaded Sketch Contours, Measure, Mass Properties and Check Geometry are
 disabled until implemented.
@@ -109,7 +119,7 @@ Dimensions follow current geometry throughout endpoint dragging and numeric edit
 In Select mode or idle Smart Dimension, drag text or dimension lines to reposition
 the annotation without changing its value. Circle dimensions use diametric/radial
 lines and circumference arrows; dragging rotates their placement. Placements survive
-save/reopen in `.thepart` schema 7; earlier supported files remain readable.
+save/reopen in `.thepart` schema 8; earlier supported files remain readable.
 Smart Dimension and drawing buttons stay visibly pressed while active; Esc exits.
 Geometry highlights on hover. Picking defaults to 8 logical pixels, adjustable for
 the session under **Tools > Sketch Picking Tolerance**.

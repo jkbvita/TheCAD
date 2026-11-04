@@ -20,6 +20,7 @@ class QTabWidget;
 class QAction;
 class QGroupBox;
 class QDoubleSpinBox;
+class QSpinBox;
 class QPushButton;
 class QDockWidget;
 class QStackedWidget;
@@ -128,6 +129,8 @@ private:
 
     void editSketchEntity();
     void deleteSketchEntity();
+    void toggleConstruction();
+    void editPolygon();
     void extrude(bool cut);
     void startOperation(document::Feature feature, bool editing);
     void finishOperation(bool accepted);
@@ -157,6 +160,8 @@ private:
     QAction* m_line = nullptr;
     QAction* m_rectangle = nullptr;
     QAction* m_circle = nullptr;
+    QAction *m_point=nullptr,*m_centerline=nullptr,*m_polygon=nullptr,*m_construction=nullptr,*m_editPolygon=nullptr;
+    QSpinBox* m_polygonSides=nullptr;
     QAction* m_selectEntity = nullptr;
     QGroupBox* m_propertyPanel = nullptr;
     QLabel* m_entitySummary = nullptr;

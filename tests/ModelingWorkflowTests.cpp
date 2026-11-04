@@ -1,3 +1,5 @@
+#include "modeling/SketchTools.h"
+#include <QSpinBox>
 #include "modeling/DimensionAnnotation.h"
 #include "ui/MainWindow.h"
 #include "ui/CadViewport.h"
@@ -132,6 +134,32 @@ private:
         QVERIFY(window.errors.isEmpty());
     }
 private slots:
+    void newSketchToolsConversionPolygonEditingAndHistory() {
+        using namespace modeling;WorkflowWindow window;window.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&window));auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
+        command(window,"actionCenterline");QVERIFY(window.findChild<QAction*>("actionCenterline")->isChecked());QVERIFY(!window.findChild<QAction*>("actionLine")->isChecked());
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{-30,-30}));QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{30,-30}));QVERIFY(viewport->m_sketch->entities[0].construction);
+        command(window,"actionSelectSketchEntity");QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{0,-30}));const auto lineId=viewport->m_sketch->entities[0].id;
+        command(window,"actionConstructionLine");QVERIFY(!viewport->m_sketch->entities[0].construction);QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);QVERIFY(viewport->m_sketch->entities[0].construction);QCOMPARE(viewport->m_sketch->entities[0].id,lineId);
+        command(window,"actionPolygon");QCOMPARE(window.findChild<QSpinBox*>("polygonSides")->value(),6);
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{0,0}));const auto pixel=point(viewport,{18,0});QMouseEvent move(QEvent::MouseMove,pixel,viewport->mapToGlobal(pixel),Qt::NoButton,Qt::NoButton,Qt::NoModifier);QApplication::sendEvent(viewport,&move);
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,pixel);QCOMPARE(viewport->m_sketch->polygons.size(),std::size_t(1));QCOMPARE(viewport->m_sketch->polygons[0].edges.size(),std::size_t(6));
+        const auto edgeIds=viewport->m_sketch->polygons[0].edges;command(window,"actionSelectSketchEntity");
+        auto first=viewport->m_sketch->entities[2];QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{(first.first.x+first.second.x)/2,(first.first.y+first.second.y)/2}));
+        QTimer::singleShot(0,&window,[&]{auto* dialog=window.findChild<QDialog*>("polygonEditor");QVERIFY(dialog);dialog->findChild<QDoubleSpinBox*>("polygonRadius")->setValue(24);dialog->findChild<QDoubleSpinBox*>("polygonAngle")->setValue(20);QTest::mouseClick(dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok),Qt::LeftButton);});
+        command(window,"actionEditPolygon");QVERIFY(window.errors.isEmpty());QCOMPARE(viewport->m_sketch->polygons[0].edges,edgeIds);QVERIFY(std::abs(polygonParameters(*viewport->m_sketch,viewport->m_sketch->polygons[0]).radius-24)<1e-6);
+        QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);QVERIFY(polygonParameters(*viewport->m_sketch,viewport->m_sketch->polygons[0]).radius<19);QTest::keyClick(viewport,Qt::Key_Y,Qt::ControlModifier);QVERIFY(std::abs(polygonParameters(*viewport->m_sketch,viewport->m_sketch->polygons[0]).radius-24)<1e-6);
+        window.findChild<QTabWidget*>("modelingTabs")->setCurrentIndex(0);command(window,"actionExtrude");window.findChild<QListWidget*>("operationContour")->setCurrentRow(0,QItemSelectionModel::ClearAndSelect);window.findChild<QDoubleSpinBox*>("featureLength")->setValue(5);confirmOperation(window);QVERIFY(volume(window.document().shape())>1000);
+        QTemporaryDir directory;window.path=directory.filePath("tools.thepart");command(window,"actionSaveAs");command(window,"actionNew");command(window,"actionOpen");QCOMPARE(window.document().features()[0].sketch.polygons[0].edges,edgeIds);QVERIFY(window.document().features()[0].sketch.entities[0].construction);QVERIFY(window.errors.isEmpty());window.close();
+    }
+    void pointToolDimensionsAndUndo() {
+        using namespace modeling;WorkflowWindow window;window.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&window));auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);command(window,"actionPoint");
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{0,0}));QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{25,20}));QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(2));QVERIFY(closedContours(*viewport->m_sketch).empty());
+        QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(1));QTest::keyClick(viewport,Qt::Key_Y,Qt::ControlModifier);QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(2));
+        command(window,"actionSelectSketchEntity");QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{25,20}));command(window,"actionSmartDimension");
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{0,0}));QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{40,35}));
+        auto* editor=window.findChild<QDialog*>("smartDimensionEditor");QVERIFY(editor);auto* value=editor->findChild<QDoubleSpinBox*>("smartDimensionValue");value->setValue(40);QTest::keyClick(value,Qt::Key_Return);QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);QCOMPARE(viewport->m_sketch->dimensions.size(),std::size_t(1));
+        QTest::keyClick(viewport,Qt::Key_Escape);QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);QVERIFY(viewport->m_sketch->dimensions.empty());QVERIFY(window.errors.isEmpty());command(window,"actionFinishSketch");window.close();
+    }
     void undoRedoKeyboardLimitAndBranching() {
         using namespace modeling;WorkflowWindow window;window.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&window));auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
         for(int i=0;i<12;++i){auto sketch=*viewport->m_sketch;sketch.entities.push_back({EntityKind::Line,{-50.0+i*6,-30},{-50.0+i*6,-10},1,"edge-"+std::to_string(i)});viewport->sketchChanged(sketch);}

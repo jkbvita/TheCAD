@@ -179,13 +179,14 @@ int main(int argc, char* argv[])
         closeVolume(relatedLoaded, 50 * 30 * 12);
         // Schema 2 lacked relations. It remains a supported input, upgraded on save.
         auto legacyV2 = relatedRoot; legacyV2["version"] = 2; relatedHistory = legacyV2["features"].toArray();
-        noRelationsFeature = relatedHistory[0].toObject(); noRelationsFeature.remove("relations");noRelationsFeature.remove("dimensions");noRelationsFeature.remove("space");
+        noRelationsFeature = relatedHistory[0].toObject(); noRelationsFeature.remove("relations");noRelationsFeature.remove("dimensions");noRelationsFeature.remove("space");noRelationsFeature.remove("polygons");
+        auto oldEntities=noRelationsFeature["entities"].toArray();for(int i=0;i<oldEntities.size();++i){auto e=oldEntities[i].toObject();e.remove("construction");oldEntities[i]=e;}noRelationsFeature["entities"]=oldEntities;
         relatedHistory[0] = noRelationsFeature; legacyV2["features"] = relatedHistory;
         write(path, QJsonDocument(legacyV2).toJson());
         auto upgraded = PartDocument::load(path); closeVolume(upgraded, 50 * 30 * 12);
         require(upgraded.features()[0].sketch.relations.empty(), "Legacy coordinates must load without inventing constraints");
         upgraded.save(path);
-        require(QJsonDocument::fromJson(read(path)).object()["version"].toInt() == 7, "Legacy documents must save using the current schema");
+        require(QJsonDocument::fromJson(read(path)).object()["version"].toInt() == 8, "Legacy documents must save using the current schema");
         auto part = PartDocument::createEmpty();
         auto multiContourSketch = rectangle();
         auto otherRectangle = multiContourSketch.entities.front();
@@ -258,7 +259,7 @@ int main(int argc, char* argv[])
         rejected([&] { loaded.replaceFeature(badReference); });
 
         const auto goodRoot = QJsonDocument::fromJson(read(path)).object();
-        require(goodRoot.value("version").toInt() == 7, "New documents must use schema 7");
+        require(goodRoot.value("version").toInt() == 8, "New documents must use schema 8");
         const QString invalid = directory.filePath("invalid.thepart");
         const auto rejectRoot = [&](QJsonObject root) {
             write(invalid, QJsonDocument(root).toJson());

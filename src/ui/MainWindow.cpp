@@ -1,3 +1,5 @@
+#include "modeling/SketchTools.h"
+#include <QSpinBox>
 #include "modeling/DimensionAnnotation.h"
 #include <QInputDialog>
 #include "ui/MainWindow.h"
@@ -64,7 +66,10 @@ QIcon commandIcon(const QString& name)
     painter.scale(2.0, 2.0);
     painter.setPen(QPen(QColor("#276a91"), 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     painter.setBrush(Qt::NoBrush);
-    if (name.contains("Circle")) painter.drawEllipse(QRectF(6, 6, 20, 20));
+    if(name.contains("Point")){painter.setBrush(QColor("#276a91"));painter.drawEllipse(QPointF(16,16),3.5,3.5);}
+    else if(name.contains("Polygon"))painter.drawPolygon(QPolygonF{QPointF(16,4),QPointF(26,10),QPointF(26,22),QPointF(16,28),QPointF(6,22),QPointF(6,10)});
+    else if(name.contains("Centerline") || name.contains("Construction")){painter.setPen(QPen(QColor("#276a91"),1.6,Qt::DashDotLine));painter.drawLine(QPointF(4,27),QPointF(28,5));}
+    else if (name.contains("Circle")) painter.drawEllipse(QRectF(6, 6, 20, 20));
     else if (name.contains("Rectangle")) painter.drawRect(QRectF(5, 8, 22, 16));
     else if (name.contains("Line")) {
         painter.drawLine(QPointF(5, 26), QPointF(27, 6));
@@ -164,11 +169,12 @@ QString entityText(const modeling::SketchEntity& entity)
 {
     using modeling::EntityKind;
     const QString first = QString("(%1, %2)").arg(entity.first.x).arg(entity.first.y);
+    if(entity.kind==EntityKind::Point)return QString("Point: %1").arg(first);
     if (entity.kind == EntityKind::Circle) {
         return QString("Circle: center %1, radius %2 mm").arg(first).arg(entity.radius);
     }
     return QString("%1: %2 to (%3, %4)")
-        .arg(entity.kind == EntityKind::Line ? "Line" : "Rectangle", first)
+        .arg(entity.kind == EntityKind::Line ? (entity.construction?"Centerline":"Line") : "Rectangle", first)
         .arg(entity.second.x).arg(entity.second.y);
 }
 }
@@ -288,7 +294,7 @@ MainWindow::MainWindow(QWidget* parent)
     const auto action = [this](const QString& text, const char* name, auto callback) {
         auto* result = new QAction(commandIcon(text), text, this);
         result->setObjectName(name);
-        if(QStringList{"actionSmartDimension","actionSelectSketchEntity","actionLine","actionRectangle","actionCircle"}.contains(name))result->setCheckable(true);
+        if(QStringList{"actionSmartDimension","actionSelectSketchEntity","actionLine","actionRectangle","actionCircle","actionPoint","actionCenterline","actionPolygon"}.contains(name))result->setCheckable(true);
         result->setToolTip(text);
         connect(result, &QAction::triggered, this, callback);
         return result;
@@ -337,8 +343,15 @@ MainWindow::MainWindow(QWidget* parent)
     commandButton(m_circle, drawGrid, 0, 1);
     commandButton(unavailable("Arc", "actionArc"), drawGrid, 1, 1);
     commandButton(unavailable("Spline", "actionSpline"), drawGrid, 2, 1);
-    commandButton(unavailable("Centerline", "actionCenterline"), drawGrid, 0, 2);
-    commandButton(unavailable("Construction Line", "actionConstructionLine"), drawGrid, 1, 2);
+    m_point=action("Point","actionPoint",[this]{closeSmartDimension();m_viewport->setSketchTool(modeling::EntityKind::Point);});
+    m_centerline=action("Centerline","actionCenterline",[this]{closeSmartDimension();m_viewport->setSketchTool(modeling::EntityKind::Line,true);});
+    m_polygon=action("Polygon","actionPolygon",[this]{closeSmartDimension();m_viewport->setSketchTool(modeling::EntityKind::Polygon);});
+    m_construction=action("For Construction","actionConstructionLine",[this]{toggleConstruction();});m_construction->setCheckable(true);
+    m_editPolygon=action("Edit Polygon...","actionEditPolygon",[this]{editPolygon();});
+    commandButton(m_centerline,drawGrid,0,2);commandButton(m_construction,drawGrid,1,2);
+    commandButton(m_point,drawGrid,2,2);commandButton(m_polygon,drawGrid,0,3);commandButton(m_editPolygon,drawGrid,1,3);
+    m_polygonSides=new QSpinBox;m_polygonSides->setObjectName("polygonSides");m_polygonSides->setRange(3,999);m_polygonSides->setValue(6);m_polygonSides->setPrefix("Sides: ");m_polygonSides->setToolTip("Polygon side count");m_polygonSides->setMaximumWidth(105);drawGrid->addWidget(m_polygonSides,2,3);
+    connect(m_polygonSides,&QSpinBox::valueChanged,m_viewport,&CadViewport::setPolygonSides);
     commandGroup(sketchButtons, "Modify", modifyGrid);
     const QList<QPair<QString, const char*>> modifyCommands = {
         {"Trim Entities", "actionTrimEntities"}, {"Convert Entities", "actionConvertEntities"},
@@ -490,7 +503,7 @@ MainWindow::MainWindow(QWidget* parent)
         auto entity = m_editSketch->entities.at(std::size_t(m_entities->currentRow()));
         entity.first = {m_propertyFirstX->value(), m_propertyFirstY->value()};
         if (entity.kind == modeling::EntityKind::Circle) entity.radius = m_propertyRadius->value();
-        else entity.second = {m_propertySecondX->value(), m_propertySecondY->value()};
+        else if(entity.kind!=modeling::EntityKind::Point)entity.second = {m_propertySecondX->value(), m_propertySecondY->value()};
         applySketchEntityEdit(entity);
     });
     connect(m_viewport, &CadViewport::sketchEntitySelected, this, [this](const QString& id) {
@@ -672,7 +685,7 @@ bool MainWindow::chooseEntityParameters(modeling::SketchEntity& entity)
         radius = number(form, "Radius", entity.radius, true);
         radius->setObjectName("entityRadius");
     }
-    else {
+    else if(entity.kind!=modeling::EntityKind::Point) {
         x2 = number(form, "Second U", entity.second.x);
         y2 = number(form, "Second V", entity.second.y);
         x2->setObjectName("entitySecondX");
@@ -683,7 +696,7 @@ bool MainWindow::chooseEntityParameters(modeling::SketchEntity& entity)
     if (dialog.exec() != QDialog::Accepted) return false;
     entity.first = {x1->value(), y1->value()};
     if (circle) entity.radius = radius->value();
-    else entity.second = {x2->value(), y2->value()};
+    else if(x2)entity.second = {x2->value(), y2->value()};
     return true;
 }
 
@@ -892,7 +905,9 @@ void MainWindow::updateSketchToolActions()
     const auto tool=m_viewport->sketchTool();
     findChild<QAction*>("actionSmartDimension")->setChecked(editing && m_viewport->smartDimensionActive());
     m_selectEntity->setChecked(editing && !tool && !m_viewport->smartDimensionActive());
-    m_line->setChecked(editing && tool==modeling::EntityKind::Line);
+    m_line->setChecked(editing && tool==modeling::EntityKind::Line && !m_viewport->constructionTool());
+    m_centerline->setChecked(editing && tool==modeling::EntityKind::Line && m_viewport->constructionTool());
+    m_point->setChecked(editing && tool==modeling::EntityKind::Point);m_polygon->setChecked(editing && tool==modeling::EntityKind::Polygon);
     m_rectangle->setChecked(editing && tool==modeling::EntityKind::Rectangle);
     m_circle->setChecked(editing && tool==modeling::EntityKind::Circle);
 }
@@ -916,6 +931,13 @@ void MainWindow::updateActions()
     m_line->setEnabled(editing && !operation);
     m_rectangle->setEnabled(editing && !operation);
     m_circle->setEnabled(editing && !operation);
+    for(auto* tool:{m_point,m_centerline,m_polygon})tool->setEnabled(editing && !operation);
+    m_polygonSides->setEnabled(editing && !operation && m_viewport->sketchTool()==modeling::EntityKind::Polygon);
+    const auto selectedEntity=m_viewport->selectedSketchEntity();
+    const auto selectedLine=m_editSketch?std::find_if(m_editSketch->entities.begin(),m_editSketch->entities.end(),[&](const auto& e){return e.id==selectedEntity;}):std::vector<modeling::SketchEntity>::const_iterator{};
+    const bool lineSelected=m_editSketch && selectedLine!=m_editSketch->entities.end() && selectedLine->kind==modeling::EntityKind::Line;
+    m_construction->setEnabled(editing && !operation && lineSelected);m_construction->setChecked(lineSelected && selectedLine->construction);
+    m_editPolygon->setEnabled(editing && !operation && m_editSketch && modeling::polygonForEntity(*m_editSketch,selectedEntity));
     m_finishSketch->setEnabled(editing && !operation);
     const auto* selected = selectedFeature();
     m_editFeature->setEnabled(!m_editSketch && !operation && !selecting && selected);
@@ -1058,7 +1080,7 @@ void MainWindow::updateEntityProperties()
     const bool circle = entity.kind == modeling::EntityKind::Circle;
     const bool editing = m_mode == WorkspaceMode::EditingSketch;
     m_entitySummary->setText(QString("%1\n%2 supported relation(s)")
-        .arg(circle ? "Circle" : entity.kind == modeling::EntityKind::Line ? "Line" : "Legacy rectangle")
+        .arg(circle ? "Circle" : entity.kind==modeling::EntityKind::Point?"Point":entity.kind == modeling::EntityKind::Line ? (entity.construction?"Centerline":"Line") : "Legacy rectangle")
         .arg(std::count_if(sketch->relations.begin(), sketch->relations.end(), [&entity](const auto& relation) {
             return relation.first.entityId == entity.id || relation.second.entityId == entity.id;
         })));
@@ -1073,14 +1095,14 @@ void MainWindow::updateEntityProperties()
     m_propertySecondY->setValue(entity.second.y);
     m_propertyRadius->setValue(entity.radius);
     if (auto* form = m_propertyPanel->findChild<QFormLayout*>()) {
-        form->setRowVisible(m_propertySecondX, !circle);
-        form->setRowVisible(m_propertySecondY, !circle);
+        form->setRowVisible(m_propertySecondX, !circle && entity.kind!=modeling::EntityKind::Point);
+        form->setRowVisible(m_propertySecondY, !circle && entity.kind!=modeling::EntityKind::Point);
         form->setRowVisible(m_propertyRadius, circle);
     }
     m_propertyFirstX->setEnabled(editing);
     m_propertyFirstY->setEnabled(editing);
-    m_propertySecondX->setEnabled(editing && !circle);
-    m_propertySecondY->setEnabled(editing && !circle);
+    m_propertySecondX->setEnabled(editing && !circle && entity.kind!=modeling::EntityKind::Point);
+    m_propertySecondY->setEnabled(editing && !circle && entity.kind!=modeling::EntityKind::Point);
     m_propertyRadius->setEnabled(editing && circle);
     m_applyProperties->setEnabled(editing && !m_operation);
 }

@@ -1,3 +1,4 @@
+#include "modeling/SketchTools.h"
 #include <BRepTools.hxx>
 #include <BRep_Tool.hxx>
 #include <TopExp.hxx>
@@ -106,6 +107,7 @@ void validate(const Sketch& sketch)
                 fail("A rectangle must have nonzero width and height.");
             }
             break;
+        case EntityKind::Point: break;
         case EntityKind::Circle:
             positiveLength(entity.radius, "Circle radius");
             break;
@@ -260,6 +262,10 @@ TopoDS_Face profileFace(const Sketch& sketch);
 TopoDS_Face simpleProfileFace(const Sketch& sketch)
 {
     validate(sketch);
+    if(std::any_of(sketch.entities.begin(),sketch.entities.end(),[](const auto& e){return e.construction || e.kind==EntityKind::Point;})){
+        auto boundary=sketch;boundary.entities.erase(std::remove_if(boundary.entities.begin(),boundary.entities.end(),[](const auto& e){return e.construction || e.kind==EntityKind::Point;}),boundary.entities.end());
+        boundary.relations.clear();boundary.dimensions.clear();boundary.polygons.clear();return profileFace(boundary);
+    }
     if (sketch.entities.empty()) {
         fail("The sketch is empty. Draw a closed profile before extruding.");
     }
@@ -408,6 +414,8 @@ TopoDS_Shape sketchShape(const Sketch& sketch)
                 builder.Add(result, circleEdge(sketch, entity));
             } else if (entity.kind == EntityKind::Line) {
                 builder.Add(result, lineEdge(sketch, entity.first, entity.second));
+            } else if(entity.kind==EntityKind::Point) {
+                continue; // Point markers are presented separately, never as profile edges.
             } else {
                 const auto points = rectanglePoints(entity);
                 for (std::size_t index = 0; index < points.size(); ++index) {
@@ -434,6 +442,12 @@ std::vector<Contour> closedContours(const Sketch& sketch)
 {
     try {
         validate(sketch);
+        if(std::any_of(sketch.entities.begin(),sketch.entities.end(),[](const auto& e){return e.construction || e.kind==EntityKind::Point;})){
+            auto boundary=sketch;for(std::size_t i=0;i<boundary.entities.size();++i)if(boundary.entities[i].id.empty())boundary.entities[i].id="entity-"+std::to_string(i+1);
+            boundary.entities.erase(std::remove_if(boundary.entities.begin(),boundary.entities.end(),[](const auto& e){return e.construction || e.kind==EntityKind::Point;}),boundary.entities.end());
+            boundary.relations.clear();boundary.dimensions.clear();boundary.polygons.clear();
+            return closedContours(boundary);
+        }
         std::vector<std::string> identifiers;
         std::set<std::string> distinct;
         for (std::size_t index = 0; index < sketch.entities.size(); ++index) {
@@ -821,6 +835,7 @@ Point2 sketchPointValue(const Sketch& sketch, const SketchPointRef& reference)
     const auto found = std::find_if(sketch.entities.begin(), sketch.entities.end(), [&](const SketchEntity& entity) { return entity.id == reference.entityId; });
     if (found == sketch.entities.end()) fail("Sketch point refers to a missing entity.");
     if (reference.role == PointRole::Center && found->kind == EntityKind::Circle) return found->first;
+    if(found->kind==EntityKind::Point && reference.role==PointRole::First)return found->first;
     if (found->kind == EntityKind::Line || found->kind == EntityKind::Rectangle) {
         if (reference.role == PointRole::First) return found->first;
         if (reference.role == PointRole::Second) return found->second;
@@ -839,7 +854,7 @@ std::vector<std::pair<SketchPointRef, Point2>> sketchPoints(const Sketch& sketch
         if (entity.kind == EntityKind::Circle) points.push_back({{entity.id, PointRole::Center}, entity.first});
         else {
             points.push_back({{entity.id, PointRole::First}, entity.first});
-            points.push_back({{entity.id, PointRole::Second}, entity.second});
+            if(entity.kind!=EntityKind::Point)points.push_back({{entity.id, PointRole::Second}, entity.second});
         }
     }
     return points;
@@ -896,7 +911,7 @@ double dimensionMeasurement(const Sketch& sketch,const SketchDimension& d) {
 void validateSketchConstraintReferences(const Sketch& sketch)
 {
     if(sketch.relations.size()>4000 || sketch.dimensions.size()>4000)fail("Sketch exceeds the prototype constraint limit.");
-    (void)sketchPoints(sketch);std::set<std::string> ids;
+    (void)sketchPoints(sketch);validatePolygons(sketch,false);std::set<std::string> ids;
     for(const auto& relation:sketch.relations) {
         if(!stableIdentifier(relation.id) || !ids.insert(relation.id).second)fail("Constraint IDs must be valid and unique.");
         (void)sketchPointValue(sketch,relation.first);(void)sketchPointValue(sketch,relation.second);
@@ -911,6 +926,8 @@ void validateSketchConstraintReferences(const Sketch& sketch)
             if(a.id!=b.id || a.kind!=EntityKind::Line || !((relation.first.role==PointRole::First&&relation.second.role==PointRole::Second)||(relation.first.role==PointRole::Second&&relation.second.role==PointRole::First)))fail("Horizontal/vertical relations require one line's two endpoints.");
         } else if(relation.kind==RelationKind::Parallel || relation.kind==RelationKind::Perpendicular) {
             if(a.kind!=EntityKind::Line || b.kind!=EntityKind::Line || a.id==b.id || relation.first.role!=PointRole::First || relation.second.role!=PointRole::First)fail("Parallel/perpendicular relations require two distinct line references.");
+        } else if(relation.kind==RelationKind::PointOnLine || relation.kind==RelationKind::PointOnCircle) {
+            if(a.id==b.id || (relation.kind==RelationKind::PointOnLine?b.kind!=EntityKind::Line:b.kind!=EntityKind::Circle))fail("Invalid point-on-geometry relation.");
         } else if(relation.kind==RelationKind::Tangent) {
             if(a.id==b.id || (a.kind!=EntityKind::Line&&a.kind!=EntityKind::Circle) || (b.kind!=EntityKind::Line&&b.kind!=EntityKind::Circle) || (a.kind==EntityKind::Line&&b.kind==EntityKind::Line))fail("Tangent supports line-circle and external circle-circle relations.");
         } else fail("Unsupported sketch relation type.");
@@ -931,7 +948,7 @@ Sketch canonicalizeSketchEqualities(const Sketch& sketch,const std::vector<std::
 }
 void validateSketchRelations(const Sketch& sketch)
 {
-    validateSketchConstraintReferences(sketch);
+    validateSketchConstraintReferences(sketch);validatePolygons(sketch,true);
     EqualityGroups groups(sketch);
     std::set<std::string> ids;
     std::set<std::tuple<int, PointKey, PointKey>> signatures;
@@ -952,6 +969,9 @@ void validateSketchRelations(const Sketch& sketch)
             const Point2 u{a.second.x-a.first.x,a.second.y-a.first.y},v{b.second.x-b.first.x,b.second.y-b.first.y};
             const double residual=relation.kind==RelationKind::Parallel?u.x*v.y-u.y*v.x:u.x*v.x+u.y*v.y;
             if(std::abs(residual)>1e-7*std::max(1.0,std::hypot(u.x,u.y)*std::hypot(v.x,v.y)))fail("Line relation is not satisfied.");continue;
+        } else if(relation.kind==RelationKind::PointOnLine || relation.kind==RelationKind::PointOnCircle) {
+            const auto& e=referencedEntity(sketch,relation.second);const double error=relation.kind==RelationKind::PointOnLine?std::abs(cross(e.first,e.second,first))/distance(e.first,e.second):std::abs(distance(first,e.first)-e.radius);
+            if(!std::isfinite(error)||error>1e-6)fail("Point is no longer on its referenced geometry.");continue;
         } else if(relation.kind==RelationKind::Tangent) {
             const auto& a=referencedEntity(sketch,relation.first);const auto& b=referencedEntity(sketch,relation.second);double residual;
             if(a.kind==EntityKind::Circle && b.kind==EntityKind::Circle)residual=distance(a.first,b.first)-a.radius-b.radius;
@@ -993,14 +1013,15 @@ Sketch editSketchEntity(const Sketch& sketch, const SketchEntity& replacement)
     const auto old = std::find_if(sketch.entities.begin(), sketch.entities.end(), [&](const SketchEntity& entity) { return entity.id == replacement.id; });
     if (replacement.id.empty() || old == sketch.entities.end()) fail("Cannot edit a sketch entity without its existing stable ID.");
     if (old->kind != replacement.kind) fail("Editing cannot change a sketch entity type.");
-    const bool solverConstraints=!sketch.dimensions.empty() || std::any_of(sketch.relations.begin(),sketch.relations.end(),[](const auto& r){return int(r.kind)>=int(RelationKind::FixedPoint);});
+    const bool solverConstraints=!sketch.polygons.empty() || !sketch.dimensions.empty() || std::any_of(sketch.relations.begin(),sketch.relations.end(),[](const auto& r){return int(r.kind)>=int(RelationKind::FixedPoint);});
     if(solverConstraints) {
         SolveOptions options;
         const auto target=[&](PointRole role,Point2 before,Point2 after){if(before.x!=after.x || before.y!=after.y)options.pointTargets.push_back({{replacement.id,role},after,true});};
         target(old->kind==EntityKind::Circle?PointRole::Center:PointRole::First,old->first,replacement.first);
         if(old->kind==EntityKind::Circle){if(old->radius!=replacement.radius)options.radiusTargets.push_back({replacement.id,replacement.radius});}
-        else target(PointRole::Second,old->second,replacement.second);
-        return requireSolvedSketch(solvePlanarSketch(sketch,options));
+        else if(old->kind!=EntityKind::Point)target(PointRole::Second,old->second,replacement.second);
+        auto solved=requireSolvedSketch(solvePlanarSketch(sketch,options));
+        for(auto& e:solved.entities)if(e.id==replacement.id)e.construction=replacement.construction;return solved;
     }
     *std::find_if(candidate.entities.begin(), candidate.entities.end(), [&](const SketchEntity& entity) { return entity.id == replacement.id; }) = replacement;
     EqualityGroups groups(sketch);
@@ -1062,7 +1083,7 @@ Sketch moveSketchPoint(const Sketch& sketch, const SketchPointRef& reference, Po
         if(pointKey(reference)==pointKey(*target)) fail("A point cannot be joined to itself.");
         position=sketchPointValue(sketch,*target);
     }
-    const bool solverConstraints=!sketch.dimensions.empty() || std::any_of(sketch.relations.begin(),sketch.relations.end(),[](const auto& r){return int(r.kind)>=int(RelationKind::FixedPoint);});
+    const bool solverConstraints=!sketch.polygons.empty() || !sketch.dimensions.empty() || std::any_of(sketch.relations.begin(),sketch.relations.end(),[](const auto& r){return int(r.kind)>=int(RelationKind::FixedPoint);});
     if(solverConstraints) {
         auto candidate=sketch;
         if(target && !areSketchPointsCoincident(sketch,reference,*target)) {
@@ -1093,6 +1114,7 @@ Sketch removeSketchEntity(const Sketch& sketch, const std::string& entityId)
     const auto found = std::find_if(candidate.entities.begin(), candidate.entities.end(), [&](const SketchEntity& entity) { return entity.id == entityId; });
     if (entityId.empty() || found == candidate.entities.end()) fail("Cannot remove an unknown sketch entity.");
     candidate.entities.erase(found);
+    candidate.polygons.erase(std::remove_if(candidate.polygons.begin(),candidate.polygons.end(),[&](const auto& g){return g.centerId==entityId || std::find(g.edges.begin(),g.edges.end(),entityId)!=g.edges.end();}),candidate.polygons.end());
     candidate.relations.erase(std::remove_if(candidate.relations.begin(), candidate.relations.end(), [&](const SketchRelation& relation) {
         return relation.first.entityId == entityId || relation.second.entityId == entityId;
     }), candidate.relations.end());

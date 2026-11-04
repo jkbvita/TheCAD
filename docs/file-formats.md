@@ -6,12 +6,12 @@ inputs: conversion saves to a separate .thepart path, retaining the original fil
 No assembly/drawing reader or placeholder is implemented. Internal serialization
 is provisional and versioned; filename conventions are permanent.
 
-## Version 6 part structure
+## Version 8 part structure
 
-The UTF-8 JSON root contains exactly format: "TheCAD.Part", version: 6, units:
+The UTF-8 JSON root contains exactly format: "TheCAD.Part", version: 8, units:
 "mm", features (ordered array) and resultFeature (last solid feature ID, or empty
-for empty/sketch-only documents). Writers always emit version 6. Readers accept
-versions 1–6 and reject unknown versions, fields, units and unsupported features.
+for empty/sketch-only documents). Writers always emit version 8. Readers accept
+versions 1–8 and reject unknown versions, fields, units and unsupported features.
 
 Every feature has stable id, printable name, type and explicit dependencies.
 Types and additional fields:
@@ -19,7 +19,7 @@ Types and additional fields:
 | Type | Fields |
 | --- | --- |
 | box | parameters: width/depth/height; legacy editable box |
-| sketch | plane: XY/XZ/YZ, space: planar2d, entities, relations, dimensions; optional attachment |
+| sketch | plane: XY/XZ/YZ, space: planar2d, entities, relations, dimensions, polygons; optional attachment |
 | extrude | sketch ID, contour OR contours, length, direction: positive/negative |
 | cut | Extrude fields plus Boolean throughAll; specified length retained |
 
@@ -31,7 +31,8 @@ The reader validates backward references and exact dependency order.
 ## Sketch geometry and stable references
 
 Lines store id/type/first/second; legacy rectangles use two opposite corners;
-circles use id/type/center/radius. Coordinates are local model-space mm, not pixels.
+circles use id/type/center/radius; points use id/type/position. Version 8 entities
+also store a Boolean construction flag. Coordinates are local model-space mm, not pixels.
 New rectangle drawing creates four connected lines with H/V relations.
 Entity IDs are unique within each sketch; constraint IDs are unique across its
 relations and dimensions. Valid IDs contain 1–128 ASCII letters, digits, '_' or '-'.
@@ -40,7 +41,7 @@ Deleted entity identities are not reused within the same replacement edit.
 Origin frames are XY=(X,Y,+Z), XZ=(X,Z,-Y), YZ=(Y,Z,+X). An attachment instead
 provides its own backend-independent orthonormal frame. Point references contain
 exactly entity and point: first/second for line or legacy rectangle corners,
-center for circles, or {"entity":"","point":"origin"} for fixed local (0,0).
+first for standalone points, center for circles, or {"entity":"","point":"origin"} for fixed local (0,0).
 Missing entities or invalid roles fail; no nearest-point retargeting is performed.
 
 space is planar2d. Spatial sketch kinds require a future version and backend;
@@ -48,19 +49,24 @@ this reader rejects them explicitly. GCS, Eigen and Boost types or solver handle
 are never serialized. Version 5 readers accept omitted space/dimensions as
 planar2d/empty for compatibility with the earlier multi-contour version-5 writer.
 Version 6 requires both space and dimensions; a missing array is an invalid file.
-Current writers always include them.
+Current writers always include them. Version 8 additionally requires polygons,
+an array of groups containing id, center (a Point entity ID) and ordered edges
+(existing Line IDs). See [regular polygon semantics](decisions/0014-basic-sketch-tools.md).
+Points and construction entities never form extrusion boundaries.
 
 ## Relations and dimensions
 
 Relations contain id/type/first/second. Types: coincident, horizontal, vertical,
-fixed, parallel, perpendicular, tangent. Fixed adds position: [x,y], an exact
+fixed, parallel, perpendicular, tangent, point-on-line, point-on-circle. The last
+two require version 8 and constrain the first point to the second entity. Fixed adds position: [x,y], an exact
 anchor for first; second is the origin placeholder. Horizontal/vertical relations
 reference one line's endpoints. Parallel/perpendicular reference the first point
 of two distinct lines. Tangent supports a line and circle, or external circles;
 the previous geometry supplies the side for a line/circle solve.
 
 Dimensions contain exactly id, type, first, second, value, driving, annotation
-and sense. Supported types: length, horizontal, vertical, radius, diameter, distance,
+and sense; version 7 onward adds relative placement (coordinates or null for
+legacy attachment). Supported types: length, horizontal, vertical, radius, diameter, distance,
 line-distance, angle. The final three require version 6.
 Length references one line's first/second endpoints; H/V reference two distinct
 points, including centers or the origin. Radius/diameter reference a circle
@@ -73,7 +79,7 @@ Example driving line length:
 {"id":"dimension-1","type":"length",
  "first":{"entity":"line-a","point":"first"},
  "second":{"entity":"line-a","point":"second"},
- "value":50,"driving":true,"annotation":[25,15],"sense":1}
+ "value":50,"driving":true,"annotation":[25,15],"sense":1,"placement":null}
 ~~~
 
 Linear values are mm; angular values are degrees. Length/radius/diameter must exceed kernel tolerance. H/V values are
@@ -129,9 +135,11 @@ permanent topology naming. See decision 0008.
 Version 1 is exactly one legacy box with no feature name. Version 2 adds named
 parametric history/entities but no relations. Version 3 adds Coincident/H/V;
 version 4 adds face attachments. These are read without inventing constraints or
-features. Saving intentionally writes version 6 .thepart to the selected path.
-Version 5 adds dimensions and multiple region selections. Older applications
-reject version 6 safely; readers retain all supported older records.
+features. Saving intentionally writes version 8 .thepart to the selected path.
+Version 5 adds dimensions and multiple region selections. Version 7 adds relative
+annotation placement; version 8 adds points, construction flags, on-geometry
+relations and regular polygon groups. Older applications
+reject newer unsupported versions safely; readers retain all supported older records.
 
 Only a fully successful candidate history replaces the document and precise OCCT
 BRep. Opening invalid files, dimensional edits and failed dependent regeneration

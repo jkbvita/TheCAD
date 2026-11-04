@@ -1,3 +1,4 @@
+#include "modeling/SketchTools.h"
 #include "modeling/DimensionAnnotation.h"
 #include "modeling/DimensionInference.h"
 #include "modeling/ConstraintSolver.h"
@@ -45,6 +46,27 @@ private slots:
         QVERIFY(QTest::qWaitForWindowExposed(host.get())); QTRY_VERIFY(viewport->isReady());
     }
     void init() { viewport->beginSketch({}); QApplication::processEvents(); }
+    void pointToolSnapsSelectsDragsAndPersistsRelations() {
+        using namespace modeling;Sketch sketch;sketch.entities={{EntityKind::Line,{-40,20},{40,20},1,"line"},{EntityKind::Circle,{30,-25},{},8,"circle"}};
+        viewport->beginSketch(sketch);viewport->setSketchTool(EntityKind::Point);click({0,0},{3,2});click({0,20},{0,4});click({38,-25},{3,0});click({-30,-20});
+        QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(6));QCOMPARE(viewport->m_sketch->entities[2].kind,EntityKind::Point);
+        QCOMPARE(viewport->m_sketch->entities[2].first.x,0.0);QCOMPARE(viewport->m_sketch->entities[2].first.y,0.0);
+        QCOMPARE(viewport->m_sketch->relations[0].kind,RelationKind::Coincident);QCOMPARE(viewport->m_sketch->relations[1].kind,RelationKind::PointOnLine);QCOMPARE(viewport->m_sketch->relations[2].kind,RelationKind::PointOnCircle);
+        QVERIFY(closedContours(*viewport->m_sketch).size()==1); // Only the existing circle is a profile.
+        viewport->selectSketchTool();click({0,0});QVERIFY(viewport->m_selectedPoint);QCOMPARE(viewport->m_selectedPoint->entityId,viewport->m_sketch->entities[2].id);
+        const auto id=viewport->m_sketch->entities.back().id;QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,pixel({-30,-20}));
+        const auto target=pixel({-20,-30});QMouseEvent motion(QEvent::MouseMove,target,viewport->mapToGlobal(target),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);QApplication::sendEvent(viewport,&motion);QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,target);
+        QCOMPARE(viewport->m_sketch->entities.back().id,id);QVERIFY(std::abs(viewport->m_sketch->entities.back().first.x+20)<0.5);validateSketchRelations(*viewport->m_sketch);
+    }
+    void centerlineAndPolygonCreationPreviewAndDrag() {
+        using namespace modeling;viewport->setSketchTool(EntityKind::Line,true);click({-30,-20});hover({30,-20});click({30,-20});
+        QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(1));QVERIFY(viewport->m_sketch->entities[0].construction);QVERIFY(!viewport->m_constructionPresentation.IsNull());QVERIFY(closedContours(*viewport->m_sketch).empty());
+        viewport->beginSketch({});viewport->setSketchTool(EntityKind::Polygon);click({0,0});hover({20,0});QVERIFY(viewport->m_drawingPreview);QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(0));QVERIFY(!viewport->m_sketchPresentation.IsNull());
+        viewport->setPolygonSides(5);click({20,0});QCOMPARE(viewport->m_sketch->polygons.size(),std::size_t(1));QCOMPARE(viewport->m_sketch->polygons[0].edges.size(),std::size_t(5));QCOMPARE(closedContours(*viewport->m_sketch).size(),std::size_t(1));
+        viewport->selectSketchTool();const auto vertex=viewport->m_sketch->entities[1].first;QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,pixel(vertex));
+        const auto target=pixel({25,8});QMouseEvent motion(QEvent::MouseMove,target,viewport->mapToGlobal(target),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);QApplication::sendEvent(viewport,&motion);QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,target);
+        validatePolygons(*viewport->m_sketch,true);QVERIFY(viewport->m_sketch->entities[1].first.y>1);viewport->setPolygonSides(6);
+    }
     void dimensionPlacementDragAndLiveGeometry() {
         using namespace modeling;
         Sketch sketch;sketch.entities={{EntityKind::Line,{-30,-20},{30,-20},1,"line"},{EntityKind::Circle,{-30,30},{},8,"circle"}};
