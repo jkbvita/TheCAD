@@ -10,6 +10,7 @@
 #include <QMetaType>
 #include <QPoint>
 #include <QElapsedTimer>
+#include <QRectF>
 #include <QString>
 #include <QWidget>
 
@@ -61,6 +62,9 @@ public:
     const TopoDS_Shape& displayedShape() const {return m_shape;}
     std::optional<modeling::SketchPointRef> selectedSketchPoint() const {return m_selectedPoint;}
     void setConstraintErrors(const std::vector<std::string>& ids);
+    void showSketchRelations(bool visible);
+    void selectSketchRelation(const std::string& id);
+    std::string selectedSketchRelation() const {return m_selectedRelation;}
     void setPickingTolerance(double logicalPixels);
     double pickingTolerance() const { return m_pickingTolerance; }
     std::optional<modeling::EntityKind> sketchTool() const { return m_sketchTool; }
@@ -69,6 +73,9 @@ public:
     void resetView();
 
 signals:
+    void relationsContextRequested(QPoint position);
+    void sketchRelationSelected(const QString& id);
+    void sketchRelationDeleteRequested(const QString& id);
     void sketchSelectionChanged();
     void sketchDeleteRequested();
     void sketchToolChanged();
@@ -100,6 +107,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
+    void keyReleaseEvent(QKeyEvent* event) override;
     bool event(QEvent* event) override;
 
 private:
@@ -115,6 +123,13 @@ private:
     void updateReferencePlanes();
     void updatePlaneStyles();
     void updateConstraintPresentation();
+    void updateRelationSymbols();
+    std::optional<std::string> relationAt(const QPointF& position) const;
+    struct RelationHit {std::string id;QRectF bounds;};
+    std::vector<RelationHit> m_relationHits;
+    std::vector<Handle(AIS_Point)> m_relationMarkers;
+    bool m_showRelations=true;
+    std::string m_hoveredRelation,m_selectedRelation;
     std::vector<Handle(AIS_TextLabel)> m_constraintLabels;
     std::vector<Handle(AIS_Shape)> m_dimensionGuides;
     bool m_constraintPicking = false;
@@ -183,6 +198,8 @@ private:
     std::vector<std::string> m_selectedEntities,m_selectedDimensions;
     void selectDimension(const std::string& id,bool toggle);
     QElapsedTimer m_deleteSequence;
+    bool m_shiftSelectionChanged=false;
+    QPoint m_selectionCursor;
     struct PointDrag {
         modeling::Sketch original;
         modeling::SketchPointRef reference;

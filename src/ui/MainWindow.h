@@ -24,6 +24,7 @@ class QSpinBox;
 class QPushButton;
 class QDockWidget;
 class QStackedWidget;
+class QFrame;
 
 namespace thecad::ui {
 
@@ -46,6 +47,7 @@ protected:
     virtual bool chooseFeatureParameters(document::Feature& feature);
     virtual bool chooseEntityParameters(modeling::SketchEntity& entity);
     void closeEvent(QCloseEvent* event) override;
+    bool eventFilter(QObject* watched,QEvent* event) override;
 
 private:
     void startSmartDimension();
@@ -72,6 +74,13 @@ private:
     void constraintPointSelected(const modeling::SketchPointRef& point);
     void updateConstraintDraft();
     void applyRelation();
+    void showRelationsContext(QPoint position);
+    void hideRelationsContext();
+    void applyContextRelation(modeling::RelationKind,const std::vector<std::string>&);
+    void deleteRelation(const std::string& id);
+    void applyContextConstruction(const std::vector<std::string>&);
+    QFrame* m_relationsToolbar=nullptr;
+    QPoint m_relationsAnchor;
     void acceptConstrainedSketch(const modeling::Sketch& candidate);
     void constraintError(const QString& error);
     struct ConstraintDraft {

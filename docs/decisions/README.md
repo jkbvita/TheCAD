@@ -32,6 +32,11 @@ approved scope do not need repeated approval.
 
 - [0011: Shared-edge regions and direct Smart Dimension](0011-shared-regions-direct-dimensions.md).
 
+- [0012: Dimension graphics and selection](0012-dimension-graphics-selection.md).
+- [0013: Edit history and sketch deletion](0013-edit-history-sketch-deletion.md).
+- [0014: Point, Centerline and regular Polygon](0014-basic-sketch-tools.md).
+- [0015: Contextual sketch relations and graphical callouts](0015-contextual-sketch-relations.md).
+
 ## Pending owner decisions
 
 - Resilient face references beyond the approved conservative planar-face strategy.

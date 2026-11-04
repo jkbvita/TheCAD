@@ -21,6 +21,7 @@ public:
     std::map<std::string,GCS::Circle> circles;
     GCS::VEC_pD unknowns;
     std::deque<double> constants;
+    std::deque<double> auxiliaries;
     std::map<int,std::string> tags;
     int nextTag=1;
     explicit WorkingSketch(const Sketch& input):sketch(input) {
@@ -44,10 +45,76 @@ public:
     }
     double* constant(double value){constants.push_back(value);return &constants.back();}
     int tag(const std::string& id){const int value=nextTag++;tags.emplace(value,id);return value;}
+    bool coordinatePinned(const SketchPointRef& reference,bool x,const SketchRelation& current,double expected) const {
+        std::set<std::pair<std::string,int>> visited;std::vector<SketchPointRef> queue{reference};visited.insert({reference.entityId,int(reference.role)});
+        for(std::size_t i=0;i<queue.size();++i)for(const auto& r:sketch.relations){
+            if(r.kind!=RelationKind::Coincident && r.kind!=RelationKind::Concentric && r.kind!=(x?RelationKind::Vertical:RelationKind::Horizontal))continue;
+            const auto same=[](const auto& a,const auto& b){return a.entityId==b.entityId && a.role==b.role;};
+            std::optional<SketchPointRef> next;if(same(r.first,queue[i]))next=r.second;else if(same(r.second,queue[i]))next=r.first;
+            if(next && visited.insert({next->entityId,int(next->role)}).second)queue.push_back(*next);
+        }
+        const auto matches=[&](const SketchPointRef& ref,double value){return visited.count({ref.entityId,int(ref.role)}) && std::abs(value-expected)<1e-9;};
+        if(matches({},0))return true;
+        for(const auto& r:sketch.relations)if(r.kind==RelationKind::FixedPoint && matches(r.first,x?r.fixedPosition.x:r.fixedPosition.y))return true;
+        for(const auto& r:sketch.relations){
+            if(r.id==current.id)break;if(r.kind!=RelationKind::FixedEntity)continue;
+            if(matches(r.first,x?r.fixedPosition.x:r.fixedPosition.y))return true;
+            const auto e=std::find_if(sketch.entities.begin(),sketch.entities.end(),[&](const auto& e){return e.id==r.first.entityId;});
+            if(e!=sketch.entities.end() && e->kind==EntityKind::Line && matches({e->id,PointRole::Second},x?r.fixedSecond.x:r.fixedSecond.y))return true;
+        }
+        return false;
+    }
+    void addFixedEntity(GCS::System& system,const SketchRelation& r,int id){
+        const auto fix=[&](SketchPointRef ref,Point2 position){auto& p=point(ref);
+            if(!coordinatePinned(ref,true,r,position.x))system.addConstraintCoordinateX(p,constant(position.x),id);
+            if(!coordinatePinned(ref,false,r,position.y))system.addConstraintCoordinateY(p,constant(position.y),id);
+        };
+        fix(r.first,r.fixedPosition);
+        const auto& e=*std::find_if(sketch.entities.begin(),sketch.entities.end(),[&](const auto& e){return e.id==r.first.entityId;});
+        if(e.kind==EntityKind::Line)fix({e.id,PointRole::Second},r.fixedSecond);
+        if(e.kind==EntityKind::Circle){
+            const bool radiusDriven=std::any_of(sketch.dimensions.begin(),sketch.dimensions.end(),[&](const auto& d){return d.driving && d.first.entityId==e.id && (d.kind==DimensionKind::CircleRadius || d.kind==DimensionKind::CircleDiameter);});
+            if(!radiusDriven)system.addConstraintCircleRadius(circles.at(e.id),constant(r.fixedRadius),id);
+        }
+        // A Fix can already be implied by anchors. Keep the persisted snapshot
+        // (it becomes driving if those anchors are removed), without a zero-
+        // equation diagnostic tag. No existing constraint is removed.
+        if(!std::isfinite(system.calculateConstraintErrorByTag(id)))tags.erase(id);
+    }
+    void addLineOrientation(GCS::System& system,const std::string& first,const std::string& second,bool perpendicular,int id) {
+        auto& a=lines.at(first);auto& b=lines.at(second);
+        const double ax=*a.p2.x-*a.p1.x,ay=*a.p2.y-*a.p1.y,bx=*b.p2.x-*b.p1.x,by=*b.p2.y-*b.p1.y;
+        constexpr double pi=3.14159265358979323846;
+        const double angle=perpendicular?(ax*by-ay*bx<0?-pi/2:pi/2):(ax*bx+ay*by<0?pi:0);
+        // A normalized angular equation rotates initially parallel/perpendicular
+        // lines instead of satisfying a dot/cross product by collapsing a line.
+        system.addConstraintL2LAngle(a,b,constant(angle),id);
+    }
     void addRelations(GCS::System& system) {
         for(const auto& relation:sketch.relations) {
             const int id=tag(relation.id);auto& a=point(relation.first);auto& b=point(relation.second);
             switch(relation.kind) {
+            case RelationKind::FixedEntity:addFixedEntity(system,relation,id);break;
+            case RelationKind::Concentric:system.addConstraintP2PCoincident(a,b,id);break;
+            case RelationKind::Collinear:{
+                SketchDimension parallel;parallel.first=relation.first;parallel.second=relation.second;
+                if(!parallelImplied(parallel,relation.id))addLineOrientation(system,relation.first.entityId,relation.second.entityId,false,id);
+                system.addConstraintPointOnLine(b,lines.at(relation.first.entityId),id);break;
+            }
+            case RelationKind::Equal:
+            case RelationKind::EqualCurveLength:
+                if(lines.count(relation.first.entityId) && lines.count(relation.second.entityId))system.addConstraintEqualLength(lines.at(relation.first.entityId),lines.at(relation.second.entityId),id);
+                else if(circles.count(relation.first.entityId) && circles.count(relation.second.entityId))system.addConstraintEqualRadius(circles.at(relation.first.entityId),circles.at(relation.second.entityId),id);
+                else {
+                    auto& line=lines.at(lines.count(relation.first.entityId)?relation.first.entityId:relation.second.entityId);
+                    auto& circle=circles.at(circles.count(relation.first.entityId)?relation.first.entityId:relation.second.entityId);
+                    auxiliaries.push_back(6.28318530717958647692*(*circle.rad));auto* circumference=&auxiliaries.back();unknowns.push_back(circumference);
+                    // Keep the ratio as a linear equation: PlaneGCS's Equal
+                    // reduction aliases two unknowns even for a non-unit ratio.
+                    GCS::Point value(circle.rad,circumference),zero(constant(0),constant(0)),ratio(constant(1),constant(6.28318530717958647692));
+                    system.addConstraintPointOnLine(value,zero,ratio,id);
+                    system.addConstraintP2PDistance(line.p1,line.p2,circumference,id);
+                }break;
             case RelationKind::PointOnLine:system.addConstraintPointOnLine(a,lines.at(relation.second.entityId),id);break;
             case RelationKind::PointOnCircle:system.addConstraintPointOnCircle(a,circles.at(relation.second.entityId),id);break;
             case RelationKind::Coincident:system.addConstraintP2PCoincident(a,b,id);break;
@@ -55,8 +122,8 @@ public:
             case RelationKind::Vertical:system.addConstraintVertical(a,b,id);break;
             case RelationKind::FixedPoint:
                 system.addConstraintCoordinateX(a,constant(relation.fixedPosition.x),id);system.addConstraintCoordinateY(a,constant(relation.fixedPosition.y),id);break;
-            case RelationKind::Parallel:system.addConstraintParallel(lines.at(relation.first.entityId),lines.at(relation.second.entityId),id);break;
-            case RelationKind::Perpendicular:system.addConstraintPerpendicular(lines.at(relation.first.entityId),lines.at(relation.second.entityId),id);break;
+            case RelationKind::Parallel:addLineOrientation(system,relation.first.entityId,relation.second.entityId,false,id);break;
+            case RelationKind::Perpendicular:addLineOrientation(system,relation.first.entityId,relation.second.entityId,true,id);break;
             case RelationKind::Tangent:
                 if(circles.count(relation.first.entityId)&&circles.count(relation.second.entityId)) {
                     auto& first=circles.at(relation.first.entityId);auto& second=circles.at(relation.second.entityId);
@@ -82,12 +149,15 @@ public:
             }
         }
     }
-    bool parallelImplied(const SketchDimension& dimension) const {
+    bool parallelImplied(const SketchDimension& dimension,const std::string& except={}) const {
         // Avoid introducing a duplicate derived parallel equation where existing
         // orientation relations already imply it. No owner constraint is removed.
         std::map<std::string,std::vector<std::pair<std::string,int>>> graph;
         const auto join=[&](const std::string& a,const std::string& b,int parity){graph[a].push_back({b,parity});graph[b].push_back({a,parity});};
+        bool beforeCurrent=true;
         for(const auto& r:sketch.relations) {
+            if(!except.empty() && r.id==except){beforeCurrent=false;continue;}
+            if(r.kind==RelationKind::Collinear && (except.empty() || beforeCurrent))join(r.first.entityId,r.second.entityId,0);
             if(r.kind==RelationKind::Parallel || r.kind==RelationKind::Perpendicular)join(r.first.entityId,r.second.entityId,r.kind==RelationKind::Perpendicular?1:0);
             if(r.kind==RelationKind::Horizontal || r.kind==RelationKind::Vertical)join(r.first.entityId,"world-horizontal",r.kind==RelationKind::Vertical?1:0);
         }

@@ -1,3 +1,4 @@
+#include "modeling/RelationCommands.h"
 #include "modeling/SketchTools.h"
 #include <BRepTools.hxx>
 #include <BRep_Tool.hxx>
@@ -810,9 +811,9 @@ struct EqualityGroups {
     void join(const SketchRelation& relation) {
         const auto a = index(relation.first), b = index(relation.second);
         if (a == b) fail("A sketch relation must refer to two distinct points.");
-        if (relation.kind == RelationKind::Coincident || relation.kind == RelationKind::Vertical)
+        if (relation.kind == RelationKind::Coincident || relation.kind==RelationKind::Concentric || relation.kind == RelationKind::Vertical)
             x[root(x, a)] = root(x, b);
-        if (relation.kind == RelationKind::Coincident || relation.kind == RelationKind::Horizontal)
+        if (relation.kind == RelationKind::Coincident || relation.kind==RelationKind::Concentric || relation.kind == RelationKind::Horizontal)
             y[root(y, a)] = root(y, b);
     }
 };
@@ -915,6 +916,7 @@ void validateSketchConstraintReferences(const Sketch& sketch)
     for(const auto& relation:sketch.relations) {
         if(!stableIdentifier(relation.id) || !ids.insert(relation.id).second)fail("Constraint IDs must be valid and unique.");
         (void)sketchPointValue(sketch,relation.first);(void)sketchPointValue(sketch,relation.second);
+        if(isNewRelation(relation.kind)){validateNewRelation(sketch,relation,false);continue;}
         if(relation.kind==RelationKind::FixedPoint) {
             if(relation.first.role==PointRole::Origin || relation.second.role!=PointRole::Origin || !relation.second.entityId.empty())fail("Fixed point must reference a sketch point and a stored anchor.");
             finiteCoordinate(relation.fixedPosition.x);finiteCoordinate(relation.fixedPosition.y);continue;
@@ -923,7 +925,7 @@ void validateSketchConstraintReferences(const Sketch& sketch)
         if(relation.kind==RelationKind::Coincident)continue;
         const auto& a=referencedEntity(sketch,relation.first);const auto& b=referencedEntity(sketch,relation.second);
         if(relation.kind==RelationKind::Horizontal || relation.kind==RelationKind::Vertical) {
-            if(a.id!=b.id || a.kind!=EntityKind::Line || !((relation.first.role==PointRole::First&&relation.second.role==PointRole::Second)||(relation.first.role==PointRole::Second&&relation.second.role==PointRole::First)))fail("Horizontal/vertical relations require one line's two endpoints.");
+            if(!(a.kind==EntityKind::Point && b.kind==EntityKind::Point && a.id!=b.id) && (a.id!=b.id || a.kind!=EntityKind::Line || !((relation.first.role==PointRole::First&&relation.second.role==PointRole::Second)||(relation.first.role==PointRole::Second&&relation.second.role==PointRole::First))))fail("Horizontal/vertical relations require a line or distinct sketch points.");
         } else if(relation.kind==RelationKind::Parallel || relation.kind==RelationKind::Perpendicular) {
             if(a.kind!=EntityKind::Line || b.kind!=EntityKind::Line || a.id==b.id || relation.first.role!=PointRole::First || relation.second.role!=PointRole::First)fail("Parallel/perpendicular relations require two distinct line references.");
         } else if(relation.kind==RelationKind::PointOnLine || relation.kind==RelationKind::PointOnCircle) {
@@ -937,10 +939,11 @@ void validateSketchConstraintReferences(const Sketch& sketch)
 Sketch canonicalizeSketchEqualities(const Sketch& sketch,const std::vector<std::pair<SketchPointRef,Point2>>& extraAnchors)
 {
     validateSketchConstraintReferences(sketch);EqualityGroups groups(sketch);
-    for(const auto& relation:sketch.relations)if(relation.kind==RelationKind::Coincident||relation.kind==RelationKind::Horizontal||relation.kind==RelationKind::Vertical)groups.join(relation);
+    for(const auto& relation:sketch.relations)if(relation.kind==RelationKind::Coincident||relation.kind==RelationKind::Concentric||relation.kind==RelationKind::Horizontal||relation.kind==RelationKind::Vertical)groups.join(relation);
     auto result=sketch;std::map<std::size_t,double> x,y;
     const auto anchor=[&](const SketchPointRef& ref,Point2 point){const auto index=groups.index(ref);x[EqualityGroups::root(groups.x,index)]=point.x;y[EqualityGroups::root(groups.y,index)]=point.y;};
     anchor({},{});for(const auto& r:sketch.relations)if(r.kind==RelationKind::FixedPoint)anchor(r.first,r.fixedPosition);
+    for(const auto& r:sketch.relations)if(r.kind==RelationKind::FixedEntity){anchor(r.first,r.fixedPosition);const auto& e=referencedEntity(sketch,r.first);if(e.kind==EntityKind::Line)anchor({e.id,PointRole::Second},r.fixedSecond);}
     for(const auto& a:extraAnchors)anchor(a.first,a.second);
     for(std::size_t i=1;i<groups.points.size();++i){const auto px=EqualityGroups::root(groups.x,i),py=EqualityGroups::root(groups.y,i);const auto point=groups.points[i].second;if(!x.count(px))x[px]=point.x;if(!y.count(py))y[py]=point.y;}
     for(std::size_t i=1;i<groups.points.size();++i)setPoint(result,groups.points[i].first,{x[EqualityGroups::root(groups.x,i)],y[EqualityGroups::root(groups.y,i)]});
@@ -955,13 +958,14 @@ void validateSketchRelations(const Sketch& sketch)
     for (const auto& relation : sketch.relations) {
         if (!stableIdentifier(relation.id) || !ids.insert(relation.id).second) fail("Sketch relation IDs must be valid and unique.");
         const auto first = sketchPointValue(sketch, relation.first), second = sketchPointValue(sketch, relation.second);
+        if(isNewRelation(relation.kind)){
+            validateNewRelation(sketch,relation,true);
+            if(relation.kind==RelationKind::Concentric)groups.join(relation);
+            continue;
+        }
         if (relation.kind == RelationKind::Horizontal || relation.kind == RelationKind::Vertical) {
-            if (relation.first.entityId != relation.second.entityId || relation.first.entityId.empty()
-                || !((relation.first.role == PointRole::First && relation.second.role == PointRole::Second)
-                    || (relation.first.role == PointRole::Second && relation.second.role == PointRole::First)))
-                fail("Horizontal and vertical relations require the two endpoints of one line.");
-            const auto entity = std::find_if(sketch.entities.begin(), sketch.entities.end(), [&](const SketchEntity& e) { return e.id == relation.first.entityId; });
-            if (entity == sketch.entities.end() || entity->kind != EntityKind::Line) fail("Horizontal and vertical relations apply to line entities only.");
+            const auto& a=referencedEntity(sketch,relation.first);const auto& b=referencedEntity(sketch,relation.second);
+            if(!(a.kind==EntityKind::Point && b.kind==EntityKind::Point) && (a.id!=b.id || a.kind!=EntityKind::Line))fail("Horizontal/vertical requires a line or points.");
         } else if(relation.kind==RelationKind::FixedPoint) {
             if(first.x!=relation.fixedPosition.x || first.y!=relation.fixedPosition.y)fail("A fixed sketch point moved from its anchor.");continue;
         } else if(relation.kind==RelationKind::Parallel || relation.kind==RelationKind::Perpendicular) {
@@ -982,9 +986,9 @@ void validateSketchRelations(const Sketch& sketch)
         if (b < a) std::swap(a, b);
         if (!signatures.emplace(static_cast<int>(relation.kind), a, b).second) fail("Duplicate sketch relation.");
         groups.join(relation);
-        if ((relation.kind == RelationKind::Coincident || relation.kind == RelationKind::Vertical) && first.x != second.x)
+        if ((relation.kind == RelationKind::Coincident || relation.kind==RelationKind::Concentric || relation.kind == RelationKind::Vertical) && first.x != second.x)
             fail("Sketch relation is not satisfied: connected X coordinates must be identical.");
-        if ((relation.kind == RelationKind::Coincident || relation.kind == RelationKind::Horizontal) && first.y != second.y)
+        if ((relation.kind == RelationKind::Coincident || relation.kind==RelationKind::Concentric || relation.kind == RelationKind::Horizontal) && first.y != second.y)
             fail("Sketch relation is not satisfied: connected Y coordinates must be identical.");
     }
     for(const auto& d:sketch.dimensions)if(d.driving) {
@@ -1057,7 +1061,7 @@ Sketch editSketchEntity(const Sketch& sketch, const SketchEntity& replacement)
 std::vector<SketchPointRef> coincidentSketchPoints(const Sketch& sketch,const SketchPointRef& reference)
 {
     EqualityGroups groups(sketch);
-    for(const auto& relation:sketch.relations) if(relation.kind==RelationKind::Coincident) groups.join(relation);
+    for(const auto& relation:sketch.relations) if(relation.kind==RelationKind::Coincident || relation.kind==RelationKind::Concentric) groups.join(relation);
     const auto root=EqualityGroups::root(groups.x,groups.index(reference));
     std::vector<SketchPointRef> result;
     for(std::size_t i=0;i<groups.points.size();++i)
@@ -1069,7 +1073,7 @@ bool areSketchPointsCoincident(const Sketch& sketch, const SketchPointRef& first
 {
     EqualityGroups groups(sketch);
     for(const auto& relation:sketch.relations)
-        if(relation.kind==RelationKind::Coincident) groups.join(relation);
+        if(relation.kind==RelationKind::Coincident || relation.kind==RelationKind::Concentric) groups.join(relation);
     return EqualityGroups::root(groups.x,groups.index(first)) == EqualityGroups::root(groups.x,groups.index(second));
 }
 

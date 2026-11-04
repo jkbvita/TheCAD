@@ -161,6 +161,11 @@ QJsonObject writeRelation(const modeling::SketchRelation& relation)
 {
     const char* type = nullptr;
     switch (relation.kind) {
+    case modeling::RelationKind::Collinear:type="collinear";break;
+    case modeling::RelationKind::Equal:type="equal";break;
+    case modeling::RelationKind::Concentric:type="concentric";break;
+    case modeling::RelationKind::EqualCurveLength:type="equal-curve-length";break;
+    case modeling::RelationKind::FixedEntity:type="fixed-entity";break;
     case modeling::RelationKind::Coincident: type = "coincident"; break;
     case modeling::RelationKind::Horizontal: type = "horizontal"; break;
     case modeling::RelationKind::Vertical: type = "vertical"; break;
@@ -174,6 +179,7 @@ QJsonObject writeRelation(const modeling::SketchRelation& relation)
     }
     QJsonObject result{{"id", q(relation.id)}, {"type", type}, {"first", writePointRef(relation.first)}, {"second", writePointRef(relation.second)}};
     if(relation.kind==modeling::RelationKind::FixedPoint)result["position"]=point(relation.fixedPosition);
+    if(relation.kind==modeling::RelationKind::FixedEntity){result["position"]=point(relation.fixedPosition);result["secondPosition"]=point(relation.fixedSecond);result["radius"]=relation.fixedRadius;}
     return result;
 }
 modeling::SketchRelation readRelation(const QJsonValue& value, int version)
@@ -182,6 +188,7 @@ modeling::SketchRelation readRelation(const QJsonValue& value, int version)
     const auto object = value.toObject();
     QSet<QString> expected{"id", "type", "first", "second"};
     if(version>=5 && object.value("type")=="fixed")expected.insert("position");
+    if(version>=9 && object.value("type")=="fixed-entity"){expected.insert("position");expected.insert("secondPosition");expected.insert("radius");}
     fields(object, expected, "Sketch relation");
     modeling::SketchRelation relation;
     relation.id = stringValue(object.value("id"), "Relation ID").toStdString();
@@ -196,9 +203,15 @@ modeling::SketchRelation readRelation(const QJsonValue& value, int version)
     else if(version>=5 && type=="tangent")relation.kind=modeling::RelationKind::Tangent;
     else if(version>=8 && type=="point-on-line")relation.kind=modeling::RelationKind::PointOnLine;
     else if(version>=8 && type=="point-on-circle")relation.kind=modeling::RelationKind::PointOnCircle;
+    else if(version>=9 && type=="collinear")relation.kind=modeling::RelationKind::Collinear;
+    else if(version>=9 && type=="equal")relation.kind=modeling::RelationKind::Equal;
+    else if(version>=9 && type=="concentric")relation.kind=modeling::RelationKind::Concentric;
+    else if(version>=9 && type=="equal-curve-length")relation.kind=modeling::RelationKind::EqualCurveLength;
+    else if(version>=9 && type=="fixed-entity"){relation.kind=modeling::RelationKind::FixedEntity;relation.fixedPosition=readPoint(object.value("position"));relation.fixedSecond=readPoint(object.value("secondPosition"));relation.fixedRadius=number(object.value("radius"),"Fixed radius");}
     else fail("Unsupported sketch relation type.");
     relation.first = readPointRef(object.value("first"));
     relation.second = readPointRef(object.value("second"));
+    if(version<9 && (relation.kind==modeling::RelationKind::Horizontal || relation.kind==modeling::RelationKind::Vertical) && relation.first.entityId!=relation.second.entityId)fail("Multi-point alignment requires schema 9.");
     return relation;
 }
 const char* dimensionName(modeling::DimensionKind kind) {
@@ -511,7 +524,7 @@ PartDocument PartDocument::load(const QString& path)
     if (root.value("format") != QJsonValue("TheCAD.Part")) fail("Unsupported document format; expected TheCAD.Part.");
     if (root.value("units") != QJsonValue("mm")) fail("Unsupported units; this prototype supports millimeters only.");
     const auto versionValue = root.value("version");
-    if (!versionValue.isDouble() || (versionValue.toDouble() != 1 && versionValue.toDouble() != 2 && versionValue.toDouble() != 3 && versionValue.toDouble() != 4 && versionValue.toDouble() != 5 && versionValue.toDouble() != 6 && versionValue.toDouble() != 7 && versionValue.toDouble() != 8)) fail("Unsupported part document version; expected versions 1 through 8.");
+    if (!versionValue.isDouble() || (versionValue.toDouble() != 1 && versionValue.toDouble() != 2 && versionValue.toDouble() != 3 && versionValue.toDouble() != 4 && versionValue.toDouble() != 5 && versionValue.toDouble() != 6 && versionValue.toDouble() != 7 && versionValue.toDouble() != 8 && versionValue.toDouble() != 9)) fail("Unsupported part document version; expected versions 1 through 9.");
     const int version = versionValue.toInt();
     if (!root.value("features").isArray()) fail("Part features must be an ordered array.");
     const auto array = root.value("features").toArray();
@@ -658,7 +671,7 @@ void PartDocument::save(const QString& path) const
         if (feature.kind != FeatureKind::Sketch) resultId = feature.id;
         features.append(object);
     }
-    const QJsonObject root{{"format", "TheCAD.Part"}, {"version", 8}, {"units", "mm"}, {"features", features}, {"resultFeature", q(resultId)}};
+    const QJsonObject root{{"format", "TheCAD.Part"}, {"version", 9}, {"units", "mm"}, {"features", features}, {"resultFeature", q(resultId)}};
     const auto bytes = QJsonDocument(root).toJson(QJsonDocument::Indented);
     if (bytes.size() > maximumDocumentBytes) fail("Part document exceeds the 1 MiB prototype size limit.");
     QSaveFile file(path);

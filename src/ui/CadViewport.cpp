@@ -1,3 +1,5 @@
+#include <QToolTip>
+#include "modeling/RelationCommands.h"
 #include "modeling/SketchTools.h"
 #include "modeling/DimensionAnnotation.h"
 #include <QFontMetricsF>
@@ -197,7 +199,7 @@ void CadViewport::releaseViewer()
     m_sketchOrigin.Nullify();
     for(auto& axis:m_globalAxes) axis.Nullify();
     m_pointPresentations.clear();
-    m_constraintLabels.clear();m_dimensionGuides.clear();
+    m_constraintLabels.clear();m_dimensionGuides.clear();m_relationMarkers.clear();m_relationHits.clear();
     m_interactionLabel.Nullify();
     m_inferenceGuides.clear();
     m_selectedEntityPresentation.Nullify();
@@ -506,12 +508,14 @@ void CadViewport::beginSketch(const modeling::Sketch& sketch)
     clearPreview();
     m_regionSelecting = false;
     m_sketchEditing = true;
+    m_shiftSelectionChanged=false;
     m_sketchTool.reset();m_constructionTool=false;m_drawingPreview.reset();
     m_firstPoint.reset();
     m_firstReference.reset();
     m_hoveredPoint.reset();
     m_hoveredEntity.clear();m_hoveredDimension.clear();
     m_selectedPoint.reset();
+    m_selectedRelation.clear();m_hoveredRelation.clear();
     m_selectedEntity.clear();m_selectedEntities.clear();m_selectedDimensions.clear();m_deleteSequence.invalidate();
     setSketch(sketch);
     orientSketch();
@@ -530,6 +534,7 @@ void CadViewport::endSketch()
     m_hoveredPoint.reset();
     m_hoveredEntity.clear();m_hoveredDimension.clear();
     m_selectedPoint.reset();
+    m_selectedRelation.clear();m_hoveredRelation.clear();
     m_selectedEntity.clear();m_selectedEntities.clear();m_selectedDimensions.clear();m_deleteSequence.invalidate();
     m_sketch.reset();
     updateSketchPresentation();
@@ -616,6 +621,13 @@ std::optional<std::string> CadViewport::dimensionAt(const QPointF& position) con
     return result;
 }
 void CadViewport::updateSketchHover(const QPointF& position) {
+    const auto symbol=relationAt(position);const auto previous=m_hoveredRelation;m_hoveredRelation=symbol.value_or("");
+    if(symbol){
+        m_hoveredPoint.reset();m_hoveredEntity.clear();m_hoveredDimension.clear();
+        if(previous!=m_hoveredRelation){const auto r=std::find_if(m_sketch->relations.begin(),m_sketch->relations.end(),[&](const auto& r){return r.id==*symbol;});if(r!=m_sketch->relations.end())QToolTip::showText(mapToGlobal(position.toPoint()),modeling::relationName(r->kind),this);}
+        updatePointPresentation();updateRelationSymbols();update();return;
+    }
+    if(!previous.empty())QToolTip::hideText();
     const auto hit=m_sketchTool?pointAt(position):selectionPointAt(position);
     m_hoveredPoint=hit?std::optional<modeling::SketchPointRef>(hit->reference):std::nullopt;
     m_hoveredDimension=(!hit && !m_sketchTool)?dimensionAt(position).value_or(""):"";
@@ -659,6 +671,7 @@ void CadViewport::updateConstraintPresentation() {
     if(!isReady())return;
     for(auto& label:m_constraintLabels)m_context->Remove(label,Standard_False);m_constraintLabels.clear();
     for(auto& guide:m_dimensionGuides)m_context->Remove(guide,Standard_False);m_dimensionGuides.clear();
+    updateRelationSymbols();
     if(!m_sketch)return;
     const double unit=m_view->Camera()->Scale()/std::max(1,height());
     const auto label=[&](modeling::Point2 position,const QString& text,const Quantity_Color& color,double size) {
@@ -683,19 +696,13 @@ void CadViewport::updateConstraintPresentation() {
         label(graphics.text,dimensionText(d),color,14);
         for(const auto& segment:graphics.segments)guide(segment.first,segment.second,color);
     }
-    if(m_sketchEditing)for(const auto& r:m_sketch->relations) {
-        auto a=modeling::sketchPointValue(*m_sketch,r.first);const auto b=modeling::sketchPointValue(*m_sketch,r.second);
-        if(r.kind==modeling::RelationKind::Horizontal || r.kind==modeling::RelationKind::Vertical)a={(a.x+b.x)/2,(a.y+b.y)/2};
-        const QStringList names{"C","H","V","F","∥","⊥","T","On","On"};
-        const bool selected=r.first.entityId==m_selectedEntity || r.second.entityId==m_selectedEntity;
-        const bool error=std::find(m_constraintErrors.begin(),m_constraintErrors.end(),r.id)!=m_constraintErrors.end();
-        label({a.x+8*unit,a.y+8*unit},names.at(int(r.kind)),Quantity_Color(error?Quantity_NOC_RED:selected?Quantity_NOC_GREEN4:Quantity_NOC_GRAY40),10);
-    }
+
 }
 
 void CadViewport::setSketchTool(modeling::EntityKind kind,bool construction)
 {
     cancelDimensionDrag();cancelPointDrag(); resetSketchInference();
+    m_selectedRelation.clear();
     m_sketchTool = kind;m_constructionTool=construction;m_drawingPreview.reset();
     m_smartDimensionPicking=false;m_constraintPicking=false;
     m_firstPoint.reset();
@@ -740,12 +747,14 @@ void CadViewport::selectSketchTool()
 
 void CadViewport::selectSketchEntity(const QString& id)
 {
+    m_selectedRelation.clear();
     m_selectedEntity=id.toStdString();m_selectedEntities.clear();m_selectedDimensions.clear();m_selectedPoint.reset();
     if(!m_selectedEntity.empty())m_selectedEntities.push_back(m_selectedEntity);
     m_deleteSequence.invalidate();updatePointPresentation();updateConstraintPresentation();emit sketchSelectionChanged();
 }
 void CadViewport::selectDimension(const std::string& id,bool toggle)
 {
+    m_selectedRelation.clear();
     if(!toggle){m_selectedEntities.clear();m_selectedDimensions.clear();}
     const auto found=std::find(m_selectedDimensions.begin(),m_selectedDimensions.end(),id);
     if(toggle && found!=m_selectedDimensions.end())m_selectedDimensions.erase(found);else m_selectedDimensions.push_back(id);
@@ -759,6 +768,7 @@ void CadViewport::setSketch(const modeling::Sketch& sketch)
     cancelDimensionDrag();cancelPointDrag();
     m_sketch = sketch;
     modeling::attachDimensionAnnotations(*m_sketch);
+    if(std::none_of(sketch.relations.begin(),sketch.relations.end(),[&](const auto& r){return r.id==m_selectedRelation;}))m_selectedRelation.clear();
     // Numeric edits may move or remove the point where a continuous line resumes.
     if(m_firstReference) {
         try { m_firstPoint = modeling::sketchPointValue(sketch,*m_firstReference); }
@@ -1252,6 +1262,24 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
     if (!isReady() || m_navigation != Navigation::None) {
         return;
     }
+    if(event->button()==Qt::LeftButton && m_sketchEditing && !event->modifiers().testFlag(Qt::ShiftModifier)){
+        if(const auto id=relationAt(event->position())){setFocus(Qt::MouseFocusReason);selectSketchRelation(*id);event->accept();return;}
+        m_selectedRelation.clear();
+    }
+    if(event->button()==Qt::LeftButton && m_sketchEditing && event->modifiers().testFlag(Qt::ShiftModifier)){
+        if(m_constraintPicking)emit constraintPickingCanceled();
+        if(m_sketchTool)selectSketchTool();
+        setFocus(Qt::MouseFocusReason);m_shiftSelectionChanged=true;m_selectionCursor=event->position().toPoint();
+        const auto point=selectionPointAt(event->position());const auto body=point?std::optional<std::string>(point->reference.entityId):entityAt(event->position());
+        m_selectedDimensions.clear();m_selectedPoint.reset();
+        if(body && !body->empty()){
+            const auto found=std::find(m_selectedEntities.begin(),m_selectedEntities.end(),*body);
+            if(found==m_selectedEntities.end())m_selectedEntities.push_back(*body);else m_selectedEntities.erase(found);
+        }
+        m_selectedEntity=m_selectedEntities.empty()?"":m_selectedEntities.back();
+        emit sketchEntitySelected(QString::fromStdString(m_selectedEntity));emit sketchSelectionChanged();
+        updatePointPresentation();updateConstraintPresentation();event->accept();return;
+    }
     if (event->button() == Qt::LeftButton && m_regionSelecting) {
         m_regionClickCandidate=true;
         m_regionPressPosition=event->position();
@@ -1347,6 +1375,7 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
 
 void CadViewport::mouseMoveEvent(QMouseEvent* event)
 {
+    if(m_shiftSelectionChanged)m_selectionCursor=event->position().toPoint();
     if(m_dimensionDrag){updateDimensionDrag(event->position());event->accept();return;}
     if(m_smartDimensionPicking && m_navigation==Navigation::None){
         updateSketchHover(event->position());
@@ -1393,7 +1422,7 @@ void CadViewport::mouseMoveEvent(QMouseEvent* event)
         m_view->Pan(delta.x(), -delta.y());
     }
     m_previousPosition = position;
-    update();
+    updateRelationSymbols();update();
     event->accept();
 }
 
@@ -1436,7 +1465,7 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* event)
 bool CadViewport::event(QEvent* event)
 {
     if(event->type()==QEvent::FocusOut)m_deleteSequence.invalidate();
-    if(event->type()==QEvent::Leave){m_deleteSequence.invalidate();m_hoveredEntity.clear();m_hoveredDimension.clear();updatePointPresentation();updateConstraintPresentation();}
+    if(event->type()==QEvent::Leave){m_hoveredRelation.clear();m_deleteSequence.invalidate();m_hoveredEntity.clear();m_hoveredDimension.clear();updatePointPresentation();updateConstraintPresentation();}
     if(event->type()==QEvent::Leave && !m_pointDrag) resetSketchInference();
     if (event->type() == QEvent::Leave && m_hoveredPoint) { m_hoveredPoint.reset(); updatePointPresentation(); }
     if (event->type() == QEvent::Leave && m_hoveredPlane) {
@@ -1474,6 +1503,7 @@ void CadViewport::wheelEvent(QWheelEvent* event)
 
 void CadViewport::keyPressEvent(QKeyEvent* event)
 {
+    if(event->key()==Qt::Key_Delete && !m_selectedRelation.empty()){emit sketchRelationDeleteRequested(QString::fromStdString(m_selectedRelation));event->accept();return;}
     const bool selected=!m_selectedEntities.empty() || !m_selectedDimensions.empty();
     const bool deletionMode=m_sketchEditing && !m_sketchTool && !m_pointDrag && !m_dimensionDrag
         && (!m_constraintPicking || m_smartDimensionPicking) && !m_dimensionPreview;
@@ -1503,6 +1533,16 @@ void CadViewport::keyPressEvent(QKeyEvent* event)
     } else {
         QWidget::keyPressEvent(event);
     }
+}
+
+void CadViewport::keyReleaseEvent(QKeyEvent* event)
+{
+    if(event->key()==Qt::Key_Shift && !event->isAutoRepeat() && m_shiftSelectionChanged){
+        m_shiftSelectionChanged=false;
+        if(m_sketchEditing && !m_selectedEntities.empty())emit relationsContextRequested(m_selectionCursor);
+        event->accept();return;
+    }
+    QWidget::keyReleaseEvent(event);
 }
 
 void CadViewport::fitAll()

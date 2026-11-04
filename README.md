@@ -104,6 +104,21 @@ viewport or left PropertyManager. Depth/reverse/Through All changes update the
 preview live. Confirm adds the feature; Cancel returns to sketch editing with
 completed geometry intact. Tab switching alone does not finish a sketch.
 
+## Sketch relations
+
+Hold **Shift** and click sketch entities to toggle a multiple selection. Release
+Shift for the floating toolbar of applicable relations. Shift selection switches
+the active drawing/dimension command to Select. The toolbar stays until you choose
+a command, clear selection, press Esc or move sufficiently far away; it has no timer.
+Use its **For Construction / Normal Geometry** command to convert selected entities.
+The dedicated Centerline tool remains on the Sketch ribbon.
+
+Green relation symbols support hover tooltips, selection and Delete without
+removing geometry. **View > Hide/Show > Sketch Relations** controls their visibility.
+**Display/Delete Relations** lists constraints associated with selected geometry
+and supports deleting or changing a compatible relation. See the
+[relation checks and supported types](docs/verification/sketch-relations-system.md).
+
 ## Smart Dimension
 
 Activate Smart Dimension and select one line/circle, two points or two lines.
@@ -119,7 +134,7 @@ Dimensions follow current geometry throughout endpoint dragging and numeric edit
 In Select mode or idle Smart Dimension, drag text or dimension lines to reposition
 the annotation without changing its value. Circle dimensions use diametric/radial
 lines and circumference arrows; dragging rotates their placement. Placements survive
-save/reopen in `.thepart` schema 8; earlier supported files remain readable.
+save/reopen in `.thepart` schema 9; earlier supported files remain readable.
 Smart Dimension and drawing buttons stay visibly pressed while active; Esc exits.
 Geometry highlights on hover. Picking defaults to 8 logical pixels, adjustable for
 the session under **Tools > Sketch Picking Tolerance**.

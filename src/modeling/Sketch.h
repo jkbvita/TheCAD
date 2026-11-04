@@ -27,13 +27,15 @@ struct SketchPointRef {
     std::string entityId;
     PointRole role = PointRole::Origin;
 };
-enum class RelationKind { Coincident, Horizontal, Vertical, FixedPoint, Parallel, Perpendicular, Tangent, PointOnLine, PointOnCircle };
+enum class RelationKind { Coincident, Horizontal, Vertical, FixedPoint, Parallel, Perpendicular, Tangent, PointOnLine, PointOnCircle, Collinear, Equal, Concentric, EqualCurveLength, FixedEntity };
 struct SketchRelation {
     std::string id;
     RelationKind kind = RelationKind::Coincident;
     SketchPointRef first;
     SketchPointRef second;
     Point2 fixedPosition; // Used only by FixedPoint; independent of solver storage.
+    Point2 fixedSecond; // FixedEntity captures line endpoints or circle center/radius.
+    double fixedRadius=1;
 };
 enum class SketchSpace { Planar2D, Spatial3D }; // Spatial3D is reserved, not implemented.
 enum class DimensionKind { LineLength, HorizontalDistance, VerticalDistance, CircleRadius, CircleDiameter, PointDistance, LineDistance, LineAngle };

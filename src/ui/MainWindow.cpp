@@ -348,7 +348,7 @@ MainWindow::MainWindow(QWidget* parent)
     m_polygon=action("Polygon","actionPolygon",[this]{closeSmartDimension();m_viewport->setSketchTool(modeling::EntityKind::Polygon);});
     m_construction=action("For Construction","actionConstructionLine",[this]{toggleConstruction();});m_construction->setCheckable(true);
     m_editPolygon=action("Edit Polygon...","actionEditPolygon",[this]{editPolygon();});
-    commandButton(m_centerline,drawGrid,0,2);commandButton(m_construction,drawGrid,1,2);
+    commandButton(m_centerline,drawGrid,0,2);
     commandButton(m_point,drawGrid,2,2);commandButton(m_polygon,drawGrid,0,3);commandButton(m_editPolygon,drawGrid,1,3);
     m_polygonSides=new QSpinBox;m_polygonSides->setObjectName("polygonSides");m_polygonSides->setRange(3,999);m_polygonSides->setValue(6);m_polygonSides->setPrefix("Sides: ");m_polygonSides->setToolTip("Polygon side count");m_polygonSides->setMaximumWidth(105);drawGrid->addWidget(m_polygonSides,2,3);
     connect(m_polygonSides,&QSpinBox::valueChanged,m_viewport,&CadViewport::setPolygonSides);
@@ -386,6 +386,8 @@ MainWindow::MainWindow(QWidget* parent)
     connect(reset, &QAction::triggered, m_viewport, &CadViewport::resetView);
     viewMenu->addAction(fit);
     viewMenu->addAction(reset);
+    auto* hideShow=viewMenu->addMenu("Hide/Show");auto* relationVisibility=hideShow->addAction("Sketch Relations");relationVisibility->setObjectName("actionShowSketchRelations");relationVisibility->setCheckable(true);relationVisibility->setChecked(true);
+    connect(relationVisibility,&QAction::toggled,m_viewport,&CadViewport::showSketchRelations);
     insertMenu->addAction(m_createSketch);
     insertMenu->addAction(m_extrude);
     insertMenu->addAction(m_cut);
@@ -529,9 +531,12 @@ MainWindow::MainWindow(QWidget* parent)
             .arg(role == int(modeling::PointRole::Second) ? "Endpoint" : role == int(modeling::PointRole::Center) ? "Center" : "Start point", id);
         statusBar()->showMessage(pointName + " selected. Snapping uses exact sketch coordinates.");
     });
-    connect(m_viewport,&CadViewport::sketchSelectionChanged,this,[this]{updateActions();});
+    connect(m_viewport,&CadViewport::sketchSelectionChanged,this,[this]{hideRelationsContext();updateActions();if(m_constraints && m_viewport->selectedSketchRelation().empty())updateConstraintDraft();});
+    connect(m_viewport,&CadViewport::relationsContextRequested,this,&MainWindow::showRelationsContext);
+    qApp->installEventFilter(this);
+    connect(m_viewport,&CadViewport::sketchRelationDeleteRequested,this,[this](const QString& id){deleteRelation(id.toStdString());});
     connect(m_viewport,&CadViewport::sketchDeleteRequested,this,[this]{deleteSketchEntity();});
-    connect(m_viewport,&CadViewport::sketchToolChanged,this,&MainWindow::updateSketchToolActions);
+    connect(m_viewport,&CadViewport::sketchToolChanged,this,[this]{hideRelationsContext();updateSketchToolActions();});
     connect(m_viewport,&CadViewport::constraintPickingCanceled,this,[this]{closeConstraints();closeSmartDimension();});
     connect(m_viewport,&CadViewport::dimensionPlacementRequested,this,[this](modeling::Point2 point){placeSmartDimension(point);});
     connect(m_viewport,&CadViewport::dimensionReferencePicked,this,[this](const QString& id,int role){smartReferencePicked(id,role);});
@@ -584,6 +589,7 @@ MainWindow::MainWindow(QWidget* parent)
 
 MainWindow::~MainWindow()
 {
+    qApp->removeEventFilter(this);
     closeSmartDimension();
     if (m_operation) {
         auto* panel = m_operation->panel;
@@ -1131,6 +1137,7 @@ void MainWindow::editSketchEntity()
 void MainWindow::deleteSketchEntity()
 {
     if(!m_editSketch || m_operation || m_constraints || (m_smartDimension && m_smartDimension->editor))return;
+    if(!m_viewport->selectedSketchRelation().empty()){deleteRelation(m_viewport->selectedSketchRelation());return;}
     auto entities=m_viewport->selectedSketchEntities();const auto dimensions=m_viewport->selectedSketchDimensions();
     if(entities.empty() && dimensions.empty() && m_entities->currentRow()>=0)
         entities.push_back(m_editSketch->entities.at(std::size_t(m_entities->currentRow())).id);

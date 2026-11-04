@@ -6,12 +6,12 @@ inputs: conversion saves to a separate .thepart path, retaining the original fil
 No assembly/drawing reader or placeholder is implemented. Internal serialization
 is provisional and versioned; filename conventions are permanent.
 
-## Version 8 part structure
+## Version 9 part structure
 
-The UTF-8 JSON root contains exactly format: "TheCAD.Part", version: 8, units:
+The UTF-8 JSON root contains exactly format: "TheCAD.Part", version: 9, units:
 "mm", features (ordered array) and resultFeature (last solid feature ID, or empty
-for empty/sketch-only documents). Writers always emit version 8. Readers accept
-versions 1–8 and reject unknown versions, fields, units and unsupported features.
+for empty/sketch-only documents). Writers always emit version 9. Readers accept
+versions 1–9 and reject unknown versions, fields, units and unsupported features.
 
 Every feature has stable id, printable name, type and explicit dependencies.
 Types and additional fields:
@@ -60,9 +60,21 @@ Relations contain id/type/first/second. Types: coincident, horizontal, vertical,
 fixed, parallel, perpendicular, tangent, point-on-line, point-on-circle. The last
 two require version 8 and constrain the first point to the second entity. Fixed adds position: [x,y], an exact
 anchor for first; second is the origin placeholder. Horizontal/vertical relations
-reference one line's endpoints. Parallel/perpendicular reference the first point
+reference one line's endpoints; schema 9 also permits two standalone sketch points. Parallel/perpendicular reference the first point
 of two distinct lines. Tangent supports a line and circle, or external circles;
 the previous geometry supplies the side for a line/circle solve.
+
+Schema 9 adds collinear, equal, concentric, equal-curve-length and fixed-entity.
+Collinear references two lines without merging endpoints. Equal references two
+lines (length) or circles (radius). Concentric references circle centers or a
+standalone point and circle center. Equal Curve Length uses geometric length:
+line length or full circle circumference. Line/line commands use First references;
+circles use Center and standalone points use First.
+
+A fixed-entity stores position, secondPosition and radius, with second the origin
+placeholder. Only fields relevant to the entity drive it: both endpoints for a
+line, center/radius for a circle, position for a point. These snapshots are validated
+and included in undo history. The legacy fixed type remains a single-point anchor.
 
 Dimensions contain exactly id, type, first, second, value, driving, annotation
 and sense; version 7 onward adds relative placement (coordinates or null for
@@ -135,10 +147,11 @@ permanent topology naming. See decision 0008.
 Version 1 is exactly one legacy box with no feature name. Version 2 adds named
 parametric history/entities but no relations. Version 3 adds Coincident/H/V;
 version 4 adds face attachments. These are read without inventing constraints or
-features. Saving intentionally writes version 8 .thepart to the selected path.
+features. Saving intentionally writes version 9 .thepart to the selected path.
 Version 5 adds dimensions and multiple region selections. Version 7 adds relative
 annotation placement; version 8 adds points, construction flags, on-geometry
-relations and regular polygon groups. Older applications
+relations and regular polygon groups. Version 9 adds contextual relation types and
+full-entity Fix snapshots. Older applications
 reject newer unsupported versions safely; readers retain all supported older records.
 
 Only a fully successful candidate history replaces the document and precise OCCT

@@ -1,3 +1,6 @@
+#include "modeling/RelationCommands.h"
+#include <QFrame>
+#include <QInputDialog>
 #include "modeling/SketchTools.h"
 #include <QSpinBox>
 #include "modeling/DimensionAnnotation.h"
@@ -134,6 +137,69 @@ private:
         QVERIFY(window.errors.isEmpty());
     }
 private slots:
+    void shiftRelationsToolbarSymbolsAndDelete() {
+        using namespace modeling;WorkflowWindow window;window.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&window));auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
+        Sketch sketch;sketch.entities={{EntityKind::Line,{-40,-20},{-10,-5},1,"a"},{EntityKind::Line,{10,20},{40,30},1,"b"}};viewport->sketchChanged(sketch);
+        QTest::keyPress(viewport,Qt::Key_Shift);
+        const auto choose=[&](Point2 p){QTest::mouseClick(viewport,Qt::LeftButton,Qt::ShiftModifier,point(viewport,p));};
+        choose({-25,-12.5});choose({25,25});QCOMPARE(viewport->selectedSketchEntities().size(),std::size_t(2));QVERIFY(!viewport->m_pointDrag);QVERIFY(!viewport->m_firstPoint);QVERIFY(!viewport->m_sketchTool);
+        choose({-25,-12.5});QCOMPARE(viewport->selectedSketchEntities().size(),std::size_t(1));choose({-25,-12.5});QTest::keyRelease(viewport,Qt::Key_Shift);
+        auto* toolbar=window.findChild<QFrame*>("sketchRelationsContext");QVERIFY(toolbar && toolbar->isVisible());
+        QVERIFY(QRect(viewport->mapToGlobal(QPoint(0,0)),viewport->size()).contains(toolbar->frameGeometry()));
+        QTest::keyClick(viewport,Qt::Key_Escape);QVERIFY(!toolbar->isVisible());
+        viewport->relationsContextRequested(viewport->rect().bottomRight());toolbar=window.findChild<QFrame*>("sketchRelationsContext");QVERIFY(toolbar->isVisible());QVERIFY(QRect(viewport->mapToGlobal(QPoint(0,0)),viewport->size()).contains(toolbar->frameGeometry()));
+        QMouseEvent away(QEvent::MouseMove,QPoint(1,1),viewport->mapToGlobal(QPoint(1,1)),Qt::NoButton,Qt::NoButton,Qt::NoModifier);QApplication::sendEvent(viewport,&away);QVERIFY(!toolbar->isVisible());
+        viewport->relationsContextRequested(point(viewport,{-25,-12.5}));toolbar=window.findChild<QFrame*>("sketchRelationsContext");QVERIFY(toolbar->isVisible());
+        auto* parallel=toolbar->findChild<QToolButton*>(QString("contextRelation%1").arg(int(RelationKind::Parallel)));QVERIFY(parallel);
+        QTest::mouseMove(parallel,parallel->rect().center());QVERIFY(toolbar->isVisible());QCOMPARE(viewport->selectedSketchEntities().size(),std::size_t(2));
+        QTest::mouseClick(parallel,Qt::LeftButton);QVERIFY(!toolbar->isVisible());QCOMPARE(viewport->m_sketch->relations.size(),std::size_t(1));QCOMPARE(viewport->m_sketch->relations[0].kind,RelationKind::Parallel);const auto id=viewport->m_sketch->relations[0].id;
+        QTRY_COMPARE(viewport->m_relationHits.size(),std::size_t(1));QCOMPARE(viewport->m_relationHits[0].bounds.size(),QSizeF(18,18));const auto icon=viewport->m_relationHits[0].bounds.center().toPoint();
+        QMouseEvent hover(QEvent::MouseMove,icon,viewport->mapToGlobal(icon),Qt::NoButton,Qt::NoButton,Qt::NoModifier);QApplication::sendEvent(viewport,&hover);QCOMPARE(viewport->m_hoveredRelation,id);
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,icon);QCOMPARE(viewport->selectedSketchRelation(),id);QCOMPARE(viewport->selectedSketchEntities().size(),std::size_t(2));
+        QTest::keyClick(viewport,Qt::Key_Delete);QVERIFY(viewport->m_sketch->relations.empty());QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(2));
+        QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);QCOMPARE(viewport->m_sketch->relations[0].id,id);QCOMPARE(viewport->m_relationHits.size(),std::size_t(1));
+        const auto old=viewport->m_relationHits[0].bounds.center();auto moved=moveSketchPoint(*viewport->m_sketch,{"a",PointRole::Second},{-5,10});viewport->sketchChanged(moved);QVERIFY(QLineF(old,viewport->m_relationHits[0].bounds.center()).length()>1);
+        viewport->m_view->SetZoom(1.5);viewport->updateConstraintPresentation();QCOMPARE(viewport->m_relationHits[0].bounds.size(),QSizeF(18,18));
+        auto* visible=window.findChild<QAction*>("actionShowSketchRelations");visible->setChecked(false);QVERIFY(viewport->m_relationHits.empty());
+        command(window,"actionDisplayDeleteRelations");auto* list=window.findChild<QListWidget*>("sketchConstraints");QVERIFY(list && list->count()>0);
+        QTest::mouseClick(list->viewport(),Qt::LeftButton,Qt::NoModifier,list->visualItemRect(list->item(0)).center());QCOMPARE(viewport->selectedSketchRelation(),id);
+        QTest::mouseClick(window.findChild<QPushButton*>("cancelDimension"),Qt::LeftButton);QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);visible->setChecked(true);QVERIFY(!viewport->m_relationHits.empty());
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{-60,55}));QVERIFY(viewport->selectedSketchEntities().empty());
+        QVERIFY(window.errors.isEmpty());command(window,"actionFinishSketch");window.close();
+    }
+    void circleContextConstructionAndInspectorChange() {
+        using namespace modeling;WorkflowWindow window;window.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&window));auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
+        Sketch sketch;sketch.entities={{EntityKind::Circle,{-25,-15},{},6,"a"},{EntityKind::Circle,{25,20},{},9,"b"}};viewport->sketchChanged(sketch);
+        QTest::keyPress(viewport,Qt::Key_Shift);QTest::mouseClick(viewport,Qt::LeftButton,Qt::ShiftModifier,point(viewport,{-19,-15}));QTest::mouseClick(viewport,Qt::LeftButton,Qt::ShiftModifier,point(viewport,{34,20}));QTest::keyRelease(viewport,Qt::Key_Shift);
+        auto* toolbar=window.findChild<QFrame*>("sketchRelationsContext");QVERIFY(toolbar && toolbar->isVisible());
+        QVERIFY(!toolbar->findChild<QToolButton*>(QString("contextRelation%1").arg(int(RelationKind::Parallel))));
+        auto* concentric=toolbar->findChild<QToolButton*>(QString("contextRelation%1").arg(int(RelationKind::Concentric)));QVERIFY(concentric);QTest::mouseClick(concentric,Qt::LeftButton);
+        QCOMPARE(viewport->m_sketch->relations.size(),std::size_t(1));QCOMPARE(viewport->m_sketch->relations[0].kind,RelationKind::Concentric);QCOMPARE(viewport->m_sketch->entities[0].radius,6.0);QCOMPARE(viewport->m_sketch->entities[1].radius,9.0);
+        viewport->relationsContextRequested(viewport->rect().center());toolbar=window.findChild<QFrame*>("sketchRelationsContext");auto* construction=toolbar->findChild<QToolButton*>("contextConstruction");QVERIFY(construction);QTest::mouseClick(construction,Qt::LeftButton);
+        QVERIFY(viewport->m_sketch->entities[0].construction && viewport->m_sketch->entities[1].construction);QVERIFY(closedContours(*viewport->m_sketch).empty());
+        QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);QVERIFY(!viewport->m_sketch->entities[0].construction && !viewport->m_sketch->entities[1].construction);QTest::keyClick(viewport,Qt::Key_Y,Qt::ControlModifier);
+        viewport->relationsContextRequested(viewport->rect().center());toolbar=window.findChild<QFrame*>("sketchRelationsContext");construction=toolbar->findChild<QToolButton*>("contextConstruction");QCOMPARE(construction->toolTip(),QString("Normal Geometry"));QTest::mouseClick(construction,Qt::LeftButton);QVERIFY(!viewport->m_sketch->entities[0].construction);
+        for(auto* button:window.findChildren<QToolButton*>())QVERIFY(button->defaultAction()!=window.findChild<QAction*>("actionConstructionLine"));
+        QTemporaryDir directory;command(window,"actionFinishSketch");window.path=directory.filePath("context.thepart");command(window,"actionSaveAs");command(window,"actionNew");command(window,"actionOpen");QCOMPARE(window.document().features()[0].sketch.relations[0].kind,RelationKind::Concentric);QVERIFY(window.errors.isEmpty());window.close();
+    }
+    void contextualConflictAndRelationModification() {
+        using namespace modeling;WorkflowWindow window;window.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&window));auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
+        Sketch sketch;sketch.entities={{EntityKind::Line,{-40,-20},{-10,-20},1,"a"},{EntityKind::Line,{10,20},{40,20},1,"b"}};
+        sketch=addSelectionRelations(sketch,RelationKind::Parallel,{"a","b"},"parallel");viewport->sketchChanged(sketch);command(window,"actionSelectSketchEntity");QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{-25,-20}));
+        command(window,"actionDisplayDeleteRelations");auto* list=window.findChild<QListWidget*>("sketchConstraints");QVERIFY(list && list->count()==1);list->setCurrentRow(0);
+        QTimer::singleShot(0,&window,[&]{auto* dialog=window.findChild<QInputDialog*>();QVERIFY(dialog);dialog->findChild<QComboBox*>()->setCurrentText("Perpendicular");dialog->accept();});
+        QTest::mouseClick(window.findChild<QPushButton*>("changeRelation"),Qt::LeftButton);QCOMPARE(viewport->m_sketch->relations[0].id,std::string("parallel-1"));QVERIFY2(viewport->m_sketch->relations[0].kind==RelationKind::Perpendicular,qPrintable(window.findChild<QLabel*>("constraintError")->text()));
+        QTest::mouseClick(window.findChild<QPushButton*>("cancelDimension"),Qt::LeftButton);QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
+        viewport->setFocus();QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);QCOMPARE(viewport->m_sketch->relations[0].kind,RelationKind::Parallel);QTest::keyClick(viewport,Qt::Key_Y,Qt::ControlModifier);QCOMPARE(viewport->m_sketch->relations[0].kind,RelationKind::Perpendicular);
+        auto frozen=addSelectionRelations(*viewport->m_sketch,RelationKind::FixedEntity,{"a"},"fix-a");viewport->sketchChanged(frozen);const auto before=*viewport->m_sketch;
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{-65,55}));
+        QTest::keyPress(viewport,Qt::Key_Shift);QTest::mouseClick(viewport,Qt::LeftButton,Qt::ShiftModifier,point(viewport,{(before.entities[0].first.x+before.entities[0].second.x)/2,(before.entities[0].first.y+before.entities[0].second.y)/2}));QTest::keyRelease(viewport,Qt::Key_Shift);
+        auto* toolbar=window.findChild<QFrame*>("sketchRelationsContext");QVERIFY(toolbar && toolbar->isVisible());
+        auto* vertical=toolbar->findChild<QToolButton*>(QString("contextRelation%1").arg(int(RelationKind::Vertical)));QVERIFY(vertical);QTest::mouseClick(vertical,Qt::LeftButton);
+        QCOMPARE(viewport->m_sketch->relations.size(),before.relations.size());QCOMPARE(viewport->m_sketch->entities[0].first.x,before.entities[0].first.x);QCOMPARE(viewport->m_sketch->entities[0].second.y,before.entities[0].second.y);
+        QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);QCOMPARE(viewport->m_sketch->relations.size(),std::size_t(1));
+        QVERIFY(window.errors.isEmpty());command(window,"actionFinishSketch");window.close();
+    }
     void newSketchToolsConversionPolygonEditingAndHistory() {
         using namespace modeling;WorkflowWindow window;window.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&window));auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
         command(window,"actionCenterline");QVERIFY(window.findChild<QAction*>("actionCenterline")->isChecked());QVERIFY(!window.findChild<QAction*>("actionLine")->isChecked());
