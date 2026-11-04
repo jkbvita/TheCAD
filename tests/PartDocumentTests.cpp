@@ -185,7 +185,7 @@ int main(int argc, char* argv[])
         auto upgraded = PartDocument::load(path); closeVolume(upgraded, 50 * 30 * 12);
         require(upgraded.features()[0].sketch.relations.empty(), "Legacy coordinates must load without inventing constraints");
         upgraded.save(path);
-        require(QJsonDocument::fromJson(read(path)).object()["version"].toInt() == 6, "Legacy documents must save using the current schema");
+        require(QJsonDocument::fromJson(read(path)).object()["version"].toInt() == 7, "Legacy documents must save using the current schema");
         auto part = PartDocument::createEmpty();
         auto multiContourSketch = rectangle();
         auto otherRectangle = multiContourSketch.entities.front();
@@ -258,7 +258,7 @@ int main(int argc, char* argv[])
         rejected([&] { loaded.replaceFeature(badReference); });
 
         const auto goodRoot = QJsonDocument::fromJson(read(path)).object();
-        require(goodRoot.value("version").toInt() == 6, "New documents must use schema 6");
+        require(goodRoot.value("version").toInt() == 7, "New documents must use schema 7");
         const QString invalid = directory.filePath("invalid.thepart");
         const auto rejectRoot = [&](QJsonObject root) {
             write(invalid, QJsonDocument(root).toJson());

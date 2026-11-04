@@ -852,6 +852,7 @@ const SketchEntity& referencedEntity(const Sketch& sketch,const SketchPointRef& 
 }
 void validDimension(const Sketch& sketch,const SketchDimension& d) {
     finiteCoordinate(d.value);finiteCoordinate(d.annotation.x);finiteCoordinate(d.annotation.y);
+    if(d.placement){finiteCoordinate(d.placement->x);finiteCoordinate(d.placement->y);}
     if(d.sense!=1 && d.sense!=-1)fail("Dimension direction must be +1 or -1.");
     const auto a=sketchPointValue(sketch,d.first);(void)a;
     if(d.kind==DimensionKind::CircleRadius || d.kind==DimensionKind::CircleDiameter) {

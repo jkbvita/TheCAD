@@ -1,3 +1,4 @@
+#include "modeling/DimensionAnnotation.h"
 #include "ui/MainWindow.h"
 #include "ui/CadViewport.h"
 #include "modeling/ConstraintSolver.h"
@@ -76,7 +77,7 @@ void MainWindow::editSmartDimension(const std::string& id) {
     closeConstraints();closeSmartDimension();
     const auto found=std::find_if(m_editSketch->dimensions.begin(),m_editSketch->dimensions.end(),[&](const auto& d){return d.id==id;});if(found==m_editSketch->dimensions.end())return;
     m_smartDimension=std::make_unique<SmartDimensionDraft>();m_smartDimension->resume=resume;m_smartDimension->editingExisting=true;m_smartDimension->pending=*found;
-    m_viewport->setSmartDimensionPicking(true);findChild<QAction*>("actionSmartDimension")->setChecked(resume);openDimensionEditor(*found);
+    m_viewport->setSmartDimensionPicking(true);findChild<QAction*>("actionSmartDimension")->setChecked(true);openDimensionEditor(*found);
 }
 void MainWindow::openDimensionEditor(const modeling::SketchDimension& dimension) {
     if(!m_smartDimension || m_smartDimension->editor)return;
@@ -101,7 +102,7 @@ void MainWindow::openDimensionEditor(const modeling::SketchDimension& dimension)
             const bool resume=m_smartDimension->resume;m_smartDimension->editor=nullptr;editor->accept();editor->deleteLater();if(resume)resetSmartSelection();else closeSmartDimension();m_viewport->setFocus();
         } catch(const std::exception& failure){const auto message=QString::fromUtf8(failure.what());error->setText(message);value->setStyleSheet("color: #b00020");constraintError(message);value->setFocus();value->selectAll();editor->adjustSize();}
     });
-    editor->adjustSize();const auto anchor=m_viewport->mapToGlobal(m_viewport->dimensionScreenPoint(dimension.annotation));auto location=anchor+QPoint(10,10);
+    editor->adjustSize();const auto anchor=m_viewport->mapToGlobal(m_viewport->dimensionScreenPoint(modeling::dimensionAnnotationPosition(*m_editSketch,dimension)));auto location=anchor+QPoint(10,10);
     const auto* screen=QGuiApplication::screenAt(anchor);if(!screen)screen=this->screen();const auto bounds=screen->availableGeometry();
     location.setX(std::clamp(location.x(),bounds.left(),std::max(bounds.left(),bounds.right()-editor->width())));location.setY(std::clamp(location.y(),bounds.top(),std::max(bounds.top(),bounds.bottom()-editor->height())));
     editor->move(location);editor->show();editor->raise();editor->activateWindow();value->setFocus();value->selectAll();

@@ -1,3 +1,4 @@
+#include "modeling/DimensionAnnotation.h"
 #include "modeling/DimensionInference.h"
 #include <algorithm>
 #include <cmath>
@@ -47,6 +48,7 @@ SketchDimension inferDimension(const Sketch& sketch,const std::vector<SketchPoin
     } else throw std::runtime_error("Select one line/circle, two lines or two points.");
     d.value=dimensionMeasurement(sketch,d);
     if(!std::isfinite(d.value) || d.value<=1e-7)throw std::runtime_error("The selected references have no measurable distance or angle.");
+    placeDimensionAnnotation(sketch,d,annotation);
     return d;
 }
 }

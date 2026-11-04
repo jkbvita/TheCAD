@@ -105,6 +105,16 @@ A circle defaults to diameter; R chooses radius and D diameter before placement.
 The command stays active for repeated dimensions. Double-click an annotation to
 edit it. Display/Delete Relations remains available for relation management.
 
+Dimensions follow current geometry throughout endpoint dragging and numeric edits.
+In Select mode or idle Smart Dimension, drag text or dimension lines to reposition
+the annotation without changing its value. Circle dimensions use diametric/radial
+lines and circumference arrows; dragging rotates their placement. Placements survive
+save/reopen in `.thepart` schema 7; earlier supported files remain readable.
+Smart Dimension and drawing buttons stay visibly pressed while active; Esc exits.
+Geometry highlights on hover. Picking defaults to 8 logical pixels, adjustable for
+the session under **Tools > Sketch Picking Tolerance**.
+See the [manual checks and limits](docs/verification/dimension-graphics-selection.md).
+
 See [current behavior and limits](docs/requirements/parametric-constraints.md) and
 [verification](docs/verification/parametric-constraints.md). Whole-sketch DOF=0 is
 required for black fully-defined geometry; mixed sketches remain blue.

@@ -8,6 +8,7 @@ TheCAD remains an independent C++/Qt/OCCT application. Only a standalone PlaneGC
 component solves supported planar constraints. No solver-specific types appear in
 the public sketch model or versioned .thepart data. 3D sketching is future scope.
 Current workflow extension: [direct dimension and shared-region approval](../decisions/0011-shared-regions-direct-dimensions.md).
+Annotation and selection extension: [geometry-attached dimensions](../decisions/0012-dimension-graphics-selection.md).
 
 In an edited sketch, select a line/circle then Smart Dimension, or start Smart
 Dimension then select geometry. Two points support horizontal/vertical/aligned
@@ -19,6 +20,12 @@ dimensions until Escape or another tool. No dimension form is required on the le
 A circle defaults to diameter; R selects radius and D diameter before placement.
 Choose Reference in the floating editor for measurement without driving geometry.
 Double-click an annotation (or relation-list dimension) to edit its existing value.
+Drag annotation text/lines in Select or idle Smart Dimension to move placement
+without editing its numerical target. Graphics resolve current stable references
+during geometry dragging; relative placement survives later geometry edits and
+save/reopen. Circular dimensions use Ø/diametric and R/radial boundary arrows.
+Tool buttons remain checked while active. Hover and picking use an adjustable
+8-logical-pixel default, with points, annotations and nearest entities prioritized.
 The separate relation manager adds, inspects and deletes supported constraints.
 Fixed point uses the selected point's current exact coordinates. H/V relations
 apply to one line; H/V dimensions can reference distinct entities' points.

@@ -1,3 +1,5 @@
+#include "modeling/DimensionAnnotation.h"
+#include "modeling/DimensionInference.h"
 #include "modeling/ConstraintSolver.h"
 #include "ui/CadViewport.h"
 #include "modeling/Box.h"
@@ -43,6 +45,64 @@ private slots:
         QVERIFY(QTest::qWaitForWindowExposed(host.get())); QTRY_VERIFY(viewport->isReady());
     }
     void init() { viewport->beginSketch({}); QApplication::processEvents(); }
+    void dimensionPlacementDragAndLiveGeometry() {
+        using namespace modeling;
+        Sketch sketch;sketch.entities={{EntityKind::Line,{-30,-20},{30,-20},1,"line"},{EntityKind::Circle,{-30,30},{},8,"circle"}};
+        auto linear=inferDimension(sketch,{},{"line"},{0,-35});linear.id="length";linear.driving=false;
+        auto circle=inferDimension(sketch,{},{"circle"},{-10,45});circle.id="diameter";circle.driving=false;
+        sketch.dimensions={linear,circle};viewport->beginSketch(sketch);viewport->selectSketchTool();
+        QSignalSpy changes(viewport,&CadViewport::sketchChanged);
+        const auto move=[&](Point2 target){const auto p=pixel(target);QMouseEvent event(QEvent::MouseMove,p,viewport->mapToGlobal(p),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);QApplication::sendEvent(viewport,&event);};
+        const auto original=*viewport->m_sketch;
+        for(const Point2 target: {Point2{10,-45},Point2{-20,-40}}) {
+            const auto anchor=dimensionAnnotationPosition(*viewport->m_sketch,viewport->m_sketch->dimensions[0]);
+            QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,pixel(anchor));QVERIFY(viewport->m_dimensionDrag);
+            const auto count=changes.count();move(target);QVERIFY(viewport->m_dimensionDrag->moved);QCOMPARE(changes.count(),count);
+            QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,pixel(target));QCOMPARE(changes.count(),count+1);
+            const auto text=dimensionAnnotationPosition(*viewport->m_sketch,viewport->m_sketch->dimensions[0]);QVERIFY(std::hypot(text.x-target.x,text.y-target.y)<0.5);
+            QCOMPARE(viewport->m_sketch->dimensions[0].value,original.dimensions[0].value);
+            QCOMPARE(viewport->m_sketch->entities[0].second.x,30.0);
+        }
+        auto anchor=dimensionAnnotationPosition(*viewport->m_sketch,viewport->m_sketch->dimensions[0]);
+        QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,pixel(anchor));move({40,-45});QTest::keyClick(viewport,Qt::Key_Escape);
+        const auto restored=dimensionAnnotationPosition(*viewport->m_sketch,viewport->m_sketch->dimensions[0]);QVERIFY(std::hypot(restored.x-anchor.x,restored.y-anchor.y)<1e-7);QCOMPARE(changes.count(),2);
+        // During geometry dragging, the rendered text must already use the candidate geometry.
+        QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,pixel({30,-20}));QVERIFY(viewport->m_pointDrag);QVERIFY(!viewport->m_dimensionDrag);
+        move({45,-10});QVERIFY(viewport->m_pointDrag->candidate);QCOMPARE(changes.count(),2);
+        const auto text=dimensionAnnotationPosition(*viewport->m_sketch,viewport->m_sketch->dimensions[0]);
+        QVERIFY(std::hypot(text.x-anchor.x,text.y-anchor.y)>1);
+        const auto expected=sketchPoint(*viewport->m_sketch,text);QVERIFY(viewport->m_constraintLabels[0]->Position().Distance(expected)<1e-7);
+        QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,pixel({45,-10}));QCOMPARE(changes.count(),3);
+        // Circular annotation rotates on repeated drags, including while Smart Dimension is active.
+        viewport->setSmartDimensionPicking(true);anchor=dimensionAnnotationPosition(*viewport->m_sketch,viewport->m_sketch->dimensions[1]);
+        QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,pixel(anchor));QVERIFY(viewport->m_dimensionDrag);move({-50,45});
+        QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,pixel({-50,45}));QVERIFY(viewport->m_smartDimensionPicking);
+        const auto g=dimensionGraphics(*viewport->m_sketch,viewport->m_sketch->dimensions[1],0.2);
+        QVERIFY(g.segments.front().second.x < -30);QCOMPARE(viewport->m_sketch->entities[1].radius,8.0);
+        viewport->setSmartDimensionPicking(false);
+    }
+    void geometryPickingToleranceAndHover() {
+        using namespace modeling;Sketch sketch;sketch.entities={{EntityKind::Line,{-40,-20},{40,-20},1,"a"},{EntityKind::Line,{-40,-15},{40,-15},1,"b"},{EntityKind::Circle,{20,30},{},1,"small"},{EntityKind::Line,{-25,30},{-24,30},1,"short"}};
+        viewport->beginSketch(sketch);viewport->selectSketchTool();QCOMPARE(viewport->pickingTolerance(),8.0);
+        for(const double scale:{100.0,200.0}) {
+            viewport->m_view->Camera()->SetScale(scale);
+            QVERIFY(viewport->entityAt(pixel({0,-20})+QPoint(0,6))==std::optional<std::string>("a"));
+            QVERIFY(!viewport->entityAt(pixel({0,-20})+QPoint(0,12)));
+            QVERIFY(viewport->entityAt(pixel({21,30})+QPoint(6,0))==std::optional<std::string>("small"));
+            QVERIFY(viewport->entityAt(pixel({-24.5,30})+QPoint(0,6))==std::optional<std::string>("short"));
+            hover({0,-20},{0,6});QCOMPARE(viewport->m_hoveredEntity,std::string("a"));QVERIFY(!viewport->m_hoveredEntityPresentation.IsNull());
+            hover({-40,-20},{2,0});QVERIFY(viewport->m_hoveredPoint);QVERIFY(viewport->m_hoveredEntity.empty());
+            hover({21,30});QVERIFY(!viewport->m_hoveredPoint);QCOMPARE(viewport->m_hoveredEntity,std::string("small"));
+            viewport->setSmartDimensionPicking(true);QSignalSpy references(viewport,&CadViewport::dimensionReferencePicked);
+            click({21,30});QCOMPARE(references.count(),1);QCOMPARE(references[0][0].toString(),QString("small"));QCOMPARE(references[0][1].toInt(),-1);
+            viewport->setSmartDimensionPicking(false);
+            // The closest of nearby parallel lines wins.
+            QVERIFY(viewport->entityAt(pixel({0,-15})+QPoint(0,-1))==std::optional<std::string>("b"));
+        }
+        viewport->setPickingTolerance(4);QVERIFY(!viewport->entityAt(pixel({0,-20})+QPoint(0,6)));
+        viewport->setPickingTolerance(12);QVERIFY(viewport->entityAt(pixel({0,-20})+QPoint(0,10)));
+        viewport->setPickingTolerance(8);
+    }
     void constrainedLineAndCircleDragging() {
         using namespace modeling;Sketch sketch;sketch.entities={{EntityKind::Line,{0,0},{30,40},1,"line"},{EntityKind::Circle,{-30,-20},{},5,"circle"}};sketch.relations={{"anchor",RelationKind::Coincident,{"line",PointRole::First},{}}};
         SketchDimension length;length.id="length";length.kind=DimensionKind::LineLength;length.first={"line",PointRole::First};length.second={"line",PointRole::Second};length.value=50;length.annotation={20,45};

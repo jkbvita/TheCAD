@@ -1,3 +1,4 @@
+#include "modeling/DimensionAnnotation.h"
 #include "ui/MainWindow.h"
 #include "ui/CadViewport.h"
 #include <BRepCheck_Analyzer.hxx>
@@ -130,6 +131,18 @@ private:
         QVERIFY(window.errors.isEmpty());
     }
 private slots:
+    void sketchToolActionsFollowMode() {
+        WorkflowWindow window;window.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
+        const auto checked=[&](const char* name){return window.findChild<QAction*>(name)->isChecked();};
+        QVERIFY(checked("actionLine"));
+        command(window,"actionSmartDimension");QVERIFY(checked("actionSmartDimension"));QVERIFY(!checked("actionLine"));QVERIFY(viewport->m_smartDimensionPicking);
+        command(window,"actionCircle");QVERIFY(checked("actionCircle"));QVERIFY(!checked("actionSmartDimension"));QVERIFY(!viewport->m_smartDimensionPicking);
+        QTest::keyClick(viewport,Qt::Key_Escape);QVERIFY(!checked("actionCircle"));QVERIFY(checked("actionSelectSketchEntity"));
+        command(window,"actionSmartDimension");QTest::keyClick(viewport,Qt::Key_Escape);QVERIFY(!checked("actionSmartDimension"));QVERIFY(!viewport->m_smartDimensionPicking);
+        command(window,"actionRectangle");QVERIFY(checked("actionRectangle"));command(window,"actionLine");QVERIFY(!checked("actionRectangle"));QVERIFY(checked("actionLine"));
+        command(window,"actionFinishSketch");QVERIFY(!checked("actionLine"));QVERIFY(!checked("actionSelectSketchEntity"));window.close();
+    }
     void smartDimensionCreateEditCancelAndConflict() {
         QTemporaryDir directory;WorkflowWindow window;window.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&window));auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
         using namespace modeling;Sketch sketch;sketch.entities={{EntityKind::Line,{0,0},{30,40},1,"line"},{EntityKind::Circle,{-30,-20},{},5,"circle"}};sketch.relations={{"anchor",RelationKind::Coincident,{"line",PointRole::First},{}}};viewport->sketchChanged(sketch);
@@ -137,9 +150,9 @@ private slots:
         QVERIFY(!window.findChild<QWidget*>("constraintPage"));QVERIFY(!window.findChild<QDoubleSpinBox*>("smartDimensionValue"));
         const auto previewPoint=point(viewport,{50,55});QMouseEvent motion(QEvent::MouseMove,previewPoint,viewport->mapToGlobal(previewPoint),Qt::NoButton,Qt::NoButton,Qt::NoModifier);QApplication::sendEvent(viewport,&motion);QVERIFY(viewport->m_dimensionPreview);QCOMPARE(viewport->m_dimensionPreview->kind,DimensionKind::LineLength);
         QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{50,55}));auto* editor=window.findChild<QDialog*>("smartDimensionEditor");QVERIFY(editor);QVERIFY(editor->isWindow());const auto annotationPixel=viewport->mapToGlobal(point(viewport,{50,55}));QVERIFY((editor->pos()-annotationPixel).manhattanLength()<editor->width()+editor->height());auto* value=editor->findChild<QDoubleSpinBox*>("smartDimensionValue");QVERIFY(value);QVERIFY(std::abs(value->value()-50)<1e-6);value->setValue(60);QTest::keyClick(value,Qt::Key_Return);QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
-        QCOMPARE(viewport->m_sketch->dimensions.size(),std::size_t(1));QCOMPARE(viewport->m_sketch->dimensions[0].value,60.0);QVERIFY(viewport->m_smartDimensionPicking);const auto id=viewport->m_sketch->dimensions[0].id;
-        QTest::mouseDClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{50,55}));editor=window.findChild<QDialog*>("smartDimensionEditor");QVERIFY(editor);value=editor->findChild<QDoubleSpinBox*>("smartDimensionValue");value->setValue(70);QTest::keyClick(value,Qt::Key_Escape);QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);QCOMPARE(viewport->m_sketch->dimensions[0].value,60.0);
-        QTest::mouseDClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{50,55}));editor=window.findChild<QDialog*>("smartDimensionEditor");QVERIFY(editor);value=editor->findChild<QDoubleSpinBox*>("smartDimensionValue");value->setValue(70);QTest::keyClick(value,Qt::Key_Return);QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);QCOMPARE(viewport->m_sketch->dimensions[0].value,70.0);QCOMPARE(viewport->m_sketch->dimensions[0].id,id);QVERIFY(window.findChild<QAction*>("actionSmartDimension")->isChecked());
+        QCOMPARE(viewport->m_sketch->dimensions.size(),std::size_t(1));QCOMPARE(viewport->m_sketch->dimensions[0].value,60.0);QVERIFY(viewport->m_smartDimensionPicking);QVERIFY(window.findChild<QAction*>("actionSmartDimension")->isChecked());const auto id=viewport->m_sketch->dimensions[0].id;
+        QTest::mouseDClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,dimensionAnnotationPosition(*viewport->m_sketch,viewport->m_sketch->dimensions[0])));editor=window.findChild<QDialog*>("smartDimensionEditor");QVERIFY(editor);value=editor->findChild<QDoubleSpinBox*>("smartDimensionValue");value->setValue(70);QTest::keyClick(value,Qt::Key_Escape);QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);QCOMPARE(viewport->m_sketch->dimensions[0].value,60.0);
+        QTest::mouseDClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,dimensionAnnotationPosition(*viewport->m_sketch,viewport->m_sketch->dimensions[0])));editor=window.findChild<QDialog*>("smartDimensionEditor");QVERIFY(editor);value=editor->findChild<QDoubleSpinBox*>("smartDimensionValue");value->setValue(70);QTest::keyClick(value,Qt::Key_Return);QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);QCOMPARE(viewport->m_sketch->dimensions[0].value,70.0);QCOMPARE(viewport->m_sketch->dimensions[0].id,id);QVERIFY(window.findChild<QAction*>("actionSmartDimension")->isChecked());
         const auto end=viewport->m_sketch->entities[0].second;QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{end.x/2,end.y/2}));QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{-15,-15}));editor=window.findChild<QDialog*>("smartDimensionEditor");QVERIFY(editor);value=editor->findChild<QDoubleSpinBox*>("smartDimensionValue");value->setValue(80);QTest::keyClick(value,Qt::Key_Return);
         QVERIFY(!editor->findChild<QLabel*>("smartDimensionError")->text().isEmpty());QCOMPARE(viewport->m_sketch->dimensions.size(),std::size_t(1));QCOMPARE(viewport->m_sketch->dimensions[0].value,70.0);QTest::keyClick(value,Qt::Key_Escape);QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
         QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{-25,-20}));QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{-40,-40}));editor=window.findChild<QDialog*>("smartDimensionEditor");QVERIFY(editor);value=editor->findChild<QDoubleSpinBox*>("smartDimensionValue");value->setValue(14);QTest::keyClick(value,Qt::Key_Return);QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);QCOMPARE(viewport->m_sketch->dimensions.size(),std::size_t(2));QVERIFY(std::abs(viewport->m_sketch->entities[1].radius-7)<1e-6);

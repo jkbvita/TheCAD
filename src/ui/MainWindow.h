@@ -93,6 +93,7 @@ private:
     bool applyModel(document::PartDocument candidate, const std::string& selectedId);
     void updateDocumentUi();
     void updateActions();
+    void updateSketchToolActions();
     void updateEntityList();
     void updateEntityProperties();
     void applySketchEntityEdit(const modeling::SketchEntity& entity);

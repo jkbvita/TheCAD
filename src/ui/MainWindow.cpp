@@ -1,3 +1,5 @@
+#include "modeling/DimensionAnnotation.h"
+#include <QInputDialog>
 #include "ui/MainWindow.h"
 #include "ui/CadViewport.h"
 #include "modeling/Sketch.h"
@@ -242,6 +244,7 @@ MainWindow::MainWindow(QWidget* parent)
                   "QTabBar::tab { padding: 4px 15px; background: #e6e8eb; border: 1px solid #cbd0d5; } "
                   "QTabBar::tab:selected { background: #ffffff; color: #174c6e; } "
                   "QToolButton:hover { background: #d9ebf6; border-radius: 2px; } "
+                  "QToolButton:checked { background: #b8d8ef; border: 1px solid #709ab7; border-radius: 2px; } "
                   "QToolButton:disabled { color: #a3a8ad; } "
                   "QTreeWidget, QListWidget { border: 1px solid #d5d9dd; background: #ffffff; } "
                   "QDockWidget::title { background: #e9ecef; padding: 5px; } "
@@ -280,6 +283,7 @@ MainWindow::MainWindow(QWidget* parent)
     const auto action = [this](const QString& text, const char* name, auto callback) {
         auto* result = new QAction(commandIcon(text), text, this);
         result->setObjectName(name);
+        if(QStringList{"actionSmartDimension","actionSelectSketchEntity","actionLine","actionRectangle","actionCircle"}.contains(name))result->setCheckable(true);
         result->setToolTip(text);
         connect(result, &QAction::triggered, this, callback);
         return result;
@@ -368,6 +372,14 @@ MainWindow::MainWindow(QWidget* parent)
     insertMenu->addAction(m_extrude);
     insertMenu->addAction(m_cut);
     toolsMenu->addAction(m_selectEntity);
+    auto* tolerance=toolsMenu->addAction("Sketch Picking Tolerance...");
+    tolerance->setObjectName("actionSketchPickingTolerance");
+    connect(tolerance,&QAction::triggered,this,[this]{
+        bool accepted=false;
+        const double pixels=QInputDialog::getDouble(this,"Sketch Picking Tolerance","Tolerance (logical pixels)",
+            m_viewport->pickingTolerance(),1,32,1,&accepted);
+        if(accepted)m_viewport->setPickingTolerance(pixels);
+    });
     toolsMenu->addSeparator();
     toolsMenu->addAction(findChild<QAction*>("actionDisplayDeleteRelations"));
     toolsMenu->addAction(findChild<QAction*>("actionRepairSketch"));
@@ -495,11 +507,12 @@ MainWindow::MainWindow(QWidget* parent)
             .arg(role == int(modeling::PointRole::Second) ? "Endpoint" : role == int(modeling::PointRole::Center) ? "Center" : "Start point", id);
         statusBar()->showMessage(pointName + " selected. Snapping uses exact sketch coordinates.");
     });
+    connect(m_viewport,&CadViewport::sketchToolChanged,this,&MainWindow::updateSketchToolActions);
     connect(m_viewport,&CadViewport::constraintPickingCanceled,this,[this]{closeConstraints();closeSmartDimension();});
     connect(m_viewport,&CadViewport::dimensionPlacementRequested,this,[this](modeling::Point2 point){placeSmartDimension(point);});
     connect(m_viewport,&CadViewport::dimensionReferencePicked,this,[this](const QString& id,int role){smartReferencePicked(id,role);});
     connect(m_viewport,&CadViewport::dimensionPointerMoved,this,[this](modeling::Point2 point){updateSmartPreview(point);});
-    connect(m_viewport,&CadViewport::dimensionVariantRequested,this,[this](bool radius){if(m_smartDimension && !m_smartDimension->editor){m_smartDimension->radius=radius;if(m_smartDimension->pending)updateSmartPreview(m_smartDimension->pending->annotation);}});
+    connect(m_viewport,&CadViewport::dimensionVariantRequested,this,[this](bool radius){if(m_smartDimension && !m_smartDimension->editor){m_smartDimension->radius=radius;if(m_smartDimension->pending)updateSmartPreview(modeling::dimensionAnnotationPosition(*m_editSketch,*m_smartDimension->pending));}});
     connect(m_viewport,&CadViewport::dimensionEditRequested,this,[this](const QString& id){if(m_editSketch)editSmartDimension(id.toStdString());});
     connect(m_viewport, &CadViewport::sketchChanged, this, [this](const modeling::Sketch& sketch) {
         if (!m_editSketch) return;
@@ -859,8 +872,20 @@ void MainWindow::updateEntityList()
     updateEntityProperties();
 }
 
+void MainWindow::updateSketchToolActions()
+{
+    const bool editing=m_mode==WorkspaceMode::EditingSketch && !m_constraints && !m_operation;
+    const auto tool=m_viewport->sketchTool();
+    findChild<QAction*>("actionSmartDimension")->setChecked(editing && m_viewport->smartDimensionActive());
+    m_selectEntity->setChecked(editing && !tool && !m_viewport->smartDimensionActive());
+    m_line->setChecked(editing && tool==modeling::EntityKind::Line);
+    m_rectangle->setChecked(editing && tool==modeling::EntityKind::Rectangle);
+    m_circle->setChecked(editing && tool==modeling::EntityKind::Circle);
+}
+
 void MainWindow::updateActions()
 {
+    updateSketchToolActions();
     const bool operation = bool(m_operation);
     const bool editing = m_mode == WorkspaceMode::EditingSketch && !m_constraints;
     findChild<QAction*>("actionSmartDimension")->setEnabled(editing && !operation);

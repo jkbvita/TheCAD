@@ -42,8 +42,9 @@ struct SketchDimension {
     SketchPointRef first, second;
     double value = 1.0;
     bool driving = true;
-    Point2 annotation; // Placement is separate from the mathematical target.
+    Point2 annotation; // Absolute placement for legacy import and initial attachment.
     int sense = 1; // Preserves the current side for unsigned H/V distances.
+    std::optional<Point2> placement; // Coordinates in the current reference frame; legacy annotation remains readable.
 };
 struct FaceAttachment {
     std::string sourceFeature;

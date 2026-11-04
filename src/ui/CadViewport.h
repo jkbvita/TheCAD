@@ -55,10 +55,15 @@ public:
     std::string selectedSketchEntity() const {return m_selectedEntity;}
     std::optional<modeling::SketchPointRef> selectedSketchPoint() const {return m_selectedPoint;}
     void setConstraintErrors(const std::vector<std::string>& ids);
+    void setPickingTolerance(double logicalPixels);
+    double pickingTolerance() const { return m_pickingTolerance; }
+    std::optional<modeling::EntityKind> sketchTool() const { return m_sketchTool; }
+    bool smartDimensionActive() const { return m_smartDimensionPicking; }
     void fitAll();
     void resetView();
 
 signals:
+    void sketchToolChanged();
     void dimensionReferencePicked(const QString& id,int role);
     void dimensionPointerMoved(thecad::modeling::Point2 point);
     void dimensionVariantRequested(bool radius);
@@ -119,7 +124,24 @@ private:
     std::optional<modeling::Point2> sketchPosition(const QPointF& position);
     struct SnapHit { modeling::SketchPointRef reference; modeling::Point2 point; };
     std::optional<SnapHit> pointAt(const QPointF& position) const;
+    std::optional<SnapHit> selectionPointAt(const QPointF& position) const;
     std::optional<std::string> entityAt(const QPointF& position) const;
+    std::optional<std::string> dimensionAt(const QPointF& position) const;
+    QString dimensionText(const modeling::SketchDimension& dimension) const;
+    void updateSketchHover(const QPointF& position);
+    void updateDimensionDrag(const QPointF& position);
+    void cancelDimensionDrag();
+    struct DimensionDrag {
+        modeling::Sketch original;
+        std::string id;
+        QPointF press;
+        modeling::Point2 offset;
+        bool moved = false;
+    };
+    std::optional<DimensionDrag> m_dimensionDrag;
+    double m_pickingTolerance = 8.0; // Qt logical pixels, independent of zoom/DPI.
+    std::string m_hoveredEntity, m_hoveredDimension;
+    Handle(AIS_Shape) m_hoveredEntityPresentation;
     QPointF screenPoint(modeling::Point2 point) const;
     modeling::Point2 drawingPoint(const QPointF& position, std::optional<modeling::SketchPointRef>& reference);
     void updatePointPresentation();

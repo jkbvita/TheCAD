@@ -1,3 +1,4 @@
+#include "modeling/DimensionAnnotation.h"
 #include <BRepTools.hxx>
 #include <TopExp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
@@ -214,13 +215,14 @@ const char* dimensionName(modeling::DimensionKind kind) {
     case modeling::DimensionKind::LineAngle:return "angle";
     } fail("Unsupported dimension type.");
 }
-QJsonObject writeDimension(const modeling::SketchDimension& d) {
+QJsonObject writeDimension(const modeling::Sketch& sketch,const modeling::SketchDimension& d) {
     return {{"id",q(d.id)},{"type",dimensionName(d.kind)},{"first",writePointRef(d.first)},
-        {"second",writePointRef(d.second)},{"value",d.value},{"driving",d.driving},{"annotation",point(d.annotation)},{"sense",d.sense}};
+        {"second",writePointRef(d.second)},{"value",d.value},{"driving",d.driving},{"annotation",point(modeling::dimensionAnnotationPosition(sketch,d))},{"sense",d.sense},{"placement",d.placement?QJsonValue(point(*d.placement)):QJsonValue(QJsonValue::Null)}};
 }
 modeling::SketchDimension readDimension(const QJsonValue& value,int version) {
     if(!value.isObject())fail("Dimension must be an object.");
-    const auto o=value.toObject();fields(o,{"id","type","first","second","value","driving","annotation","sense"},"Dimension");
+    const auto o=value.toObject();QSet<QString> expected{"id","type","first","second","value","driving","annotation","sense"};
+    if(version>=7)expected.insert("placement");fields(o,expected,"Dimension");
     modeling::SketchDimension d;d.id=stringValue(o.value("id"),"Dimension ID").toStdString();validId(d.id);
     const auto type=stringValue(o.value("type"),"Dimension type");bool found=false;
     for(const auto kind:{modeling::DimensionKind::LineLength,modeling::DimensionKind::HorizontalDistance,modeling::DimensionKind::VerticalDistance,modeling::DimensionKind::CircleRadius,modeling::DimensionKind::CircleDiameter,modeling::DimensionKind::PointDistance,modeling::DimensionKind::LineDistance,modeling::DimensionKind::LineAngle})
@@ -229,7 +231,8 @@ modeling::SketchDimension readDimension(const QJsonValue& value,int version) {
     d.first=readPointRef(o.value("first"));d.second=readPointRef(o.value("second"));d.value=number(o.value("value"),"Dimension value");
     if(!o.value("driving").isBool())fail("Dimension driving status must be boolean.");d.driving=o.value("driving").toBool();
     d.annotation=readPoint(o.value("annotation"));const double sense=number(o.value("sense"),"Dimension sense");
-    if(sense!=1 && sense!=-1)fail("Dimension sense must be +1 or -1.");d.sense=int(sense);return d;
+    if(sense!=1 && sense!=-1)fail("Dimension sense must be +1 or -1.");d.sense=int(sense);
+    if(version>=7 && !o.value("placement").isNull())d.placement=readPoint(o.value("placement"));return d;
 }
 QJsonObject writeBox(BoxParameters box)
 {
@@ -358,6 +361,8 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
                 auto legacy=feature.sketch;legacy.dimensions.clear();
                 legacy.relations.erase(std::remove_if(legacy.relations.begin(),legacy.relations.end(),[](const auto& r){return r.kind!=modeling::RelationKind::Coincident && r.kind!=modeling::RelationKind::Horizontal && r.kind!=modeling::RelationKind::Vertical;}),legacy.relations.end());
                 validSketch(legacy);
+                modeling::validateSketchConstraintReferences(feature.sketch);
+                modeling::attachDimensionAnnotations(feature.sketch);
                 feature.sketch=modeling::requireSolvedSketch(modeling::solvePlanarSketch(feature.sketch));
                 validSketch(feature.sketch);
                 sketches.emplace(feature.id, feature.sketch);
@@ -508,7 +513,7 @@ PartDocument PartDocument::load(const QString& path)
     if (root.value("format") != QJsonValue("TheCAD.Part")) fail("Unsupported document format; expected TheCAD.Part.");
     if (root.value("units") != QJsonValue("mm")) fail("Unsupported units; this prototype supports millimeters only.");
     const auto versionValue = root.value("version");
-    if (!versionValue.isDouble() || (versionValue.toDouble() != 1 && versionValue.toDouble() != 2 && versionValue.toDouble() != 3 && versionValue.toDouble() != 4 && versionValue.toDouble() != 5 && versionValue.toDouble() != 6)) fail("Unsupported part document version; expected versions 1 through 6.");
+    if (!versionValue.isDouble() || (versionValue.toDouble() != 1 && versionValue.toDouble() != 2 && versionValue.toDouble() != 3 && versionValue.toDouble() != 4 && versionValue.toDouble() != 5 && versionValue.toDouble() != 6 && versionValue.toDouble() != 7)) fail("Unsupported part document version; expected versions 1 through 7.");
     const int version = versionValue.toInt();
     if (!root.value("features").isArray()) fail("Part features must be an ordered array.");
     const auto array = root.value("features").toArray();
@@ -619,7 +624,7 @@ void PartDocument::save(const QString& path) const
         } else if (feature.kind == FeatureKind::Sketch) {
             object["plane"] = planeName(feature.sketch.plane);
             object["space"]="planar2d";
-            QJsonArray dimensions;for(const auto& d:feature.sketch.dimensions)dimensions.append(writeDimension(d));object["dimensions"]=dimensions;
+            QJsonArray dimensions;for(const auto& d:feature.sketch.dimensions)dimensions.append(writeDimension(feature.sketch,d));object["dimensions"]=dimensions;
             if(feature.sketch.attachment) {
                 const auto& a=*feature.sketch.attachment;const auto& f=a.frame;const auto p=f.Location();const auto n=f.Direction();const auto x=f.XDirection();
                 object["attachment"]=QJsonObject{{"source",q(a.sourceFeature)},{"face",a.faceIndex},{"signature",q(a.sourceSignature)},
@@ -644,7 +649,7 @@ void PartDocument::save(const QString& path) const
         if (feature.kind != FeatureKind::Sketch) resultId = feature.id;
         features.append(object);
     }
-    const QJsonObject root{{"format", "TheCAD.Part"}, {"version", 6}, {"units", "mm"}, {"features", features}, {"resultFeature", q(resultId)}};
+    const QJsonObject root{{"format", "TheCAD.Part"}, {"version", 7}, {"units", "mm"}, {"features", features}, {"resultFeature", q(resultId)}};
     const auto bytes = QJsonDocument(root).toJson(QJsonDocument::Indented);
     if (bytes.size() > maximumDocumentBytes) fail("Part document exceeds the 1 MiB prototype size limit.");
     QSaveFile file(path);
