@@ -141,5 +141,6 @@ path, Save As switches paths, and unsaved changes use Save/Discard/Cancel.
 
 Limits: 1 MiB input/output, 500 features, 1000 entities and at most 4000 relations
 and 4000 dimensions per sketch; finite coordinates/values within 1e9 mm.
-There is no undo/redo, suppression, history reordering, spatial sketching,
+Session undo/redo retains ten completed edits and is not serialized in this file.
+There is no suppression, history reordering, spatial sketching,
 assembly/drawing implementation, straight/reflex angular sectors, trimming or automatic repair.

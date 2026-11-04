@@ -24,10 +24,11 @@ const char* dimensionTitle(modeling::DimensionKind kind){switch(kind){case model
 }
 void MainWindow::acceptConstrainedSketch(const modeling::Sketch& sketch) {
     if(!m_editSketch)return;
-    auto candidate=m_document;auto feature=*std::find_if(candidate.features().begin(),candidate.features().end(),[this](const auto& f){return f.id==m_editSketchId;});
+    auto previous=editState();auto candidate=m_document;auto feature=*std::find_if(candidate.features().begin(),candidate.features().end(),[this](const auto& f){return f.id==m_editSketchId;});
     feature.sketch=sketch;candidate.replaceFeature(feature); // Solve and regenerate before accepting any edit.
     const auto& solved=*std::find_if(candidate.features().begin(),candidate.features().end(),[this](const auto& f){return f.id==m_editSketchId;});
-    m_editSketch=solved.sketch;m_viewport->setShape(candidate.shape());
+    if(!m_viewport->setShape(candidate.shape()))throw std::runtime_error("The edited geometry could not be displayed.");
+    m_editSketch=solved.sketch;rememberSketchChange(std::move(previous));
 }
 void MainWindow::startConstraints() {
     closeSmartDimension();

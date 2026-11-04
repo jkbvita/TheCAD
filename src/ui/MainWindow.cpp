@@ -253,6 +253,11 @@ MainWindow::MainWindow(QWidget* parent)
 
     auto* editMenu = menuBar()->addMenu("&Edit");
     auto* viewMenu = menuBar()->addMenu("&View");
+    m_undo=editMenu->addAction("Undo");m_undo->setObjectName("actionUndo");m_undo->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Z));
+    m_redo=editMenu->addAction("Redo");m_redo->setObjectName("actionRedo");m_redo->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Y));
+    connect(m_undo,&QAction::triggered,this,[this]{traverseHistory(false);});
+    connect(m_redo,&QAction::triggered,this,[this]{traverseHistory(true);});
+    editMenu->addSeparator();
     auto* insertMenu = menuBar()->addMenu("&Insert");
     auto* toolsMenu = menuBar()->addMenu("&Tools");
     auto* windowMenu = menuBar()->addMenu("&Window");
@@ -452,6 +457,9 @@ MainWindow::MainWindow(QWidget* parent)
     auto* entityButtons = new QHBoxLayout;
     m_editEntity = modelingAction(entityButtons, "Edit geometry...", "actionEditEntity", [this] { editSketchEntity(); });
     m_deleteEntity = modelingAction(entityButtons, "Remove", "actionDeleteEntity", [this] { deleteSketchEntity(); });
+    m_deleteEntity->setShortcut(QKeySequence(Qt::Key_Delete));
+    m_deleteEntity->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    m_entities->addAction(m_deleteEntity);
     geometryLayout->addLayout(entityButtons);
     historySplitter->addWidget(geometryPanel);
     historySplitter->setStretchFactor(0, 2);
@@ -490,12 +498,13 @@ MainWindow::MainWindow(QWidget* parent)
         constraintEntitySelected(id);
         for (std::size_t i = 0; i < m_editSketch->entities.size(); ++i) {
             if (m_editSketch->entities[i].id == id.toStdString()) {
-                m_entities->setCurrentRow(int(i));
-                updateEntityProperties();
+                const QSignalBlocker blocker(m_entities);m_entities->setCurrentRow(int(i));
+                updateEntityProperties();updateActions();
                 return;
             }
         }
-        m_entities->setCurrentRow(-1);
+        {const QSignalBlocker blocker(m_entities);m_entities->setCurrentRow(-1);}
+        updateActions();
     });
     connect(m_viewport, &CadViewport::sketchInteractionError, this, [this](const QString& message) {
         statusBar()->showMessage(message);
@@ -507,6 +516,8 @@ MainWindow::MainWindow(QWidget* parent)
             .arg(role == int(modeling::PointRole::Second) ? "Endpoint" : role == int(modeling::PointRole::Center) ? "Center" : "Start point", id);
         statusBar()->showMessage(pointName + " selected. Snapping uses exact sketch coordinates.");
     });
+    connect(m_viewport,&CadViewport::sketchSelectionChanged,this,[this]{updateActions();});
+    connect(m_viewport,&CadViewport::sketchDeleteRequested,this,[this]{deleteSketchEntity();});
     connect(m_viewport,&CadViewport::sketchToolChanged,this,&MainWindow::updateSketchToolActions);
     connect(m_viewport,&CadViewport::constraintPickingCanceled,this,[this]{closeConstraints();closeSmartDimension();});
     connect(m_viewport,&CadViewport::dimensionPlacementRequested,this,[this](modeling::Point2 point){placeSmartDimension(point);});
@@ -728,7 +739,7 @@ bool MainWindow::saveToPath(const QString& path)
     try {
         m_document.save(path);
         m_path = QFileInfo(path).absoluteFilePath();
-        setWindowModified(false);
+        setWindowModified(false);m_savedRevision=m_revision;
         updateDocumentUi();
         statusBar()->showMessage("Saved " + QDir::toNativeSeparators(m_path), 4000);
         return true;
@@ -753,17 +764,20 @@ bool MainWindow::replaceDocument(document::PartDocument candidate, const QString
     m_mode = WorkspaceMode::Part;
     m_selectedFace=0;
     m_path = path;
+    m_editHistory.clear();m_revision=0;m_nextRevision=0;m_savedRevision=0;
     updateDocumentUi();
     m_viewport->showReferencePlanes(m_document.features().empty());
     return true;
 }
 
-bool MainWindow::applyModel(document::PartDocument candidate, const std::string& selectedId)
+bool MainWindow::applyModel(document::PartDocument candidate, const std::string& selectedId,bool record)
 {
+    auto previous=editState();
     if (!m_viewport->setShape(candidate.shape())) {
         reportError("The regenerated geometry could not be displayed. The previous part was retained.");
         return false;
     }
+    if(record)rememberChange(std::move(previous));
     m_document = std::move(candidate);
     m_selectedId = selectedId;
     setWindowModified(true);
@@ -885,7 +899,7 @@ void MainWindow::updateSketchToolActions()
 
 void MainWindow::updateActions()
 {
-    updateSketchToolActions();
+    updateSketchToolActions();updateHistoryActions();
     const bool operation = bool(m_operation);
     const bool editing = m_mode == WorkspaceMode::EditingSketch && !m_constraints;
     findChild<QAction*>("actionSmartDimension")->setEnabled(editing && !operation);
@@ -906,7 +920,7 @@ void MainWindow::updateActions()
     const auto* selected = selectedFeature();
     m_editFeature->setEnabled(!m_editSketch && !operation && !selecting && selected);
     m_editEntity->setEnabled(editing && !operation && m_entities->currentRow() >= 0);
-    m_deleteEntity->setEnabled(editing && !operation && m_entities->currentRow() >= 0);
+    m_deleteEntity->setEnabled(editing && !operation && (m_entities->currentRow()>=0 || !m_viewport->selectedSketchDimensions().empty() || !m_viewport->selectedSketchEntities().empty()));
     m_applyProperties->setEnabled(editing && !operation && m_entities->currentRow() >= 0);
     updateEntityProperties();
     bool profile = editing && !operation;
@@ -1015,7 +1029,7 @@ bool MainWindow::finishSketch()
         feature.sketch = *m_editSketch;
         candidate.replaceFeature(feature);
         const auto id = m_editSketchId;
-        if (!applyModel(std::move(candidate), id)) return false;
+        if (!applyModel(std::move(candidate), id,false)) return false;
         m_editSketch.reset();
         m_editSketchId.clear();
         m_mode = WorkspaceMode::Part;
@@ -1094,17 +1108,24 @@ void MainWindow::editSketchEntity()
 
 void MainWindow::deleteSketchEntity()
 {
-    if (!m_editSketch || m_entities->currentRow() < 0) return;
+    if(!m_editSketch || m_operation || m_constraints || (m_smartDimension && m_smartDimension->editor))return;
+    auto entities=m_viewport->selectedSketchEntities();const auto dimensions=m_viewport->selectedSketchDimensions();
+    if(entities.empty() && dimensions.empty() && m_entities->currentRow()>=0)
+        entities.push_back(m_editSketch->entities.at(std::size_t(m_entities->currentRow())).id);
+    if(entities.empty() && dimensions.empty())return;
     try {
-        const auto id = m_editSketch->entities.at(std::size_t(m_entities->currentRow())).id;
-        auto candidate = modeling::removeSketchEntity(*m_editSketch, id);
-        (void)modeling::sketchShape(candidate);
-        m_editSketch = std::move(candidate);
-        m_viewport->setSketch(*m_editSketch);
-        setWindowModified(true);
-        updateEntityList();
-        updateActions();
-    } catch (const std::exception& error) { reportError(QString::fromUtf8(error.what())); }
+        auto candidate=*m_editSketch;
+        candidate.dimensions.erase(std::remove_if(candidate.dimensions.begin(),candidate.dimensions.end(),[&](const auto& d){
+            return std::find(dimensions.begin(),dimensions.end(),d.id)!=dimensions.end();
+        }),candidate.dimensions.end());
+        for(const auto& id:entities)candidate=modeling::removeSketchEntity(candidate,id);
+        modeling::validateSketchRelations(candidate);(void)modeling::sketchShape(candidate);
+        auto previous=editState();m_editSketch=std::move(candidate);rememberSketchChange(std::move(previous));
+        closeSmartDimension();m_viewport->selectSketchTool();m_viewport->selectSketchEntity({});
+        m_constraintPoint.reset();m_viewport->setSketch(*m_editSketch);
+        setWindowModified(true);updateEntityList();updateActions();
+        statusBar()->showMessage("Deleted selected sketch geometry/dimensions. Ctrl+Z restores them.",3000);
+    }catch(const std::exception& error){reportError(QString::fromUtf8(error.what()));}
 }
 void MainWindow::editSelectedFeature()
 {

@@ -1096,6 +1096,9 @@ Sketch removeSketchEntity(const Sketch& sketch, const std::string& entityId)
     candidate.relations.erase(std::remove_if(candidate.relations.begin(), candidate.relations.end(), [&](const SketchRelation& relation) {
         return relation.first.entityId == entityId || relation.second.entityId == entityId;
     }), candidate.relations.end());
+    candidate.dimensions.erase(std::remove_if(candidate.dimensions.begin(),candidate.dimensions.end(),[&](const SketchDimension& dimension) {
+        return dimension.first.entityId==entityId || dimension.second.entityId==entityId;
+    }),candidate.dimensions.end());
     validate(candidate);
     return candidate;
 }

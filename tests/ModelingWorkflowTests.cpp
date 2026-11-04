@@ -16,6 +16,7 @@
 #include <QFileInfo>
 #include <QLabel>
 #include <QLineEdit>
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <Graphic3d_Camera.hxx>
 #include <QStackedWidget>
@@ -131,6 +132,97 @@ private:
         QVERIFY(window.errors.isEmpty());
     }
 private slots:
+    void undoRedoKeyboardLimitAndBranching() {
+        using namespace modeling;WorkflowWindow window;window.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&window));auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
+        for(int i=0;i<12;++i){auto sketch=*viewport->m_sketch;sketch.entities.push_back({EntityKind::Line,{-50.0+i*6,-30},{-50.0+i*6,-10},1,"edge-"+std::to_string(i)});viewport->sketchChanged(sketch);}
+        QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(12));QVERIFY(window.findChild<QAction*>("actionUndo")->isEnabled());
+        viewport->setFocus();for(int i=0;i<10;++i)QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);
+        QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(2));QVERIFY(!window.findChild<QAction*>("actionUndo")->isEnabled());
+        for(int i=0;i<10;++i)QTest::keyClick(viewport,Qt::Key_Y,Qt::ControlModifier);
+        QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(12));QVERIFY(!window.findChild<QAction*>("actionRedo")->isEnabled());
+        QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(11));
+        // Selection and an exact no-op do not consume history or clear redo.
+        command(window,"actionSelectSketchEntity");QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{-50,-20}));viewport->sketchChanged(*viewport->m_sketch);
+        QVERIFY(window.findChild<QAction*>("actionRedo")->isEnabled());
+        auto sketch=*viewport->m_sketch;sketch.entities.push_back({EntityKind::Circle,{45,30},{},4,"new-circle"});viewport->sketchChanged(sketch);
+        QVERIFY(!window.findChild<QAction*>("actionRedo")->isEnabled());QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(11));
+        QVERIFY(window.errors.isEmpty());command(window,"actionFinishSketch");window.close();
+    }
+    void deleteDimensionedGeometryAndIndependentDimension() {
+        using namespace modeling;WorkflowWindow window;window.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&window));auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
+        Sketch sketch;sketch.entities={{EntityKind::Line,{-30,-20},{30,-20},1,"line"},{EntityKind::Circle,{35,25},{},5,"circle"}};
+        SketchDimension length;length.id="length";length.kind=DimensionKind::HorizontalDistance;length.first={"line",PointRole::First};length.second={"line",PointRole::Second};length.value=60;length.annotation={0,-35};
+        auto diameter=length;diameter.id="diameter";diameter.kind=DimensionKind::CircleDiameter;diameter.first={"circle",PointRole::Center};diameter.second={};diameter.value=10;diameter.annotation={50,40};sketch.dimensions={length,diameter};viewport->sketchChanged(sketch);
+        command(window,"actionSelectSketchEntity");
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{0,-20}));QCOMPARE(viewport->selectedSketchEntities().size(),std::size_t(1));
+        Quantity_Color selectedColor;viewport->m_selectedEntityPresentation->Color(selectedColor);QVERIFY(selectedColor.Blue()>0.9 && selectedColor.Green()>0.6);
+        QTest::keyClick(viewport,Qt::Key_Delete);QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(1));QCOMPARE(viewport->m_sketch->dimensions.size(),std::size_t(1));QCOMPARE(viewport->m_sketch->dimensions[0].id,std::string("diameter"));
+        QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(2));QCOMPARE(viewport->m_sketch->dimensions.size(),std::size_t(2));
+        QTest::keyClick(viewport,Qt::Key_Y,Qt::ControlModifier);QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(1));QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);
+        auto annotation=dimensionAnnotationPosition(*viewport->m_sketch,viewport->m_sketch->dimensions[0]);
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,annotation));QCOMPARE(viewport->selectedSketchDimensions().size(),std::size_t(1));QVERIFY(viewport->selectedSketchEntities().empty());
+        QTest::keyClick(viewport,Qt::Key_Delete);QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(2));QCOMPARE(viewport->m_sketch->dimensions.size(),std::size_t(1));QCOMPARE(viewport->m_sketch->entities[0].second.x,30.0);
+        QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);QCOMPARE(viewport->m_sketch->dimensions.size(),std::size_t(2));
+        // DD is two discrete consecutive presses; one D or a held key cannot delete.
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{0,-20}));QTest::keyClick(viewport,Qt::Key_D);QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(2));
+        QKeyEvent repeat(QEvent::KeyPress,Qt::Key_D,Qt::NoModifier,"d",true,1);QApplication::sendEvent(viewport,&repeat);QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(2));
+        QTest::keyClick(viewport,Qt::Key_D);QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(2));QTest::keyClick(viewport,Qt::Key_D);QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(1));
+        QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);annotation=dimensionAnnotationPosition(*viewport->m_sketch,viewport->m_sketch->dimensions[0]);
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,annotation));QTest::keyClick(viewport,Qt::Key_D);QTest::keyClick(viewport,Qt::Key_D);
+        QCOMPARE(viewport->m_sketch->dimensions.size(),std::size_t(1));QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(2));
+        QVERIFY(window.errors.isEmpty());command(window,"actionFinishSketch");window.close();
+    }
+    void deleteContourAsOneUndoAction() {
+        using namespace modeling;WorkflowWindow window;window.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&window));auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
+        Sketch sketch;sketch.entities={{EntityKind::Line,{-30,-20},{30,-20},1,"a"},{EntityKind::Line,{30,-20},{30,20},1,"b"},{EntityKind::Line,{30,20},{-30,20},1,"c"},{EntityKind::Line,{-30,20},{-30,-20},1,"d"}};
+        for(int i=0;i<4;++i)sketch.relations.push_back({"join"+std::to_string(i),RelationKind::Coincident,{sketch.entities[i].id,PointRole::Second},{sketch.entities[(i+1)%4].id,PointRole::First}});
+        SketchDimension width;width.id="width";width.kind=DimensionKind::HorizontalDistance;width.first={"a",PointRole::First};width.second={"a",PointRole::Second};width.value=60;width.annotation={0,-35};sketch.dimensions={width};viewport->sketchChanged(sketch);
+        command(window,"actionSelectSketchEntity");
+        for(const auto mid:{Point2{0,-20},Point2{30,0},Point2{0,20},Point2{-30,0}})QTest::mouseClick(viewport,Qt::LeftButton,Qt::ControlModifier,point(viewport,mid));
+        QCOMPARE(viewport->selectedSketchEntities().size(),std::size_t(4));QTest::keyClick(viewport,Qt::Key_Delete);
+        QVERIFY(viewport->m_sketch->entities.empty());QVERIFY(viewport->m_sketch->dimensions.empty());QVERIFY(viewport->m_sketch->relations.empty());
+        QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(4));QCOMPARE(viewport->m_sketch->dimensions.size(),std::size_t(1));QCOMPARE(closedContours(*viewport->m_sketch).size(),std::size_t(1));
+        QTest::keyClick(viewport,Qt::Key_Y,Qt::ControlModifier);QVERIFY(viewport->m_sketch->entities.empty());QVERIFY(window.errors.isEmpty());command(window,"actionFinishSketch");window.close();
+    }
+    void annotationDragUndoAndDimensionValueUndo() {
+        using namespace modeling;WorkflowWindow window;window.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&window));auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
+        Sketch sketch;sketch.entities={{EntityKind::Line,{-30,-20},{30,-20},1,"line"}};SketchDimension length;length.id="length";length.kind=DimensionKind::HorizontalDistance;length.first={"line",PointRole::First};length.second={"line",PointRole::Second};length.value=60;length.annotation={0,-35};sketch.dimensions={length};viewport->sketchChanged(sketch);command(window,"actionSelectSketchEntity");
+        const auto initial=dimensionAnnotationPosition(*viewport->m_sketch,viewport->m_sketch->dimensions[0]);const auto from=point(viewport,initial),to=point(viewport,{15,-45});
+        QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,from);
+        QMouseEvent move(QEvent::MouseMove,to,viewport->mapToGlobal(to),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);QApplication::sendEvent(viewport,&move);
+        QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,to);
+        const auto moved=dimensionAnnotationPosition(*viewport->m_sketch,viewport->m_sketch->dimensions[0]);QVERIFY(std::hypot(moved.x-initial.x,moved.y-initial.y)>5);
+        QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);auto restored=dimensionAnnotationPosition(*viewport->m_sketch,viewport->m_sketch->dimensions[0]);QVERIFY(std::hypot(restored.x-initial.x,restored.y-initial.y)<1e-7);
+        QTest::keyClick(viewport,Qt::Key_Y,Qt::ControlModifier);restored=dimensionAnnotationPosition(*viewport->m_sketch,viewport->m_sketch->dimensions[0]);QVERIFY(std::hypot(restored.x-moved.x,restored.y-moved.y)<1e-7);
+        QTest::mouseDClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,restored));auto* editor=window.findChild<QDialog*>("smartDimensionEditor");QVERIFY(editor);QVERIFY(!window.findChild<QAction*>("actionUndo")->isEnabled());
+        auto* value=editor->findChild<QDoubleSpinBox*>("smartDimensionValue");value->setValue(80);QTest::keyClick(value,Qt::Key_Return);QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);QCOMPARE(viewport->m_sketch->dimensions[0].value,80.0);
+        QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);QCOMPARE(viewport->m_sketch->dimensions[0].value,60.0);QTest::keyClick(viewport,Qt::Key_Y,Qt::ControlModifier);QCOMPARE(viewport->m_sketch->dimensions[0].value,80.0);
+        QVERIFY(window.errors.isEmpty());command(window,"actionFinishSketch");window.close();
+    }
+    void featureHistorySavePointAndSessionReset() {
+        QTemporaryDir directory;WorkflowWindow window;window.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&window));auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
+        QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);QVERIFY(window.document().features().empty());QVERIFY(!viewport->m_sketchEditing);
+        QTest::keyClick(viewport,Qt::Key_Y,Qt::ControlModifier);QCOMPARE(window.document().features().size(),std::size_t(1));QVERIFY(viewport->m_sketchEditing);
+        command(window,"actionLine");
+        for(const auto p:{modeling::Point2{0,0},modeling::Point2{40,0},modeling::Point2{40,30},modeling::Point2{0,30},modeling::Point2{0,0}})
+            QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,p));
+        QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(4));
+        QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(3));
+        QTest::keyClick(viewport,Qt::Key_Y,Qt::ControlModifier);QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(4));
+        GProp_GProps area;BRepGProp::SurfaceProperties(modeling::closedContours(*viewport->m_sketch).front().face,area);const double expectedVolume=area.Mass()*10;
+        window.findChild<QTabWidget*>("modelingTabs")->setCurrentIndex(0);command(window,"actionExtrude");
+        QVERIFY(!window.findChild<QAction*>("actionUndo")->isEnabled());
+        window.findChild<QListWidget*>("operationContour")->setCurrentRow(0,QItemSelectionModel::ClearAndSelect);
+        window.findChild<QDoubleSpinBox*>("featureLength")->setValue(10);confirmOperation(window);
+        QCOMPARE(window.document().features().size(),std::size_t(2));QVERIFY(std::abs(volume(window.document().shape())-expectedVolume)<1e-6);
+        viewport->setFocus();QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);QCOMPARE(window.document().features().size(),std::size_t(1));QVERIFY(viewport->m_sketchEditing);QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(4));QVERIFY(viewport->m_shape.IsNull());
+        QTest::keyClick(viewport,Qt::Key_Y,Qt::ControlModifier);QCOMPARE(window.document().features().size(),std::size_t(2));QVERIFY(!viewport->m_sketchEditing);QVERIFY(std::abs(volume(window.document().shape())-expectedVolume)<1e-6);
+        window.path=directory.filePath("history.thepart");command(window,"actionSaveAs");QVERIFY(!window.isWindowModified());
+        QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);QVERIFY(window.isWindowModified());
+        QTest::keyClick(viewport,Qt::Key_Y,Qt::ControlModifier);QVERIFY(!window.isWindowModified());
+        command(window,"actionNew");QVERIFY(!window.findChild<QAction*>("actionUndo")->isEnabled());QVERIFY(!window.findChild<QAction*>("actionRedo")->isEnabled());
+        command(window,"actionOpen");QCOMPARE(window.document().features().size(),std::size_t(2));QVERIFY(!window.findChild<QAction*>("actionUndo")->isEnabled());QVERIFY(!window.findChild<QAction*>("actionRedo")->isEnabled());QVERIFY(window.errors.isEmpty());window.close();
+    }
     void sketchToolActionsFollowMode() {
         WorkflowWindow window;window.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&window));
         auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
@@ -167,7 +259,10 @@ private slots:
         window.findChild<QTabWidget*>("modelingTabs")->setCurrentIndex(0);command(window,"actionExtrude");window.findChild<QListWidget*>("operationContour")->setCurrentRow(0,QItemSelectionModel::ClearAndSelect);window.findChild<QDoubleSpinBox*>("featureLength")->setValue(10);confirmOperation(window);QVERIFY(std::abs(volume(window.document().shape())-15000)<1e-6);
         auto* tree=window.findChild<QTreeWidget*>("featureTree");QTreeWidgetItem* item=nullptr;for(int i=0;i<tree->topLevelItemCount();++i){auto* root=tree->topLevelItem(i);for(int n=0;n<root->childCount();++n)if(root->child(n)->data(0,Qt::UserRole).toString()=="sketch-1")item=root->child(n);}QVERIFY(item);tree->setCurrentItem(item);command(window,"actionEditFeature");
         command(window,"actionSelectSketchEntity");QTest::mouseDClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{25,-10}));auto* value=window.findChild<QDoubleSpinBox*>("smartDimensionValue");QVERIFY(value);value->setValue(80);QTest::mouseClick(window.findChild<QDialogButtonBox*>("smartDimensionButtons")->button(QDialogButtonBox::Ok),Qt::LeftButton);QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
-        QVERIFY(std::abs(volume(viewport->m_shape)-24000)<1e-6);command(window,"actionFinishSketch");QVERIFY(std::abs(volume(window.document().shape())-24000)<1e-6);QCOMPARE(window.document().features()[0].sketch.dimensions[0].value,80.0);QVERIFY(window.errors.isEmpty());window.close();
+        QVERIFY(std::abs(volume(viewport->m_shape)-24000)<1e-6);command(window,"actionFinishSketch");QVERIFY(std::abs(volume(window.document().shape())-24000)<1e-6);QCOMPARE(window.document().features()[0].sketch.dimensions[0].value,80.0);
+        viewport->setFocus();QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);QVERIFY(viewport->m_sketchEditing);QCOMPARE(viewport->m_sketch->dimensions[0].value,50.0);QVERIFY(std::abs(volume(viewport->m_shape)-15000)<1e-6);
+        QTest::keyClick(viewport,Qt::Key_Y,Qt::ControlModifier);QVERIFY(!viewport->m_sketchEditing);QCOMPARE(window.document().features()[0].sketch.dimensions[0].value,80.0);QVERIFY(std::abs(volume(window.document().shape())-24000)<1e-6);
+        QVERIFY(window.errors.isEmpty());window.close();
     }
     void horizontalVerticalAndFixedRelationUi() {
         WorkflowWindow window;window.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&window));auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);

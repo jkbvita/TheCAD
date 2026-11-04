@@ -115,6 +115,14 @@ Geometry highlights on hover. Picking defaults to 8 logical pixels, adjustable f
 the session under **Tools > Sketch Picking Tolerance**.
 See the [manual checks and limits](docs/verification/dimension-graphics-selection.md).
 
+**Ctrl+Z / Ctrl+Y** undo and redo the last ten completed modeling edits, including
+geometry, dimensions and annotation placement. A new edit after Undo clears Redo;
+New/Open clears session history. In Select mode, selected geometry/annotations
+turn light blue. Press **Delete** or two consecutive **D** keys to remove them;
+Ctrl+click additional contour edges to delete them together. Geometry deletion
+also removes its attached dimensions; selecting/deleting only a dimension leaves
+its geometry intact. See [history and deletion checks](docs/verification/edit-history-sketch-deletion.md).
+
 See [current behavior and limits](docs/requirements/parametric-constraints.md) and
 [verification](docs/verification/parametric-constraints.md). Whole-sketch DOF=0 is
 required for black fully-defined geometry; mixed sketches remain blue.

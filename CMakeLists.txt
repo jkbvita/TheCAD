@@ -32,7 +32,7 @@ target_link_libraries(thecad_document PUBLIC thecad_modeling Qt6::Core)
 
 add_library(thecad_ui STATIC
     src/ui/CadViewport.cpp src/ui/CadViewport.h
-    src/ui/MainWindow.cpp src/ui/MainWindow.h src/ui/SketchConstraintsUi.cpp src/ui/SmartDimensionUi.cpp)
+    src/ui/MainWindow.cpp src/ui/MainWindow.h src/ui/SketchConstraintsUi.cpp src/ui/SmartDimensionUi.cpp src/ui/EditHistory.cpp)
 target_include_directories(thecad_ui PUBLIC src)
 target_link_libraries(thecad_ui PUBLIC Qt6::Widgets thecad_document thecad_occt TKV3d TKOpenGl)
 
@@ -49,6 +49,10 @@ endforeach()
 include(CTest)
 option(THECAD_GUI_TESTS "Run viewport tests (requires a desktop and OpenGL)" OFF)
 if(BUILD_TESTING)
+    add_executable(thecad_edit_history_tests tests/EditHistoryTests.cpp)
+    set_target_properties(thecad_edit_history_tests PROPERTIES AUTOMOC OFF)
+    target_link_libraries(thecad_edit_history_tests PRIVATE thecad_modeling)
+    add_test(NAME editing.history-delete COMMAND thecad_edit_history_tests)
     add_executable(thecad_dimension_graphics_tests tests/DimensionGraphicsTests.cpp)
     set_target_properties(thecad_dimension_graphics_tests PROPERTIES AUTOMOC OFF)
     target_link_libraries(thecad_dimension_graphics_tests PRIVATE thecad_modeling)

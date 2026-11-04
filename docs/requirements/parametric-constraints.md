@@ -40,8 +40,10 @@ metadata survive save/reopen; old supported .thepart/.tcpart inputs remain reada
 Dragging dimensioned lines and circles respects constraints and remaining freedom;
 fixed points do not move. The previous valid geometry is the next initial guess.
 Legacy exact equality propagation is retained for relation-only Coincident/H/V
-sketches. Drag previews are transient; release accepts one candidate. There is no
-undo/redo framework yet. Numeric property edits are exact requests and reject
+sketches. Drag previews are transient; release accepts one candidate. Session
+history retains ten completed edits with Ctrl+Z/Ctrl+Y; see the
+[editing-history decision](../decisions/0013-edit-history-sketch-deletion.md).
+Numeric property edits are exact requests and reject
 incompatible driving dimensions rather than changing their targets silently.
 
 Blue means under-defined; black requires a successful whole-sketch DOF=0 result.

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "document/PartDocument.h"
+#include "document/UndoHistory.h"
 
 #include <QMainWindow>
 #include <optional>
@@ -90,7 +91,23 @@ private:
     bool saveDocumentAs();
     bool saveToPath(const QString& path);
     bool replaceDocument(document::PartDocument candidate, const QString& path);
-    bool applyModel(document::PartDocument candidate, const std::string& selectedId);
+    bool applyModel(document::PartDocument candidate, const std::string& selectedId,bool record=true);
+    struct EditState {
+        document::PartDocument document;
+        std::optional<modeling::Sketch> sketch;
+        std::string sketchId,selectedId;
+        TopoDS_Shape displayedShape;
+        std::size_t revision=0;
+    };
+    EditState editState() const;
+    void rememberChange(EditState previous);
+    void rememberSketchChange(EditState previous);
+    void traverseHistory(bool redo);
+    void updateHistoryActions();
+    document::UndoHistory<EditState> m_editHistory{10};
+    std::size_t m_revision=0,m_nextRevision=0,m_savedRevision=0;
+    QAction* m_undo=nullptr;
+    QAction* m_redo=nullptr;
     void updateDocumentUi();
     void updateActions();
     void updateSketchToolActions();

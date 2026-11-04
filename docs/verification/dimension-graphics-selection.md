@@ -56,8 +56,9 @@ validated with the affected sketch/modeling workflow suites at both scales.
 
 ## Limits
 
-No automatic annotation collision avoidance, selection cycling or undo framework
-is added. Exactly coincident picks use stable document order. Circle hit testing
+No automatic annotation collision avoidance or selection cycling is added.
+[Session undo/redo](edit-history-sketch-deletion.md) now retains ten edits.
+Exactly coincident picks use stable document order. Circle hit testing
 assumes the existing normal orthographic sketch-editing view. Picking tolerance
 is a session setting. Circle text spacing scales with radius. New files use schema
 7 and require this or a newer compatible build.

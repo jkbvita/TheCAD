@@ -9,6 +9,7 @@
 #include <optional>
 #include <QMetaType>
 #include <QPoint>
+#include <QElapsedTimer>
 #include <QString>
 #include <QWidget>
 
@@ -53,6 +54,9 @@ public:
     void setDimensionSelection(const std::vector<std::string>& entities,const std::vector<modeling::SketchPointRef>& points);
     QPoint dimensionScreenPoint(modeling::Point2 point) const;
     std::string selectedSketchEntity() const {return m_selectedEntity;}
+    const std::vector<std::string>& selectedSketchEntities() const {return m_selectedEntities;}
+    const std::vector<std::string>& selectedSketchDimensions() const {return m_selectedDimensions;}
+    const TopoDS_Shape& displayedShape() const {return m_shape;}
     std::optional<modeling::SketchPointRef> selectedSketchPoint() const {return m_selectedPoint;}
     void setConstraintErrors(const std::vector<std::string>& ids);
     void setPickingTolerance(double logicalPixels);
@@ -63,6 +67,8 @@ public:
     void resetView();
 
 signals:
+    void sketchSelectionChanged();
+    void sketchDeleteRequested();
     void sketchToolChanged();
     void dimensionReferencePicked(const QString& id,int role);
     void dimensionPointerMoved(thecad::modeling::Point2 point);
@@ -167,6 +173,9 @@ private:
     std::optional<modeling::SketchPointRef> m_hoveredPoint;
     std::optional<modeling::SketchPointRef> m_selectedPoint;
     std::string m_selectedEntity;
+    std::vector<std::string> m_selectedEntities,m_selectedDimensions;
+    void selectDimension(const std::string& id,bool toggle);
+    QElapsedTimer m_deleteSequence;
     struct PointDrag {
         modeling::Sketch original;
         modeling::SketchPointRef reference;

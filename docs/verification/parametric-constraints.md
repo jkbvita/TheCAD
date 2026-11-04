@@ -96,7 +96,7 @@ SolidWorks-equivalence testing is made. The owner remains the primary manual tes
 - Multiple bodies have no persistent body names or per-body feature scopes.
 - Conservative face fingerprints reject upstream support changes instead of
   guessing references. Dimensioning on an unchanged face works.
-- No undo/redo infrastructure; each accepted drag/edit is transactional.
+- Ten completed edits can be undone/redone within the session; each accepted drag/edit is transactional.
 - Escape cancels the floating numeric editor or exits Smart Dimension from the
   viewport. Relation management retains its explicit Close button.
 - PlaneGCS remains provisional. Future 3D geometry, references, schema and solver
