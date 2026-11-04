@@ -13,13 +13,12 @@
 3. Draw a closed normal rectangle with centerlines crossing through it and points
    inside/on its boundary. Only normal boundaries should form extrusion regions.
    A closed loop made entirely from centerlines must not produce a profile.
-4. Choose Polygon; Sides initially reads six. Click a center, move around to preview
-   radius and orientation, then commit. Try side counts 3, 5, 6 and 8, including
-   changing Sides while previewing. Esc must discard only the unfinished polygon.
-5. Select a polygon edge or center and choose Edit Polygon. Change center,
-   circumradius and orientation, then undo/redo. Check that all edges stay regular
-   and connected. Edit side count on a polygon without external edge constraints.
-   Side-count changes with edge dimensions/relations should give a clear rejection.
+4. Choose Polygon. No Sides control or Edit Polygon command should appear. Click
+   a center, move around to preview radius and orientation, then commit a regular
+   hexagon. Esc must discard only the unfinished polygon.
+5. Select a polygon edge or center, use ordinary dimensions or vertex dragging,
+   then undo/redo. Check that all six edges stay regular and connected. Draw
+   non-hexagonal outlines with Line. Existing saved polygons retain their shape.
 6. Add a driving edge length or center-to-vertex distance. Change its value and
    drag a free vertex: the entire polygon should remain regular. Extrude its closed
    boundary, edit a supported dimension, and check solid regeneration. Repeat in
@@ -38,10 +37,10 @@ they do not constitute human visual approval or a local SolidWorks inspection.
   orientation and side-count changes; stable IDs; edge/radius dimensions; all
   origin planes; extrusion regeneration; save/reopen and malformed metadata.
 - `ui.sketch-interaction` and `.hidpi`: actual point placement and snaps, point
-  selection at the origin, dragging, centerline creation, polygon preview/side-count
-  changes, vertex dragging and closed-boundary recognition.
+  selection at the origin, dragging, centerline creation, hexagon preview and
+  creation, vertex dragging and closed-boundary recognition.
 - `ui.modeling-workflow` and `.hidpi`: working toolbar commands and active checks,
-  construction conversion/undo, Point Smart Dimensions, polygon numeric editor,
+  construction conversion/undo, Point Smart Dimensions, fixed hexagon creation,
   history, extrusion and save/reopen. The second run uses 150% scaling.
 - All existing solver, document, modeling and UI tests remain regression checks.
 
@@ -52,9 +51,8 @@ scales and malformed polygon metadata/structural-connection rejection.
 ## Limits
 
 Polygons use a circumradius and counterclockwise indexed vertices; inscribed-size
-mode is not added. Side count is bounded by existing sketch entity limits and
-small-edge tolerance. Changing side count on externally constrained edges or a
-saved downstream contour may require removing constraints or repairing references
-first; changes are rejected rather than silently remapped. Deleting a member
+mode is not added. The UI creates six sides only. The general modeling API and
+loader still support older saved regular polygons; their side-count/parameter
+regression tests verify compatibility, not an exposed UI command. Deleting a member
 dissolves regularity. Symmetry operations remain future scope. New files use schema
 8 and require a compatible build; no new dependencies are introduced.

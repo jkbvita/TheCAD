@@ -712,10 +712,6 @@ void CadViewport::setSketchTool(modeling::EntityKind kind,bool construction)
     updateSketchPresentation();
 }
 
-void CadViewport::setPolygonSides(int sides) {
-    if(sides<3 || sides>999)return;m_polygonSides=sides;
-    if(m_sketchTool==modeling::EntityKind::Polygon && m_firstPoint && m_drawingPreview)updateSketchPresentation(m_drawingPreview);
-}
 void CadViewport::placeSketchPoint(const QPointF& position) {
     if(!m_sketch)return;
     std::optional<modeling::SketchPointRef> reference;auto point=drawingPoint(position,reference);auto candidate=*m_sketch;
@@ -831,7 +827,7 @@ void CadViewport::updateSketchPresentation(const std::optional<modeling::SketchE
             auto visible = *m_sketch;
             if(preview){
                 if(preview->kind==modeling::EntityKind::Polygon && preview->radius>1e-6)
-                    visible=modeling::addRegularPolygon(visible,"preview-polygon",{preview->first,preview->radius,std::atan2(preview->second.y-preview->first.y,preview->second.x-preview->first.x),m_polygonSides});
+                    visible=modeling::addRegularPolygon(visible,"preview-polygon",{preview->first,preview->radius,std::atan2(preview->second.y-preview->first.y,preview->second.x-preview->first.x),6});
                 else if(preview->kind!=modeling::EntityKind::Polygon)visible.entities.push_back(*preview);
             }
             auto construction=visible;
@@ -1175,7 +1171,7 @@ void CadViewport::commitDrawing(modeling::Point2 point, const std::optional<mode
     entity.first=first; entity.second=point;entity.construction=m_constructionTool; entity.radius=std::hypot(point.x-first.x,point.y-first.y);
     if(entity.kind==modeling::EntityKind::Polygon) {
         try {
-            candidate=modeling::addRegularPolygon(candidate,entity.id,{first,entity.radius,std::atan2(point.y-first.y,point.x-first.x),m_polygonSides});
+            candidate=modeling::addRegularPolygon(candidate,entity.id,{first,entity.radius,std::atan2(point.y-first.y,point.x-first.x),6});
             const auto& group=candidate.polygons.back();
             attach({group.centerId,modeling::PointRole::First},m_firstReference);
             attach({group.edges.front(),modeling::PointRole::First},reference);

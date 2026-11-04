@@ -43,7 +43,6 @@ public:
     void endSketch();
     void setSketchTool(modeling::EntityKind kind,bool construction=false);
     bool constructionTool() const {return m_constructionTool;}
-    void setPolygonSides(int sides);
     void selectSketchTool();
     void selectSketchEntity(const QString& id);
     void setSketch(const modeling::Sketch& sketch);
@@ -187,7 +186,6 @@ private:
     std::optional<modeling::Sketch> m_sketch;
     std::optional<modeling::EntityKind> m_sketchTool;
     bool m_constructionTool=false;
-    int m_polygonSides=6;
     std::optional<modeling::SketchEntity> m_drawingPreview;
     void placeSketchPoint(const QPointF& position);
     std::optional<modeling::Point2> m_firstPoint;

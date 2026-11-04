@@ -31,6 +31,7 @@ approved scope do not need repeated approval.
 - [0010: Multiple selected regions and solid bodies](0010-multiple-regions-and-bodies.md).
 
 - [0011: Shared-edge regions and direct Smart Dimension](0011-shared-regions-direct-dimensions.md).
+- [0015: Clean part tree and fixed hexagon command](0015-clean-feature-tree-hexagon.md).
 
 - [0012: Dimension graphics and selection](0012-dimension-graphics-selection.md).
 - [0013: Edit history and sketch deletion](0013-edit-history-sketch-deletion.md).

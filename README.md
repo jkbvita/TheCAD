@@ -8,7 +8,7 @@ not a FreeCAD fork. The Windows prototype uses C++, Qt 6, Open CASCADE Technolog
 
 Click **Sketch** in the SKETCH tab, hover a labeled Front, Top, or Right plane
 in the viewport, then click it to enter normal-view sketch editing. Alternatively,
-select a visible plane or its Origin tree reference first, then click Sketch.
+select a visible plane or its reference in the part tree first, then click Sketch.
 Esc cancels a pending plane choice without creating a sketch. No plane-selection
 dropdown or confirmation dialog is used.
 
@@ -28,6 +28,9 @@ The finite reference graphics do not limit the infinite sketching plane. See the
 - Persistent geometric relations, PlaneGCS solving, editable driving/reference Smart Dimensions and constrained dragging.
 - Multiple selected regions, shared line boundaries, nested loops/holes and multiple solid bodies per part.
 - Light Features, Sketch and Evaluate command tabs, native menus and actual feature history.
+- A compact part tree with Front, Top and Right planes, Origin, and modeling history.
+  Used sketches appear beneath every feature that references them; each entry edits
+  the same shared sketch and can be selected to create another feature.
 - Context entity properties and a docked Extrude/Cut PropertyManager with live previews.
 - Direct active-sketch Extrude/Cut with safe cancel/resume; unfinished tools stay disabled.
 - Explicit source-sketch and closed-contour selection, length/depth, direction,
@@ -88,10 +91,11 @@ Centerline draws construction lines using the usual Line interaction; select a
 line and use **For Construction** to convert it in either direction. Points and
 construction geometry are excluded from extrusion boundaries.
 
-Polygon starts with six sides: click the center, then radius/orientation. Change
-**Sides** for other regular polygons, or select a member and use **Edit Polygon**
-for numeric parameters. Edges/vertices support ordinary selection and constraints;
-driving dimensions preserve regularity. See [basic sketch tool checks](docs/verification/basic-sketch-tools.md).
+Polygon creates a regular six-sided polygon: click the center, then set size and
+orientation. There is no side-count control or separate polygon editor. Use Line
+for other outlines. Edges/vertices support ordinary selection and constraints;
+driving dimensions preserve regularity. Existing saved polygons remain readable.
+See [basic sketch tool checks](docs/verification/basic-sketch-tools.md).
 
 Arc, Spline, Trim, Convert,
 Offset, Mirror, Linear Sketch Pattern, Move, Repair

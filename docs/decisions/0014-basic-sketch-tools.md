@@ -1,6 +1,8 @@
 # 0014 — Point, Centerline and regular Polygon
 
 Status: owner approved, 2026-11-04, through the Basic Sketch Geometry Tools request.
+The variable-side Polygon UI and numeric editor below are superseded by
+[0015](0015-clean-feature-tree-hexagon.md); the underlying polygon storage and solver remain compatible.
 This extends the existing C++ sketch data and PlaneGCS adapter; it introduces no
 new backend, dependency, license choice or unrelated modeling command.
 

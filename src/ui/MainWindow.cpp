@@ -1,5 +1,4 @@
 #include "modeling/SketchTools.h"
-#include <QSpinBox>
 #include "modeling/DimensionAnnotation.h"
 #include <QInputDialog>
 #include "ui/MainWindow.h"
@@ -47,11 +46,14 @@
 #include <QToolBar>
 #include <QToolButton>
 #include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
 
 #include <exception>
 #include <stdexcept>
 #include <algorithm>
+#include <map>
+#include <set>
 #include <QVariantList>
 
 namespace thecad::ui {
@@ -347,11 +349,9 @@ MainWindow::MainWindow(QWidget* parent)
     m_centerline=action("Centerline","actionCenterline",[this]{closeSmartDimension();m_viewport->setSketchTool(modeling::EntityKind::Line,true);});
     m_polygon=action("Polygon","actionPolygon",[this]{closeSmartDimension();m_viewport->setSketchTool(modeling::EntityKind::Polygon);});
     m_construction=action("For Construction","actionConstructionLine",[this]{toggleConstruction();});m_construction->setCheckable(true);
-    m_editPolygon=action("Edit Polygon...","actionEditPolygon",[this]{editPolygon();});
     commandButton(m_centerline,drawGrid,0,2);
-    commandButton(m_point,drawGrid,2,2);commandButton(m_polygon,drawGrid,0,3);commandButton(m_editPolygon,drawGrid,1,3);
-    m_polygonSides=new QSpinBox;m_polygonSides->setObjectName("polygonSides");m_polygonSides->setRange(3,999);m_polygonSides->setValue(6);m_polygonSides->setPrefix("Sides: ");m_polygonSides->setToolTip("Polygon side count");m_polygonSides->setMaximumWidth(105);drawGrid->addWidget(m_polygonSides,2,3);
-    connect(m_polygonSides,&QSpinBox::valueChanged,m_viewport,&CadViewport::setPolygonSides);
+    commandButton(m_point,drawGrid,2,2);commandButton(m_polygon,drawGrid,0,3);
+    m_polygon->setToolTip("Regular hexagon: click the center, then set size and orientation");
     commandGroup(sketchButtons, "Modify", modifyGrid);
     const QList<QPair<QString, const char*>> modifyCommands = {
         {"Trim Entities", "actionTrimEntities"}, {"Convert Entities", "actionConvertEntities"},
@@ -427,7 +427,9 @@ MainWindow::MainWindow(QWidget* parent)
     m_tree->setHeaderHidden(true);
     m_tree->setMinimumSize(240, 170);
     m_tree->setIndentation(17);
-    m_tree->setIconSize(QSize(18, 18));
+    m_tree->setIconSize(QSize(16, 16));
+    m_tree->setUniformRowHeights(true);
+    m_tree->setFrameShape(QFrame::NoFrame);
     historySplitter->addWidget(m_tree);
     auto* geometryPanel = new QWidget;
     auto* geometryLayout = new QVBoxLayout(geometryPanel);
@@ -813,9 +815,12 @@ const document::Feature* MainWindow::selectedFeature() const
 void MainWindow::selectFeature(const std::string& id)
 {
     m_selectedId = id;
-    for (int i = 0; i < m_tree->topLevelItem(0)->childCount(); ++i) {
-        auto* item = m_tree->topLevelItem(0)->child(i);
-        if (item->data(0, Qt::UserRole).toString().toStdString() == id) { m_tree->setCurrentItem(item); return; }
+    for (QTreeWidgetItemIterator it(m_tree); *it; ++it) {
+        if ((*it)->data(0, Qt::UserRole).toString().toStdString() == id) {
+            m_tree->setCurrentItem(*it);
+            m_tree->scrollToItem(*it);
+            return;
+        }
     }
 }
 
@@ -858,31 +863,65 @@ void MainWindow::updateDocumentUi()
     m_dimensions->setText(QString("%1 features | mm%2").arg(m_document.features().size()).arg(m_mode==WorkspaceMode::FeatureDraft ? " | Feature preview" : m_mode==WorkspaceMode::EditingSketch ? " | Editing sketch" : ""));
     {
         const QSignalBlocker blocker(m_tree);
+        // A shared sketch has several tree entries, all referring to one history ID.
+        // Remember its parent too so refreshes retain the selected occurrence.
+        const auto* current = m_tree->currentItem();
+        const QString currentId = current ? current->data(0, Qt::UserRole).toString() : QString{};
+        const QString parentId = current && current->parent()
+            ? current->parent()->data(0, Qt::UserRole).toString() : QString{};
+        std::map<QString, bool> expanded;
+        for (QTreeWidgetItemIterator it(m_tree); *it; ++it)
+            if ((*it)->childCount()) expanded[(*it)->data(0, Qt::UserRole).toString()] = (*it)->isExpanded();
         m_tree->clear();
         auto* part = new QTreeWidgetItem(m_tree, {name});
+        part->setData(0, Qt::UserRole, "part:");
         part->setIcon(0, commandIcon("Part"));
-        for (const auto& feature : m_document.features()) {
-            auto* item = new QTreeWidgetItem(part, {QString::fromStdString(feature.name)});
-            item->setData(0, Qt::UserRole, QString::fromStdString(feature.id));
-            item->setToolTip(0, QString::fromStdString(feature.id));
-            item->setIcon(0, commandIcon(feature.kind == document::FeatureKind::Sketch ? "Sketch"
-                : feature.kind == document::FeatureKind::Cut ? "Extruded Cut" : "Extrude"));
-            if (feature.id == m_selectedId) m_tree->setCurrentItem(item);
-        }
-        part->setExpanded(true);
-        auto* origin = new QTreeWidgetItem(m_tree, {"Origin"});
-        origin->setData(0, Qt::UserRole, "origin:");
-        origin->setIcon(0, commandIcon("Origin"));
+        part->setExpanded(expanded.count("part:") ? expanded.at("part:") : true);
         for (const auto plane : {modeling::SketchPlane::XY, modeling::SketchPlane::XZ, modeling::SketchPlane::YZ}) {
             const QString key = plane == modeling::SketchPlane::XY ? "origin:XY"
                 : plane == modeling::SketchPlane::XZ ? "origin:XZ" : "origin:YZ";
-            auto* reference = new QTreeWidgetItem(origin, {QString("%1 Plane").arg(modeling::referencePlaneName(plane))});
+            auto* reference = new QTreeWidgetItem(part, {QString("%1 Plane").arg(modeling::referencePlaneName(plane))});
             reference->setIcon(0, commandIcon("Plane"));
             reference->setData(0, Qt::UserRole, key);
             reference->setToolTip(0, QString("%1 origin reference plane").arg(modeling::referencePlaneName(plane)));
             if (m_selectedPlane && *m_selectedPlane == plane) m_tree->setCurrentItem(reference);
         }
-        origin->setExpanded(true);
+        auto* origin = new QTreeWidgetItem(part, {"Origin"});
+        origin->setData(0, Qt::UserRole, "origin:");
+        origin->setIcon(0, commandIcon("Origin"));
+
+        std::map<std::string, const document::Feature*> sketches;
+        std::set<std::string> usedSketches;
+        for (const auto& feature : m_document.features()) {
+            if (feature.kind == document::FeatureKind::Sketch) sketches.emplace(feature.id, &feature);
+            if (feature.kind == document::FeatureKind::Extrude || feature.kind == document::FeatureKind::Cut)
+                usedSketches.insert(feature.sketchId);
+        }
+        QTreeWidgetItem* selectedItem = nullptr;
+        const auto addFeature = [&](QTreeWidgetItem* parent, const document::Feature& feature) {
+            auto* item = new QTreeWidgetItem(parent, {QString::fromStdString(feature.name)});
+            item->setData(0, Qt::UserRole, QString::fromStdString(feature.id));
+            item->setToolTip(0, QString::fromStdString(feature.name));
+            item->setIcon(0, commandIcon(feature.kind == document::FeatureKind::Sketch ? "Sketch"
+                : feature.kind == document::FeatureKind::Cut ? "Extruded Cut" : "Extrude"));
+            if (feature.id == m_selectedId && (!selectedItem ||
+                (currentId == QString::fromStdString(feature.id) && parentId == parent->data(0, Qt::UserRole).toString())))
+                selectedItem = item;
+            return item;
+        };
+        for (const auto& feature : m_document.features()) {
+            if (feature.kind == document::FeatureKind::Sketch && usedSketches.count(feature.id)) continue;
+            auto* item = addFeature(part, feature);
+            if (feature.kind == document::FeatureKind::Extrude || feature.kind == document::FeatureKind::Cut) {
+                const auto source = sketches.find(feature.sketchId);
+                if (source != sketches.end()) addFeature(item, *source->second);
+            }
+            const auto key = QString::fromStdString(feature.id);
+            item->setExpanded(expanded.count(key) ? expanded.at(key) : true);
+        }
+        if (selectedItem) m_tree->setCurrentItem(selectedItem);
+        else if (currentId == "part:" && !m_selectedPlane) m_tree->setCurrentItem(part);
+        else if (currentId == "origin:" && !m_selectedPlane) m_tree->setCurrentItem(origin);
     }
     updateEntityList();
     updateActions();
@@ -938,12 +977,10 @@ void MainWindow::updateActions()
     m_rectangle->setEnabled(editing && !operation);
     m_circle->setEnabled(editing && !operation);
     for(auto* tool:{m_point,m_centerline,m_polygon})tool->setEnabled(editing && !operation);
-    m_polygonSides->setEnabled(editing && !operation && m_viewport->sketchTool()==modeling::EntityKind::Polygon);
     const auto selectedEntity=m_viewport->selectedSketchEntity();
     const auto selectedLine=m_editSketch?std::find_if(m_editSketch->entities.begin(),m_editSketch->entities.end(),[&](const auto& e){return e.id==selectedEntity;}):std::vector<modeling::SketchEntity>::const_iterator{};
     const bool lineSelected=m_editSketch && selectedLine!=m_editSketch->entities.end() && selectedLine->kind==modeling::EntityKind::Line;
     m_construction->setEnabled(editing && !operation && lineSelected);m_construction->setChecked(lineSelected && selectedLine->construction);
-    m_editPolygon->setEnabled(editing && !operation && m_editSketch && modeling::polygonForEntity(*m_editSketch,selectedEntity));
     m_finishSketch->setEnabled(editing && !operation);
     const auto* selected = selectedFeature();
     m_editFeature->setEnabled(!m_editSketch && !operation && !selecting && selected);

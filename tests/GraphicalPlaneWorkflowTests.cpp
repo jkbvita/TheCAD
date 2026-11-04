@@ -202,8 +202,7 @@ private slots:
         command(window, "actionFinishSketch");
         // Tree plane-first uses the real reference and has no plane-choice dialog.
         auto* tree = window.findChild<QTreeWidget*>("featureTree");
-        auto* origin = tree->topLevelItem(1);
-        tree->setCurrentItem(origin->child(1));
+        tree->setCurrentItem(tree->topLevelItem(0)->child(1));
         command(window, "actionCreateSketch");
         QCOMPARE(window.document().features().back().sketch.plane, modeling::SketchPlane::XZ);
         command(window, "actionFinishSketch");
@@ -218,9 +217,9 @@ private slots:
         QCOMPARE(window.document().features().size(), std::size_t(5));
         for (int i = 0; i < 3; ++i) {
             QCOMPARE(window.document().features()[std::size_t(i)].sketch.plane, static_cast<modeling::SketchPlane>(i));
-            tree->setCurrentItem(tree->topLevelItem(0)->child(i));
+            tree->setCurrentItem(tree->topLevelItem(0)->child(i + 4));
             if (i == 0) {
-                const auto rectangle = tree->visualItemRect(tree->topLevelItem(0)->child(i));
+                const auto rectangle = tree->visualItemRect(tree->topLevelItem(0)->child(i + 4));
                 QTest::mouseClick(tree->viewport(), Qt::LeftButton, Qt::NoModifier, rectangle.center());
                 QTest::mouseDClick(tree->viewport(), Qt::LeftButton, Qt::NoModifier, rectangle.center());
                 QApplication::processEvents();
