@@ -19,7 +19,8 @@ The finite reference graphics do not limit the infinite sketching plane. See the
 ## Sketching and modeling
 
 - Empty parts, origin-plane sketches and sketches on selected planar solid faces.
-- Distinct translucent reference planes and model-space global axes.
+- Subtle translucent planes with blue/orange boundaries, dashed centerlines and plane-aligned labels.
+- Model-space origin points and axis arrowheads; filled blue/orange sketch endpoints.
 - Closed-region recognition alongside dangling open lines.
 - Antialiased continuous lines, exact origin/endpoint snapping and always-visible endpoint markers.
 - Select-mode endpoint dragging, transactional joining and connected-geometry updates.

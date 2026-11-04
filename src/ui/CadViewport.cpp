@@ -1,3 +1,9 @@
+#include <Geom_Axis2Placement.hxx>
+#include <Image_PixMap.hxx>
+#include <Graphic3d_AspectMarker3d.hxx>
+#include <BRep_Builder.hxx>
+#include <TopoDS_Compound.hxx>
+#include <Quantity_ColorRGBA.hxx>
 #include <StdSelect_BRepOwner.hxx>
 #include <TopExp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
@@ -40,8 +46,54 @@
 #include <algorithm>
 #include <cmath>
 #include <set>
+#include <map>
+#include <tuple>
 
 namespace thecad::ui {
+namespace {
+// Flat antialiased sprite, with a fine dark rim like the reference endpoints.
+// The texture dimensions are physical pixels; model geometry is unchanged.
+Handle(Prs3d_PointAspect) filledPoint(const Quantity_Color& color,double diameter)
+{
+    using Key=std::tuple<double,double,double,double>;
+    static std::map<Key,Handle(Prs3d_PointAspect)> cache;
+    const Key key{color.Red(),color.Green(),color.Blue(),diameter};
+    if(const auto found=cache.find(key);found!=cache.end())return found->second;
+    const int size=std::max(5,int(std::ceil(diameter+2)));
+    Handle(Image_PixMap) pixels=new Image_PixMap;
+    pixels->InitZero(Image_Format_RGBA,size,size);
+    const double center=(size-1)*0.5,radius=diameter*0.5;
+    for(int y=0;y<size;++y)for(int x=0;x<size;++x) {
+        const double distance=std::hypot(x-center,y-center);
+        const float alpha=float(std::clamp(radius+0.5-distance,0.0,1.0));
+        const double fill=std::clamp(radius-0.7-distance,0.0,1.0);
+        const Quantity_Color rim(0.025,0.025,0.035,Quantity_TOC_RGB);
+        const Quantity_Color pixel(rim.Red()+(color.Red()-rim.Red())*fill,
+            rim.Green()+(color.Green()-rim.Green())*fill,rim.Blue()+(color.Blue()-rim.Blue())*fill,Quantity_TOC_RGB);
+        pixels->SetPixelColor(x,y,Quantity_ColorRGBA(pixel,alpha));
+    }
+    Handle(Prs3d_PointAspect) aspect=new Prs3d_PointAspect(new Graphic3d_AspectMarker3d(pixels));
+    cache.emplace(key,aspect);return aspect;
+}
+Handle(AIS_Trihedron) datumArrow(const gp_Pnt& origin,const gp_Dir& direction,double length,const Quantity_Color& color)
+{
+    const gp_Vec fallback=std::abs(direction.Z())<0.9?gp_Vec(0,0,1):gp_Vec(0,1,0);
+    const gp_Dir normal(gp_Vec(direction).Crossed(fallback));
+    Handle(AIS_Trihedron) arrow=new AIS_Trihedron(new Geom_Axis2Placement(gp_Ax2(origin,normal,direction)));
+    arrow->SetSize(length);arrow->SetDatumDisplayMode(Prs3d_DM_Shaded);
+    arrow->Attributes()->DatumAspect()->SetDrawDatumAxes(Prs3d_DatumAxes_XAxis);
+    arrow->Attributes()->DatumAspect()->SetDrawLabels(Standard_False);
+    arrow->SetDrawArrows(Standard_True);
+    arrow->SetDatumPartColor(Prs3d_DatumParts_XAxis,color);
+    arrow->SetArrowColor(Prs3d_DatumParts_XAxis,color);
+    arrow->SetDatumPartColor(Prs3d_DatumParts_Origin,Quantity_Color(Quantity_NOC_RED));
+    // Native datum presentations support shaded arrows and infinite bounds
+    // together, preserving Fit All without AIS_Shape's wireframe fallback.
+    arrow->SetInfiniteState(Standard_True);
+    return arrow;
+}
+}
+
 
 CadViewport::CadViewport(const TopoDS_Shape& shape, QWidget* parent)
     : QWidget(parent), m_shape(shape)
@@ -135,10 +187,11 @@ void CadViewport::releaseViewer()
 {
     for (auto& plane : m_referencePlanes) { plane.Nullify(); }
     for (auto& label : m_planeLabels) { label.Nullify(); }
+    for(auto& lines:m_planeCenterlines) lines.Nullify();
+    m_globalOrigin.Nullify();
     for (auto& axis : m_sketchAxes) { axis.Nullify(); }
     m_sketchOrigin.Nullify();
     for(auto& axis:m_globalAxes) axis.Nullify();
-    for(auto& label:m_globalAxisLabels) label.Nullify();
     m_pointPresentations.clear();
     m_interactionLabel.Nullify();
     m_inferenceGuides.clear();
@@ -290,6 +343,7 @@ void CadViewport::updateReferencePlanes()
     for (auto& label : m_planeLabels) {
         if (!label.IsNull()) { m_context->Remove(label, Standard_False); label.Nullify(); }
     }
+    for(auto& lines:m_planeCenterlines) {if(!lines.IsNull())m_context->Remove(lines,Standard_False);lines.Nullify();}
     if (m_planesVisible) {
         m_planeHalfExtent = 50.0; // Model-space default for an empty part, not screen pixels.
         if (!m_shape.IsNull()) {
@@ -315,7 +369,23 @@ void CadViewport::updateReferencePlanes()
             const modeling::Point2 corner = i == 1 ? modeling::Point2{-m_planeHalfExtent, m_planeHalfExtent}
                                                    : modeling::Point2{m_planeHalfExtent, m_planeHalfExtent};
             label->SetPosition(modeling::sketchPoint(type, corner));
-            label->SetHeight(16.0 * devicePixelRatioF());
+            const auto frame=modeling::sketchAxes(type);
+            label->SetOrientation3D(gp_Ax2(modeling::sketchPoint(type,corner),frame.Direction(),frame.XDirection()));
+            label->SetFlipping(Standard_True);
+            label->SetHJustification(Graphic3d_HTA_RIGHT);
+            label->SetVJustification(Graphic3d_VTA_TOP);
+            label->SetFontAspect(Font_FA_Italic);
+            label->SetHeight(15.0 * devicePixelRatioF());
+            BRep_Builder builder;TopoDS_Compound lines;builder.MakeCompound(lines);
+            for(const bool horizontal:{false,true}) {
+                const auto a=horizontal?modeling::Point2{-m_planeHalfExtent,0}:modeling::Point2{0,-m_planeHalfExtent};
+                const auto b=horizontal?modeling::Point2{m_planeHalfExtent,0}:modeling::Point2{0,m_planeHalfExtent};
+                builder.Add(lines,BRepBuilderAPI_MakeEdge(modeling::sketchPoint(type,a),modeling::sketchPoint(type,b)).Shape());
+            }
+            m_planeCenterlines[i]=new AIS_Shape(lines);
+            m_planeCenterlines[i]->Attributes()->SetWireAspect(new Prs3d_LineAspect(Quantity_Color(Quantity_NOC_GRAY20),Aspect_TOL_DASH,devicePixelRatioF()));
+            m_planeCenterlines[i]->SetInfiniteState(Standard_True);
+            m_context->Display(m_planeCenterlines[i],AIS_WireFrame,-1,Standard_False);
             label->SetInfiniteState(Standard_True);
             m_context->Display(label, 0, -1, Standard_False); // Labels are never pick targets.
         }
@@ -333,15 +403,14 @@ void CadViewport::updatePlaneStyles()
         const auto type = static_cast<modeling::SketchPlane>(i);
         const bool selected = m_selectedPlane && *m_selectedPlane == type;
         const bool hovered = m_hoveredPlane && *m_hoveredPlane == type;
-        const Quantity_Color color = selected ? Quantity_Color(0.20, 0.95, 0.45, Quantity_TOC_RGB)
-            : hovered ? Quantity_Color(1.0, 0.65, 0.10, Quantity_TOC_RGB)
-                      : (i==0 ? Quantity_Color(0.45,0.65,0.92,Quantity_TOC_RGB) : i==1 ? Quantity_Color(0.50,0.78,0.58,Quantity_TOC_RGB) : Quantity_Color(0.78,0.58,0.82,Quantity_TOC_RGB));
-        plane->SetColor(color);
-        plane->SetTransparency(selected ? 0.35 : hovered ? 0.45 : 0.62);
-        plane->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(color, Aspect_TOL_SOLID, selected ? 3.0 : 2.0));
+        const Quantity_Color color = (selected || hovered) ? Quantity_Color(1.0,0.42,0.02,Quantity_TOC_RGB)
+            : (i==1 ? Quantity_Color(0.25,0.42,1.0,Quantity_TOC_RGB) : Quantity_Color(0.09,0.18,0.42,Quantity_TOC_RGB));
+        plane->SetColor(Quantity_Color(0.72,0.78,0.90,Quantity_TOC_RGB));
+        plane->SetTransparency(0.88);
+        plane->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(color,Aspect_TOL_SOLID,(selected||hovered?1.5:1.0)*devicePixelRatioF()));
         m_context->Redisplay(plane, Standard_False);
         if (!m_planeLabels[std::size_t(i)].IsNull()) {
-            m_planeLabels[std::size_t(i)]->SetColor(selected || hovered ? color : Quantity_Color(Quantity_NOC_GRAY25));
+            m_planeLabels[std::size_t(i)]->SetColor(i==1 ? Quantity_Color(0.25,0.42,1.0,Quantity_TOC_RGB) : Quantity_Color(0.09,0.18,0.42,Quantity_TOC_RGB));
             m_context->Redisplay(m_planeLabels[std::size_t(i)], Standard_False);
         }
     }
@@ -382,21 +451,17 @@ void CadViewport::updateGlobalAxes()
 {
     if(!isReady()) return;
     for(auto& axis:m_globalAxes) {if(!axis.IsNull()) m_context->Remove(axis,Standard_False);axis.Nullify();}
-    for(auto& label:m_globalAxisLabels) {if(!label.IsNull())m_context->Remove(label,Standard_False);label.Nullify();}
+    if(!m_globalOrigin.IsNull()){m_context->Remove(m_globalOrigin,Standard_False);m_globalOrigin.Nullify();}
     if(m_sketchEditing) return;
+    m_globalOrigin=new AIS_Point(new Geom_CartesianPoint(gp_Pnt(0,0,0)));
+    m_globalOrigin->Attributes()->SetPointAspect(filledPoint(Quantity_Color(Quantity_NOC_RED),4.0*devicePixelRatioF()));
+    m_globalOrigin->SetInfiniteState(Standard_True);m_context->Display(m_globalOrigin,0,-1,Standard_False);
     const double length=std::max(5.0,m_planeHalfExtent*0.25);
     for(int i=0;i<3;++i) {
         const gp_Vec direction(i==0?1:0,i==1?1:0,i==2?1:0);
-        m_globalAxes[i]=new AIS_Shape(BRepBuilderAPI_MakeEdge(gp_Pnt(0,0,0),gp_Pnt(0,0,0).Translated(direction*length)).Shape());
-        m_globalAxes[i]->SetColor(i==0?Quantity_NOC_RED:i==1?Quantity_NOC_GREEN:Quantity_NOC_BLUE);
-        m_globalAxes[i]->SetWidth(2.0*devicePixelRatioF());m_globalAxes[i]->SetInfiniteState(Standard_True);
-        m_context->Display(m_globalAxes[i],AIS_WireFrame,-1,Standard_False);
-        m_globalAxisLabels[i]=new AIS_TextLabel;
-        m_globalAxisLabels[i]->SetText(TCollection_ExtendedString(i==0?"+X":i==1?"+Y":"+Z"));
-        m_globalAxisLabels[i]->SetPosition(gp_Pnt(0,0,0).Translated(direction*length));
-        m_globalAxisLabels[i]->SetColor(i==0?Quantity_NOC_RED:i==1?Quantity_NOC_GREEN:Quantity_NOC_BLUE);
-        m_globalAxisLabels[i]->SetHeight(13.0*devicePixelRatioF());m_globalAxisLabels[i]->SetInfiniteState(Standard_True);
-        m_context->Display(m_globalAxisLabels[i],0,-1,Standard_False);
+        const Quantity_Color color(i==0?Quantity_NOC_RED:i==1?Quantity_NOC_GREEN:Quantity_NOC_BLUE);
+        m_globalAxes[i]=datumArrow(gp_Pnt(0,0,0),gp_Dir(direction),length,color);
+        m_context->Display(m_globalAxes[i],0,-1,Standard_False);
     }
 }
 
@@ -410,27 +475,19 @@ void CadViewport::updateSketchAxes()
     if (!m_sketchOrigin.IsNull()) { m_context->Remove(m_sketchOrigin, Standard_False); m_sketchOrigin.Nullify(); }
     if (m_sketchEditing && m_sketch) {
         const auto axes = modeling::sketchAxes(*m_sketch);
-        const double span = std::max(m_view->Camera()->Scale(), 1.0);
+        const double span = std::max(m_view->Camera()->Scale(), 1.0)*0.04;
         for (int i = 0; i < 2; ++i) {
             const gp_Vec direction(i == 0 ? axes.XDirection() : axes.YDirection());
-            const auto shape = BRepBuilderAPI_MakeEdge(axes.Location().Translated(-direction * span),
-                                                       axes.Location().Translated(direction * span)).Shape();
-            auto& axis = m_sketchAxes[std::size_t(i)];
-            axis = new AIS_Shape(shape);
+            auto& axis=m_sketchAxes[std::size_t(i)];
+            axis=datumArrow(axes.Location(),gp_Dir(direction),span,Quantity_Color(Quantity_NOC_RED));
             axis->SetZLayer(Graphic3d_ZLayerId_Topmost);
-            axis->SetColor(i == 0 ? Quantity_NOC_RED : Quantity_NOC_GREEN);
-            axis->SetWidth(1.5);
-            axis->SetInfiniteState(Standard_True); // Guides must not change Fit All or restrict sketch coordinates.
-            m_context->Display(axis, AIS_WireFrame, -1, Standard_False);
+            m_context->Display(axis,0,-1,Standard_False);
         }
-        m_sketchOrigin = new AIS_TextLabel;
+        m_sketchOrigin = new AIS_Point(new Geom_CartesianPoint(axes.Location()));
         m_sketchOrigin->SetZLayer(Graphic3d_ZLayerId_Topmost);
-        m_sketchOrigin->SetText(TCollection_ExtendedString("O"));
-        m_sketchOrigin->SetPosition(axes.Location());
-        m_sketchOrigin->SetColor(Quantity_NOC_GRAY30);
-        m_sketchOrigin->SetHeight(14.0 * devicePixelRatioF());
+        m_sketchOrigin->Attributes()->SetPointAspect(filledPoint(Quantity_Color(Quantity_NOC_RED3),4.0*devicePixelRatioF()));
         m_sketchOrigin->SetInfiniteState(Standard_True);
-        m_context->Display(m_sketchOrigin, 0, -1, Standard_False);
+        m_context->Display(m_sketchOrigin,0,-1,Standard_False);
     }
     update();
 }
@@ -745,10 +802,9 @@ void CadViewport::updatePointPresentation()
             });
             if(!origin && !hovered && !selected && !lineEndpoint && entry.first.entityId!=m_selectedEntity) continue;
             Handle(AIS_Point) marker=new AIS_Point(new Geom_CartesianPoint(modeling::sketchPoint(*m_sketch,entry.second)));
-            const Quantity_Color color(selected ? Quantity_NOC_GREEN4 : hovered ? Quantity_NOC_ORANGE : origin ? Quantity_NOC_RED3 : Quantity_NOC_BLUE3);
+            const Quantity_Color color(hovered ? Quantity_NOC_ORANGE : origin ? Quantity_NOC_RED3 : Quantity_NOC_BLUE);
             marker->SetZLayer(Graphic3d_ZLayerId_Topmost);
-            marker->Attributes()->SetPointAspect(new Prs3d_PointAspect(origin ? Aspect_TOM_O_PLUS : Aspect_TOM_O_POINT,
-                color,(selected ? 5.0 : hovered ? 4.5 : origin ? 3.5 : 2.5)*devicePixelRatioF()));
+            marker->Attributes()->SetPointAspect(filledPoint(color,(hovered ? 9.0 : selected ? 9.0 : origin ? 4.0 : 7.0)*devicePixelRatioF()));
             marker->SetInfiniteState(Standard_True);
             m_context->Display(marker,0,-1,Standard_False);
             m_context->SetDisplayPriority(marker,Graphic3d_DisplayPriority_Topmost);

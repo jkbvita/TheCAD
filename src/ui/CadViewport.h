@@ -5,6 +5,7 @@
 #include <array>
 #include <AIS_TextLabel.hxx>
 #include <AIS_Point.hxx>
+#include <AIS_Trihedron.hxx>
 #include <optional>
 #include <QMetaType>
 #include <QPoint>
@@ -148,10 +149,11 @@ private:
     Handle(AIS_Shape) m_previewPresentation;
     std::array<Handle(AIS_Shape), 3> m_referencePlanes;
     std::array<Handle(AIS_TextLabel), 3> m_planeLabels;
-    std::array<Handle(AIS_Shape), 2> m_sketchAxes;
-    std::array<Handle(AIS_Shape), 3> m_globalAxes;
-    std::array<Handle(AIS_TextLabel), 3> m_globalAxisLabels;
-    Handle(AIS_TextLabel) m_sketchOrigin;
+    std::array<Handle(AIS_Shape), 3> m_planeCenterlines;
+    std::array<Handle(AIS_Trihedron), 2> m_sketchAxes;
+    std::array<Handle(AIS_Trihedron), 3> m_globalAxes;
+    Handle(AIS_Point) m_sketchOrigin;
+    Handle(AIS_Point) m_globalOrigin;
     std::optional<modeling::SketchPlane> m_hoveredPlane;
     std::optional<modeling::SketchPlane> m_selectedPlane;
     bool m_planesVisible = false;

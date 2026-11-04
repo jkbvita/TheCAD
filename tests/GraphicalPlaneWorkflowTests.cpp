@@ -163,7 +163,7 @@ private slots:
             QApplication::sendEvent(viewport, &hover);
             QCOMPARE(viewport->m_hoveredPlane, std::optional<modeling::SketchPlane>(plane));
             const auto index = static_cast<std::size_t>(plane);
-            QVERIFY(std::abs(viewport->m_referencePlanes[index]->Transparency() - 0.45) < 1e-6);
+            QVERIFY(std::abs(viewport->m_referencePlanes[index]->Transparency() - 0.88) < 1e-6);
             QEvent leave(QEvent::Leave);
             QApplication::sendEvent(viewport, &leave);
             QVERIFY(!viewport->m_hoveredPlane);
@@ -194,7 +194,7 @@ private slots:
         QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, *selectedPixel);
         QCOMPARE(window.document().features().size(), std::size_t(3));
         QCOMPARE(viewport->m_selectedPlane, std::optional<modeling::SketchPlane>(modeling::SketchPlane::XY));
-        QVERIFY(std::abs(viewport->m_referencePlanes[0]->Transparency()-0.35) < 1e-6);
+        QVERIFY(std::abs(viewport->m_referencePlanes[0]->Transparency()-0.88) < 1e-6);
         command(window, "actionCreateSketch");
         QVERIFY(viewport->m_sketchEditing);
         QCOMPARE(window.document().features().size(), std::size_t(4));
