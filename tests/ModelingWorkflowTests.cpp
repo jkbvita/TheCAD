@@ -31,6 +31,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 #include <cmath>
 
 namespace thecad::ui {
@@ -74,6 +75,10 @@ private:
     }
     void createSketch(WorkflowWindow& window)
     {
+        // Exposure alone does not guarantee Windows has activated the window.
+        // Native shortcuts require an active window even with direct Qt clicks.
+        window.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&window));
         window.findChild<QTabWidget*>("modelingTabs")->setCurrentIndex(1);
         command(window, "actionCreateSketch");
         auto* viewport = window.findChild<CadViewport*>("cadViewport");
@@ -134,20 +139,21 @@ private:
         QVERIFY(window.errors.isEmpty());
     }
 private slots:
-    void newSketchToolsConversionPolygonEditingAndHistory() {
+    void newSketchToolsConversionHexagonAndHistory() {
         using namespace modeling;WorkflowWindow window;window.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&window));auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
         command(window,"actionCenterline");QVERIFY(window.findChild<QAction*>("actionCenterline")->isChecked());QVERIFY(!window.findChild<QAction*>("actionLine")->isChecked());
         QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{-30,-30}));QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{30,-30}));QVERIFY(viewport->m_sketch->entities[0].construction);
         command(window,"actionSelectSketchEntity");QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{0,-30}));const auto lineId=viewport->m_sketch->entities[0].id;
         command(window,"actionConstructionLine");QVERIFY(!viewport->m_sketch->entities[0].construction);QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);QVERIFY(viewport->m_sketch->entities[0].construction);QCOMPARE(viewport->m_sketch->entities[0].id,lineId);
-        command(window,"actionPolygon");QCOMPARE(window.findChild<QSpinBox*>("polygonSides")->value(),6);
+        command(window,"actionPolygon");QVERIFY(!window.findChild<QSpinBox*>("polygonSides"));QVERIFY(!window.findChild<QAction*>("actionEditPolygon"));
         QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{0,0}));const auto pixel=point(viewport,{18,0});QMouseEvent move(QEvent::MouseMove,pixel,viewport->mapToGlobal(pixel),Qt::NoButton,Qt::NoButton,Qt::NoModifier);QApplication::sendEvent(viewport,&move);
         QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,pixel);QCOMPARE(viewport->m_sketch->polygons.size(),std::size_t(1));QCOMPARE(viewport->m_sketch->polygons[0].edges.size(),std::size_t(6));
         const auto edgeIds=viewport->m_sketch->polygons[0].edges;command(window,"actionSelectSketchEntity");
         auto first=viewport->m_sketch->entities[2];QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{(first.first.x+first.second.x)/2,(first.first.y+first.second.y)/2}));
-        QTimer::singleShot(0,&window,[&]{auto* dialog=window.findChild<QDialog*>("polygonEditor");QVERIFY(dialog);dialog->findChild<QDoubleSpinBox*>("polygonRadius")->setValue(24);dialog->findChild<QDoubleSpinBox*>("polygonAngle")->setValue(20);QTest::mouseClick(dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok),Qt::LeftButton);});
-        command(window,"actionEditPolygon");QVERIFY(window.errors.isEmpty());QCOMPARE(viewport->m_sketch->polygons[0].edges,edgeIds);QVERIFY(std::abs(polygonParameters(*viewport->m_sketch,viewport->m_sketch->polygons[0]).radius-24)<1e-6);
-        QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);QVERIFY(polygonParameters(*viewport->m_sketch,viewport->m_sketch->polygons[0]).radius<19);QTest::keyClick(viewport,Qt::Key_Y,Qt::ControlModifier);QVERIFY(std::abs(polygonParameters(*viewport->m_sketch,viewport->m_sketch->polygons[0]).radius-24)<1e-6);
+        QVERIFY(!window.findChild<QDialog*>("polygonEditor"));
+        QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);QVERIFY(viewport->m_sketch->polygons.empty());
+        QTest::keyClick(viewport,Qt::Key_Y,Qt::ControlModifier);QCOMPARE(viewport->m_sketch->polygons[0].edges,edgeIds);
+        validatePolygons(*viewport->m_sketch,true);
         window.findChild<QTabWidget*>("modelingTabs")->setCurrentIndex(0);command(window,"actionExtrude");window.findChild<QListWidget*>("operationContour")->setCurrentRow(0,QItemSelectionModel::ClearAndSelect);window.findChild<QDoubleSpinBox*>("featureLength")->setValue(5);confirmOperation(window);QVERIFY(volume(window.document().shape())>1000);
         QTemporaryDir directory;window.path=directory.filePath("tools.thepart");command(window,"actionSaveAs");command(window,"actionNew");command(window,"actionOpen");QCOMPARE(window.document().features()[0].sketch.polygons[0].edges,edgeIds);QVERIFY(window.document().features()[0].sketch.entities[0].construction);QVERIFY(window.errors.isEmpty());window.close();
     }
@@ -285,7 +291,7 @@ private slots:
         for(int i=0;i<4;++i){sketch.relations.push_back({"join-"+std::to_string(i),RelationKind::Coincident,{sketch.entities[i].id,PointRole::Second},{sketch.entities[(i+1)%4].id,PointRole::First}});sketch.relations.push_back({"axis-"+std::to_string(i),i%2?RelationKind::Vertical:RelationKind::Horizontal,{sketch.entities[i].id,PointRole::First},{sketch.entities[i].id,PointRole::Second}});}sketch.relations.push_back({"origin",RelationKind::Coincident,{"a",PointRole::First},{}});
         SketchDimension width;width.id="width";width.kind=DimensionKind::HorizontalDistance;width.first={"a",PointRole::First};width.second={"a",PointRole::Second};width.value=50;width.annotation={25,-10};auto height=width;height.id="height";height.kind=DimensionKind::VerticalDistance;height.second={"d",PointRole::First};height.value=30;height.annotation={-10,15};sketch.dimensions={width,height};viewport->sketchChanged(sketch);
         window.findChild<QTabWidget*>("modelingTabs")->setCurrentIndex(0);command(window,"actionExtrude");window.findChild<QListWidget*>("operationContour")->setCurrentRow(0,QItemSelectionModel::ClearAndSelect);window.findChild<QDoubleSpinBox*>("featureLength")->setValue(10);confirmOperation(window);QVERIFY(std::abs(volume(window.document().shape())-15000)<1e-6);
-        auto* tree=window.findChild<QTreeWidget*>("featureTree");QTreeWidgetItem* item=nullptr;for(int i=0;i<tree->topLevelItemCount();++i){auto* root=tree->topLevelItem(i);for(int n=0;n<root->childCount();++n)if(root->child(n)->data(0,Qt::UserRole).toString()=="sketch-1")item=root->child(n);}QVERIFY(item);tree->setCurrentItem(item);command(window,"actionEditFeature");
+        auto* tree=window.findChild<QTreeWidget*>("featureTree");QTreeWidgetItem* item=nullptr;for(QTreeWidgetItemIterator it(tree);*it;++it)if((*it)->data(0,Qt::UserRole).toString()=="sketch-1")item=*it;QVERIFY(item);tree->setCurrentItem(item);command(window,"actionEditFeature");
         command(window,"actionSelectSketchEntity");QTest::mouseDClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{25,-10}));auto* value=window.findChild<QDoubleSpinBox*>("smartDimensionValue");QVERIFY(value);value->setValue(80);QTest::mouseClick(window.findChild<QDialogButtonBox*>("smartDimensionButtons")->button(QDialogButtonBox::Ok),Qt::LeftButton);QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
         QVERIFY(std::abs(volume(viewport->m_shape)-24000)<1e-6);command(window,"actionFinishSketch");QVERIFY(std::abs(volume(window.document().shape())-24000)<1e-6);QCOMPARE(window.document().features()[0].sketch.dimensions[0].value,80.0);
         viewport->setFocus();QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);QVERIFY(viewport->m_sketchEditing);QCOMPARE(viewport->m_sketch->dimensions[0].value,50.0);QVERIFY(std::abs(volume(viewport->m_shape)-15000)<1e-6);
@@ -474,8 +480,8 @@ private slots:
         const double area = 60 * 40 - std::acos(-1.0) * 8 * 8;
         QVERIFY(std::abs(volume(window.document().shape()) - area * 30) < 1e-4);
         auto* tree = window.findChild<QTreeWidget*>("featureTree");
-        QCOMPARE(tree->topLevelItem(0)->childCount(), 4);
-        tree->setCurrentItem(tree->topLevelItem(0)->child(1));
+        QCOMPARE(tree->topLevelItem(0)->childCount(), 6);
+        tree->setCurrentItem(tree->topLevelItem(0)->child(4));
         command(window, "actionEditFeature");
         operation = window.findChild<QWidget*>("operationPanel");
         QVERIFY(operation);
@@ -497,7 +503,7 @@ private slots:
         command(window, "actionNew");
         QVERIFY(window.document().features().empty());
         command(window, "actionOpen");
-        QCOMPARE(tree->topLevelItem(0)->childCount(), 4);
+        QCOMPARE(tree->topLevelItem(0)->childCount(), 6);
         QCOMPARE(window.document().features().at(1).length, 45.0);
         QCOMPARE(window.document().features().at(2).sketch.entities.front().radius, 8.0);
         QVERIFY(window.document().features().at(3).throughAll);
@@ -510,6 +516,7 @@ private slots:
         if (!artifactDirectory.isEmpty()) {
             QVERIFY(QDir().mkpath(artifactDirectory));
             window.document().save(artifactDirectory + "/rectangle-hole.thepart");
+            QVERIFY(tree->grab().save(artifactDirectory + "/part-tree.png"));
             viewport->m_view->Redraw();
             QVERIFY(viewport->m_view->Dump((artifactDirectory + "/rectangle-hole.png").toUtf8().constData()));
         }

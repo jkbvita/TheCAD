@@ -62,10 +62,10 @@ private slots:
         using namespace modeling;viewport->setSketchTool(EntityKind::Line,true);click({-30,-20});hover({30,-20});click({30,-20});
         QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(1));QVERIFY(viewport->m_sketch->entities[0].construction);QVERIFY(!viewport->m_constructionPresentation.IsNull());QVERIFY(closedContours(*viewport->m_sketch).empty());
         viewport->beginSketch({});viewport->setSketchTool(EntityKind::Polygon);click({0,0});hover({20,0});QVERIFY(viewport->m_drawingPreview);QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(0));QVERIFY(!viewport->m_sketchPresentation.IsNull());
-        viewport->setPolygonSides(5);click({20,0});QCOMPARE(viewport->m_sketch->polygons.size(),std::size_t(1));QCOMPARE(viewport->m_sketch->polygons[0].edges.size(),std::size_t(5));QCOMPARE(closedContours(*viewport->m_sketch).size(),std::size_t(1));
+        click({20,0});QCOMPARE(viewport->m_sketch->polygons.size(),std::size_t(1));QCOMPARE(viewport->m_sketch->polygons[0].edges.size(),std::size_t(6));QCOMPARE(closedContours(*viewport->m_sketch).size(),std::size_t(1));
         viewport->selectSketchTool();const auto vertex=viewport->m_sketch->entities[1].first;QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,pixel(vertex));
         const auto target=pixel({25,8});QMouseEvent motion(QEvent::MouseMove,target,viewport->mapToGlobal(target),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);QApplication::sendEvent(viewport,&motion);QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,target);
-        validatePolygons(*viewport->m_sketch,true);QVERIFY(viewport->m_sketch->entities[1].first.y>1);viewport->setPolygonSides(6);
+        validatePolygons(*viewport->m_sketch,true);QVERIFY(viewport->m_sketch->entities[1].first.y>1);
     }
     void dimensionPlacementDragAndLiveGeometry() {
         using namespace modeling;

@@ -131,7 +131,7 @@ normal to that plane and sketch editing begins without another dialog. The
 selection graphics disappear; the sketch origin and local axes remain visible.
 
 For the plane-first workflow, select a visible plane in the viewport or one of
-the Origin references in the left tree, then click Sketch. The selected reference
+the Front, Top or Right plane entries in the left part tree, then click Sketch. The selected reference
 is used immediately. Front stores XY, Top stores XZ, and Right stores YZ. Their
 precise coordinate frames are documented in the
 [graphical-plane requirements](requirements/graphical-plane-selection.md).

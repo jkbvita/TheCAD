@@ -2,6 +2,9 @@
 #include <QStackedWidget>
 #include "ui/CadViewport.h"
 #include "document/PartDocument.h"
+#include <BRepGProp.hxx>
+#include <GProp_GProps.hxx>
+#include <cmath>
 
 #include <QAction>
 #include <QComboBox>
@@ -52,6 +55,107 @@ class MainWindowTest final : public QObject {
     Q_OBJECT
 
 private slots:
+    void consumedSketchIsSharedByEveryFeatureAndRemainsEditable()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        auto part = document::PartDocument::createEmpty();
+        modeling::Sketch sketch;
+        sketch.entities = {
+            {modeling::EntityKind::Circle, {0, 0}, {}, 5, "circle-a"},
+            {modeling::EntityKind::Circle, {30, 0}, {}, 4, "circle-b"}};
+        const auto sketchId = part.addSketch(sketch);
+        const auto path = directory.filePath("shared-sketch.thepart");
+        part.save(path);
+        TestWindow window;
+        window.openPath = path;
+        window.trigger("actionOpen");
+        auto* tree = window.findChild<QTreeWidget*>("featureTree");
+        QCOMPARE(tree->topLevelItemCount(), 1);
+        QCOMPARE(tree->topLevelItem(0)->childCount(), 5);
+        const auto sourceId = QString::fromStdString(sketchId);
+        QCOMPARE(tree->topLevelItem(0)->child(4)->data(0, Qt::UserRole).toString(), sourceId);
+
+        tree->setCurrentItem(tree->topLevelItem(0)->child(4));
+        window.trigger("actionExtrude");
+        auto* panel = window.findChild<QWidget*>("operationPanel");
+        QVERIFY(panel);
+        QCOMPARE(panel->findChild<QComboBox*>("operationSketch")->currentData().toString(), sourceId);
+        panel->findChild<QListWidget*>("operationContour")->setCurrentRow(0, QItemSelectionModel::ClearAndSelect);
+        panel->findChild<QDialogButtonBox*>("operationButtons")->button(QDialogButtonBox::Ok)->click();
+        QVERIFY(window.errors.isEmpty());
+        QCOMPARE(window.document().features().size(), std::size_t(2));
+        QCOMPARE(tree->topLevelItem(0)->childCount(), 5);
+        QCOMPARE(tree->topLevelItem(0)->child(4)->childCount(), 1);
+        QCOMPARE(tree->topLevelItem(0)->child(4)->child(0)->data(0, Qt::UserRole).toString(), sourceId);
+
+        // Undo exposes the unused sketch again; redo nests the same history entry.
+        window.trigger("actionUndo");
+        QCOMPARE(tree->topLevelItem(0)->child(4)->data(0, Qt::UserRole).toString(), sourceId);
+        QCOMPARE(tree->topLevelItem(0)->child(4)->childCount(), 0);
+        window.trigger("actionRedo");
+        QCOMPARE(tree->topLevelItem(0)->child(4)->childCount(), 1);
+
+        tree->setCurrentItem(tree->topLevelItem(0)->child(4)->child(0));
+        window.trigger("actionExtrude");
+        panel = window.findChild<QWidget*>("operationPanel");
+        QVERIFY(panel);
+        QCOMPARE(panel->findChild<QComboBox*>("operationSketch")->currentData().toString(), sourceId);
+        panel->findChild<QListWidget*>("operationContour")->setCurrentRow(1, QItemSelectionModel::ClearAndSelect);
+        tree->topLevelItem(0)->child(4)->setExpanded(false);
+        panel->findChild<QDialogButtonBox*>("operationButtons")->button(QDialogButtonBox::Ok)->click();
+        QVERIFY(window.errors.isEmpty());
+        QCOMPARE(window.document().features().size(), std::size_t(3));
+        QCOMPARE(tree->topLevelItem(0)->childCount(), 6);
+        QVERIFY(!tree->topLevelItem(0)->child(4)->isExpanded());
+        QCOMPARE(tree->topLevelItem(0)->child(5)->child(0)->data(0, Qt::UserRole).toString(), sourceId);
+
+        // A cut can reuse that sketch too, without creating a copied sketch.
+        tree->setCurrentItem(tree->topLevelItem(0)->child(5)->child(0));
+        window.trigger("actionExtrudedCut");
+        panel = window.findChild<QWidget*>("operationPanel");
+        QVERIFY(panel);
+        QCOMPARE(panel->findChild<QComboBox*>("operationSketch")->currentData().toString(), sourceId);
+        panel->findChild<QDoubleSpinBox*>("featureLength")->setValue(2);
+        panel->findChild<QListWidget*>("operationContour")->setCurrentRow(0, QItemSelectionModel::ClearAndSelect);
+        panel->findChild<QDialogButtonBox*>("operationButtons")->button(QDialogButtonBox::Ok)->click();
+        QVERIFY(window.errors.isEmpty());
+        QCOMPARE(window.document().features().size(), std::size_t(4));
+        QCOMPARE(tree->topLevelItem(0)->childCount(), 7);
+        for (int i = 4; i < 7; ++i) {
+            auto* feature = tree->topLevelItem(0)->child(i);
+            QCOMPARE(feature->childCount(), 1);
+            QCOMPARE(feature->child(0)->data(0, Qt::UserRole).toString(), sourceId);
+        }
+
+        // Edit through the second occurrence; all three dependent solids regenerate.
+        tree->setCurrentItem(tree->topLevelItem(0)->child(5)->child(0));
+        window.trigger("actionEditFeature");
+        QVERIFY(window.findChild<QAction*>("actionFinishSketch")->isEnabled());
+        window.findChild<QListWidget*>("sketchEntities")->setCurrentRow(0);
+        window.findChild<QDoubleSpinBox*>("propertyRadius")->setValue(6);
+        window.findChild<QPushButton*>("applyEntityProperties")->click();
+        window.trigger("actionFinishSketch");
+        QVERIFY(window.errors.isEmpty());
+        QCOMPARE(window.document().features().front().sketch.entities.front().radius, 6.0);
+        const double expectedVolume = std::acos(-1.0) * (36 * 8 + 16 * 10);
+        GProp_GProps properties;
+        BRepGProp::VolumeProperties(window.document().shape(), properties);
+        QVERIFY(std::abs(properties.Mass() - expectedVolume) < 1e-5);
+        QCOMPARE(tree->currentItem(), tree->topLevelItem(0)->child(5)->child(0));
+
+        window.trigger("actionSave");
+        window.trigger("actionNew");
+        window.trigger("actionOpen");
+        QCOMPARE(tree->topLevelItem(0)->childCount(), 7);
+        for (int i = 4; i < 7; ++i)
+            QCOMPARE(tree->topLevelItem(0)->child(i)->child(0)->data(0, Qt::UserRole).toString(), sourceId);
+        QCOMPARE(window.document().features().size(), std::size_t(4));
+        BRepGProp::VolumeProperties(window.document().shape(), properties);
+        QVERIFY(std::abs(properties.Mass() - expectedVolume) < 1e-5);
+        QVERIFY(window.errors.isEmpty());
+    }
+
     void fileMenuAndShortcuts()
     {
         TestWindow window;
@@ -361,7 +465,7 @@ private slots:
         modeling::Sketch sketch;sketch.entities.push_back({modeling::EntityKind::Rectangle,{0,0},{20,15},1});part.addSketch(sketch);
         const auto path=directory.filePath("clean-sketch.thepart");part.save(path);
         TestWindow window;window.openPath=path;window.trigger("actionOpen");QVERIFY(!window.isWindowModified());
-        auto* tree=window.findChild<QTreeWidget*>("featureTree");tree->setCurrentItem(tree->topLevelItem(0)->child(0));
+        auto* tree=window.findChild<QTreeWidget*>("featureTree");tree->setCurrentItem(tree->topLevelItem(0)->child(4));
         window.trigger("actionEditFeature");QVERIFY(!window.isWindowModified());
         window.trigger("actionExtrude");QVERIFY(window.findChild<QWidget*>("operationPanel"));
         window.trigger("actionCancelFeature");QVERIFY(window.findChild<QAction*>("actionFinishSketch")->isEnabled());
@@ -498,14 +602,16 @@ private slots:
         window.setWindowModified(false);
         auto* tree = window.findChild<QTreeWidget*>("featureTree");
         QVERIFY(tree);
-        QCOMPARE(tree->topLevelItemCount(), 2);
+        QCOMPARE(tree->topLevelItemCount(), 1);
         QCOMPARE(tree->topLevelItem(0)->text(0), QString("Untitled.thepart"));
-        QCOMPARE(tree->topLevelItem(1)->text(0), QString("Origin"));
+        QCOMPARE(tree->topLevelItem(0)->child(3)->text(0), QString("Origin"));
+        QCOMPARE(tree->topLevelItem(0)->childCount(), 4);
+        QCOMPARE(tree->topLevelItem(0)->child(3)->childCount(), 0);
         const QStringList names{"Front Plane", "Top Plane", "Right Plane"};
         const modeling::SketchPlane planes[] = {modeling::SketchPlane::XY,
             modeling::SketchPlane::XZ, modeling::SketchPlane::YZ};
         for (int index = 0; index < 3; ++index) {
-            auto* reference = tree->topLevelItem(1)->child(index);
+            auto* reference = tree->topLevelItem(0)->child(index);
             QCOMPARE(reference->text(0), names[index]);
             const auto before = window.document().features().size();
             tree->setCurrentItem(reference);
@@ -518,7 +624,7 @@ private slots:
             QVERIFY(window.findChild<QDialog*>("sketchPlaneDialog") == nullptr);
             window.trigger("actionFinishSketch");
         }
-        QCOMPARE(tree->topLevelItem(0)->childCount(), 3);
+        QCOMPARE(tree->topLevelItem(0)->childCount(), 7);
         window.savePath = directory.filePath("three-planes.thepart");
         window.trigger("actionSave");
         QVERIFY(!window.isWindowModified());
@@ -530,8 +636,8 @@ private slots:
         for (int index = 0; index < 3; ++index) {
             QCOMPARE(window.document().features().at(index).sketch.plane, planes[index]);
         }
-        QCOMPARE(tree->topLevelItem(0)->childCount(), 3);
-        QCOMPARE(tree->topLevelItem(1)->childCount(), 3);
+        QCOMPARE(tree->topLevelItem(0)->childCount(), 7);
+        QCOMPARE(tree->topLevelItemCount(), 1);
         QCOMPARE(window.errors.size(), 0);
     }
 
@@ -541,10 +647,11 @@ private slots:
         window.setWindowModified(false);
         auto* viewport = window.findChild<CadViewport*>();
         QVERIFY(viewport);
+        auto* tree = window.findChild<QTreeWidget*>("featureTree");
+        tree->setCurrentItem(tree->topLevelItem(0));
         viewport->referencePlaneSelected(modeling::SketchPlane::YZ);
         QVERIFY(window.document().features().empty());
         QVERIFY(!window.isWindowModified());
-        auto* tree = window.findChild<QTreeWidget*>("featureTree");
         QCOMPARE(tree->currentItem()->text(0), QString("Right Plane"));
         window.trigger("actionCreateSketch");
         QCOMPARE(window.document().features().size(), std::size_t(1));
