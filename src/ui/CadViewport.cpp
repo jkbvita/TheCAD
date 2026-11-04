@@ -1,3 +1,4 @@
+#include "modeling/ConstraintSolver.h"
 #include <Geom_Axis2Placement.hxx>
 #include <Image_PixMap.hxx>
 #include <Graphic3d_AspectMarker3d.hxx>
@@ -193,6 +194,7 @@ void CadViewport::releaseViewer()
     m_sketchOrigin.Nullify();
     for(auto& axis:m_globalAxes) axis.Nullify();
     m_pointPresentations.clear();
+    m_constraintLabels.clear();m_dimensionGuides.clear();
     m_interactionLabel.Nullify();
     m_inferenceGuides.clear();
     m_selectedEntityPresentation.Nullify();
@@ -573,6 +575,62 @@ void CadViewport::clearPreview()
         update();
     }
 }
+
+void CadViewport::setConstraintErrors(const std::vector<std::string>& ids){m_constraintErrors=ids;updateConstraintPresentation();update();}
+void CadViewport::setConstraintPicking(bool enabled) {selectSketchTool();m_constraintPicking=enabled;}
+void CadViewport::mouseDoubleClickEvent(QMouseEvent* event) {
+    if(m_sketchEditing && m_sketch && isReady() && event->button()==Qt::LeftButton) {
+        cancelPointDrag();
+        for(const auto& dimension:m_sketch->dimensions) {
+            const auto delta=event->position()-screenPoint(dimension.annotation);
+            if(std::abs(delta.x())<=55 && std::abs(delta.y())<=16){emit dimensionEditRequested(QString::fromStdString(dimension.id));event->accept();return;}
+        }
+    }
+    QWidget::mouseDoubleClickEvent(event);
+}
+void CadViewport::updateConstraintPresentation() {
+    if(!isReady())return;
+    for(auto& label:m_constraintLabels)m_context->Remove(label,Standard_False);m_constraintLabels.clear();
+    for(auto& guide:m_dimensionGuides)m_context->Remove(guide,Standard_False);m_dimensionGuides.clear();
+    if(!m_sketch)return;
+    const double unit=m_view->Camera()->Scale()/std::max(1,height());
+    const auto label=[&](modeling::Point2 position,const QString& text,const Quantity_Color& color,double size) {
+        Handle(AIS_TextLabel) item=new AIS_TextLabel;item->SetText(TCollection_ExtendedString(text.toStdWString().c_str()));
+        item->SetPosition(modeling::sketchPoint(*m_sketch,position));item->SetColor(color);item->SetHeight(size*devicePixelRatioF());item->SetZLayer(Graphic3d_ZLayerId_Topmost);item->SetInfiniteState(Standard_True);
+        m_context->Display(item,0,-1,Standard_False);m_constraintLabels.push_back(item);
+    };
+    const auto guide=[&](modeling::Point2 a,modeling::Point2 b,const Quantity_Color& color) {
+        if(std::hypot(a.x-b.x,a.y-b.y)<1e-7)return;
+        Handle(AIS_Shape) item=new AIS_Shape(BRepBuilderAPI_MakeEdge(modeling::sketchPoint(*m_sketch,a),modeling::sketchPoint(*m_sketch,b)).Shape());
+        item->SetColor(color);item->SetWidth(devicePixelRatioF());item->SetZLayer(Graphic3d_ZLayerId_Topmost);item->SetInfiniteState(Standard_True);m_context->Display(item,AIS_WireFrame,-1,Standard_False);m_dimensionGuides.push_back(item);
+    };
+    for(const auto& d:m_sketch->dimensions) {
+        const bool selected=d.first.entityId==m_selectedEntity || d.second.entityId==m_selectedEntity;
+        const bool error=std::find(m_constraintErrors.begin(),m_constraintErrors.end(),d.id)!=m_constraintErrors.end();
+        const Quantity_Color color(error?Quantity_NOC_RED:selected?Quantity_NOC_GREEN4:Quantity_NOC_BLACK);
+        const QString prefix=d.kind==modeling::DimensionKind::CircleRadius?"R":d.kind==modeling::DimensionKind::CircleDiameter?QString::fromUtf8("Ø"):"";
+        const QString value=prefix+QString::number(d.value,'g',8)+" mm";label(d.annotation,d.driving?value:"("+value+")",color,14);
+        const auto a=modeling::sketchPointValue(*m_sketch,d.first);
+        if(d.kind==modeling::DimensionKind::CircleRadius || d.kind==modeling::DimensionKind::CircleDiameter){guide(a,d.annotation,color);continue;}
+        const auto b=modeling::sketchPointValue(*m_sketch,d.second);
+        modeling::Point2 aa,bb;
+        if(d.kind==modeling::DimensionKind::HorizontalDistance){aa={a.x,d.annotation.y};bb={b.x,d.annotation.y};}
+        else if(d.kind==modeling::DimensionKind::VerticalDistance){aa={d.annotation.x,a.y};bb={d.annotation.x,b.y};}
+        else {const double dx=b.x-a.x,dy=b.y-a.y,length=std::hypot(dx,dy);const double offset=((d.annotation.x-a.x)*(-dy)+(d.annotation.y-a.y)*dx)/length;aa={a.x-dy/length*offset,a.y+dx/length*offset};bb={b.x-dy/length*offset,b.y+dx/length*offset};}
+        guide(a,aa,color);guide(b,bb,color);guide(aa,bb,color);
+        const double dx=bb.x-aa.x,dy=bb.y-aa.y,length=std::hypot(dx,dy);
+        if(length>1e-7){const modeling::Point2 tick{-dy/length*3*unit,dx/length*3*unit};for(const auto& point:{aa,bb})guide({point.x-tick.x,point.y-tick.y},{point.x+tick.x,point.y+tick.y},color);}
+    }
+    if(m_sketchEditing)for(const auto& r:m_sketch->relations) {
+        auto a=modeling::sketchPointValue(*m_sketch,r.first);const auto b=modeling::sketchPointValue(*m_sketch,r.second);
+        if(r.kind==modeling::RelationKind::Horizontal || r.kind==modeling::RelationKind::Vertical)a={(a.x+b.x)/2,(a.y+b.y)/2};
+        const QStringList names{"C","H","V","F","∥","⊥","T"};
+        const bool selected=r.first.entityId==m_selectedEntity || r.second.entityId==m_selectedEntity;
+        const bool error=std::find(m_constraintErrors.begin(),m_constraintErrors.end(),r.id)!=m_constraintErrors.end();
+        label({a.x+8*unit,a.y+8*unit},names.at(int(r.kind)),Quantity_Color(error?Quantity_NOC_RED:selected?Quantity_NOC_GREEN4:Quantity_NOC_GRAY40),10);
+    }
+}
+
 void CadViewport::setSketchTool(modeling::EntityKind kind)
 {
     cancelPointDrag(); resetSketchInference();
@@ -594,7 +652,7 @@ void CadViewport::selectSketchEntity(const QString& id)
 {
     m_selectedEntity = id.toStdString();
     m_selectedPoint.reset();
-    updatePointPresentation();
+    updatePointPresentation();updateConstraintPresentation();
 }
 
 void CadViewport::setSketch(const modeling::Sketch& sketch)
@@ -649,6 +707,7 @@ void CadViewport::updateSketchPresentation(const std::optional<modeling::SketchE
         m_context->Remove(m_sketchPresentation, Standard_False);
         m_sketchPresentation.Nullify();
     }
+    if(m_sketch)m_sketchFullyDefined=modeling::solvePlanarSketch(*m_sketch).diagnostics.state==modeling::SolveState::FullyConstrained;
     if (m_sketch) {
         try {
             auto visible = *m_sketch;
@@ -657,7 +716,7 @@ void CadViewport::updateSketchPresentation(const std::optional<modeling::SketchE
             if (!shape.IsNull()) {
                 m_sketchPresentation = new AIS_Shape(shape);
                 m_sketchPresentation->SetZLayer(Graphic3d_ZLayerId_Topmost);
-                m_sketchPresentation->SetColor(Quantity_Color(0.10, 0.22, 0.60, Quantity_TOC_RGB));
+                m_sketchPresentation->SetColor(m_sketchFullyDefined?Quantity_Color(Quantity_NOC_BLACK):Quantity_Color(0.10, 0.22, 0.60, Quantity_TOC_RGB));
                 m_sketchPresentation->SetWidth(2.0 * devicePixelRatioF());
                 m_sketchPresentation->Attributes()->SetDeviationCoefficient(1e-5);
                 m_sketchPresentation->Attributes()->SetDeviationAngle(0.015);
@@ -670,6 +729,7 @@ void CadViewport::updateSketchPresentation(const std::optional<modeling::SketchE
         }
     }
     updatePointPresentation();
+    updateConstraintPresentation();
     update();
 }
 
@@ -802,7 +862,7 @@ void CadViewport::updatePointPresentation()
             });
             if(!origin && !hovered && !selected && !lineEndpoint && entry.first.entityId!=m_selectedEntity) continue;
             Handle(AIS_Point) marker=new AIS_Point(new Geom_CartesianPoint(modeling::sketchPoint(*m_sketch,entry.second)));
-            const Quantity_Color color(hovered ? Quantity_NOC_ORANGE : origin ? Quantity_NOC_RED3 : Quantity_NOC_BLUE);
+            const Quantity_Color color(hovered ? Quantity_NOC_ORANGE : origin ? Quantity_NOC_RED3 : m_sketchFullyDefined ? Quantity_NOC_BLACK : Quantity_NOC_BLUE);
             marker->SetZLayer(Graphic3d_ZLayerId_Topmost);
             marker->Attributes()->SetPointAspect(filledPoint(color,(hovered ? 9.0 : selected ? 9.0 : origin ? 4.0 : 7.0)*devicePixelRatioF()));
             marker->SetInfiniteState(Standard_True);
@@ -897,7 +957,8 @@ void CadViewport::updatePointDrag(const QPointF& position)
     drag.target=target ? std::optional<modeling::SketchPointRef>(target->reference) : std::nullopt;
     m_hoveredPoint=drag.target; drag.error.clear();
     try {
-        drag.candidate=modeling::moveSketchPoint(drag.original,drag.reference,*raw,drag.target);
+        auto warm=drag.original;if(drag.candidate)warm.entities=drag.candidate->entities;
+        drag.candidate=modeling::moveSketchPoint(warm,drag.reference,*raw,drag.target);
         m_sketch=*drag.candidate;
     } catch(const std::exception& error) {
         drag.error=QString::fromUtf8(error.what()); drag.candidate.reset(); m_sketch=drag.original;
@@ -913,7 +974,11 @@ void CadViewport::finishPointDrag()
     const auto drag=*m_pointDrag; m_pointDrag.reset();
     if(QWidget::mouseGrabber()==this) releaseMouse();
     clearInteractionPresentation();
-    if(drag.moved && drag.candidate) { m_sketch=*drag.candidate; emit sketchChanged(*m_sketch); }
+    if(drag.moved && drag.candidate) {
+        m_sketch=*drag.candidate;
+        const bool changed=m_sketch->relations.size()!=drag.original.relations.size() || !std::equal(m_sketch->entities.begin(),m_sketch->entities.end(),drag.original.entities.begin(),[](const auto& a,const auto& b){return std::hypot(a.first.x-b.first.x,a.first.y-b.first.y)<1e-9 && std::hypot(a.second.x-b.second.x,a.second.y-b.second.y)<1e-9 && std::abs(a.radius-b.radius)<1e-9;});
+        if(changed)emit sketchChanged(*m_sketch);
+    }
     else { m_sketch=drag.original; if(drag.moved && !drag.error.isEmpty()) emit sketchInteractionError(drag.error); }
     updateSketchPresentation();
 }
@@ -1017,6 +1082,14 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
         m_regionClickCandidate=true;
         m_regionPressPosition=event->position();
     }
+    if(event->button()==Qt::LeftButton && m_constraintPicking && m_sketchEditing) {
+        setFocus(Qt::MouseFocusReason);const auto hit=pointAt(event->position());
+        const auto body=hit?std::optional<std::string>(hit->reference.entityId):entityAt(event->position());
+        if(body && !body->empty()){m_selectedEntity=*body;emit sketchEntitySelected(QString::fromStdString(*body));}
+        if(hit){m_selectedPoint=hit->reference;emit sketchPointSelected(QString::fromStdString(hit->reference.entityId),int(hit->reference.role));}
+        else if(!body){const auto position=sketchPosition(event->position());if(position)emit dimensionPlacementRequested(*position);}
+        updatePointPresentation();event->accept();return;
+    }
     if (event->button() == Qt::LeftButton && m_sketchEditing) {
         setFocus(Qt::MouseFocusReason);
         std::optional<modeling::SketchPointRef> reference;
@@ -1033,9 +1106,9 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
             emit sketchEntitySelected(QString::fromStdString(m_selectedEntity));
             m_selectedPoint = hit ? std::optional<modeling::SketchPointRef>(hit->reference) : std::nullopt;
             if (hit) { emit sketchPointSelected(QString::fromStdString(hit->reference.entityId), int(hit->reference.role)); }
-            if(hit && hit->reference.role!=modeling::PointRole::Origin && hit->reference.role!=modeling::PointRole::Center) {
+            if(hit && hit->reference.role!=modeling::PointRole::Origin) {
                 const auto entity=std::find_if(m_sketch->entities.begin(),m_sketch->entities.end(),[&](const auto& e){return e.id==hit->reference.entityId;});
-                if(entity!=m_sketch->entities.end() && entity->kind==modeling::EntityKind::Line) {
+                if(entity!=m_sketch->entities.end() && (entity->kind==modeling::EntityKind::Line || entity->kind==modeling::EntityKind::Circle)) {
                     m_pointDrag=PointDrag{*m_sketch,hit->reference,event->position(),false,*m_sketch,{},{}};
                     std::set<std::pair<std::string,int>> excluded;
                     for(const auto& ref:modeling::coincidentSketchPoints(*m_sketch,hit->reference)) excluded.insert({ref.entityId,int(ref.role)});
@@ -1185,6 +1258,7 @@ void CadViewport::wheelEvent(QWheelEvent* event)
 
 void CadViewport::keyPressEvent(QKeyEvent* event)
 {
+    if(event->key()==Qt::Key_Escape && m_constraintPicking){emit constraintPickingCanceled();event->accept();return;}
     if (event->key() == Qt::Key_Escape && m_selectingPlane) {
         cancelPlaneSelection();
     } else if (event->key() == Qt::Key_Escape && m_sketchEditing) {

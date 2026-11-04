@@ -1,6 +1,8 @@
 #include "ui/MainWindow.h"
 #include "ui/CadViewport.h"
 #include <BRepCheck_Analyzer.hxx>
+#include <TopExp_Explorer.hxx>
+#include "modeling/ConstraintSolver.h"
 #include <BRepGProp.hxx>
 #include <GProp_GProps.hxx>
 #include <QAction>
@@ -128,6 +130,68 @@ private:
         QVERIFY(window.errors.isEmpty());
     }
 private slots:
+    void smartDimensionCreateEditCancelAndConflict() {
+        QTemporaryDir directory;WorkflowWindow window;window.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
+        modeling::Sketch sketch;sketch.entities={{modeling::EntityKind::Line,{0,0},{30,40},1,"line"},{modeling::EntityKind::Circle,{-30,-20},{},5,"circle"}};
+        sketch.relations={{"anchor",modeling::RelationKind::Coincident,{"line",modeling::PointRole::First},{}}};viewport->sketchChanged(sketch);
+        command(window,"actionSelectSketchEntity");QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{15,20}));command(window,"actionSmartDimension");
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{20,45}));
+        window.findChild<QDoubleSpinBox*>("dimensionValue")->setValue(60);QTest::mouseClick(window.findChild<QPushButton*>("confirmDimension"),Qt::LeftButton);
+        QTRY_VERIFY(!window.findChild<QWidget*>("constraintPage") || !window.findChild<QWidget*>("constraintPage")->isVisible());
+        QCOMPARE(viewport->m_sketch->dimensions.size(),std::size_t(1));QVERIFY(std::abs(std::hypot(viewport->m_sketch->entities[0].second.x,viewport->m_sketch->entities[0].second.y)-60)<1e-6);
+        const auto dimensionId=viewport->m_sketch->dimensions[0].id;
+        QTest::mouseDClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{20,45}));auto* value=window.findChild<QDoubleSpinBox*>("dimensionValue");QVERIFY(value);value->setValue(70);
+        QTest::mouseClick(window.findChild<QPushButton*>("cancelDimension"),Qt::LeftButton);QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
+        QCOMPARE(viewport->m_sketch->dimensions[0].value,60.0);
+        QTest::mouseDClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{20,45}));window.findChild<QDoubleSpinBox*>("dimensionValue")->setValue(70);
+        QTest::mouseClick(window.findChild<QPushButton*>("confirmDimension"),Qt::LeftButton);QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
+        QCOMPARE(viewport->m_sketch->dimensions[0].value,70.0);QCOMPARE(viewport->m_sketch->dimensions[0].id,dimensionId);
+        command(window,"actionSmartDimension");QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{10,50}));window.findChild<QDoubleSpinBox*>("dimensionValue")->setValue(80);
+        QTest::mouseClick(window.findChild<QPushButton*>("confirmDimension"),Qt::LeftButton);QVERIFY(!window.findChild<QLabel*>("constraintError")->text().isEmpty());QCOMPARE(viewport->m_sketch->dimensions.size(),std::size_t(1));QCOMPARE(viewport->m_sketch->dimensions[0].value,70.0);
+        QTest::mouseClick(window.findChild<QPushButton*>("cancelDimension"),Qt::LeftButton);QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
+        // Tool-first circle selection and diameter.
+        command(window,"actionSmartDimension");QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{-25,-20}));QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{-40,-35}));window.findChild<QDoubleSpinBox*>("dimensionValue")->setValue(14);
+        QTest::mouseClick(window.findChild<QPushButton*>("confirmDimension"),Qt::LeftButton);QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);QCOMPARE(viewport->m_sketch->dimensions.size(),std::size_t(2));QVERIFY(std::abs(viewport->m_sketch->entities[1].radius-7)<1e-6);
+        command(window,"actionFinishSketch");window.path=directory.filePath("dimensions.thepart");command(window,"actionSaveAs");command(window,"actionNew");command(window,"actionOpen");QCOMPARE(window.document().features()[0].sketch.dimensions.size(),std::size_t(2));QVERIFY(window.errors.isEmpty());window.close();
+    }
+    void dimensionEditRegeneratesExistingExtrusion() {
+        WorkflowWindow window;window.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&window));auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
+        using namespace modeling;Sketch sketch;sketch.entities={{EntityKind::Line,{0,0},{50,0},1,"a"},{EntityKind::Line,{50,0},{50,30},1,"b"},{EntityKind::Line,{50,30},{0,30},1,"c"},{EntityKind::Line,{0,30},{0,0},1,"d"}};
+        for(int i=0;i<4;++i){sketch.relations.push_back({"join-"+std::to_string(i),RelationKind::Coincident,{sketch.entities[i].id,PointRole::Second},{sketch.entities[(i+1)%4].id,PointRole::First}});sketch.relations.push_back({"axis-"+std::to_string(i),i%2?RelationKind::Vertical:RelationKind::Horizontal,{sketch.entities[i].id,PointRole::First},{sketch.entities[i].id,PointRole::Second}});}sketch.relations.push_back({"origin",RelationKind::Coincident,{"a",PointRole::First},{}});
+        SketchDimension width;width.id="width";width.kind=DimensionKind::HorizontalDistance;width.first={"a",PointRole::First};width.second={"a",PointRole::Second};width.value=50;width.annotation={25,-10};auto height=width;height.id="height";height.kind=DimensionKind::VerticalDistance;height.second={"d",PointRole::First};height.value=30;height.annotation={-10,15};sketch.dimensions={width,height};viewport->sketchChanged(sketch);
+        window.findChild<QTabWidget*>("modelingTabs")->setCurrentIndex(0);command(window,"actionExtrude");window.findChild<QListWidget*>("operationContour")->setCurrentRow(0,QItemSelectionModel::ClearAndSelect);window.findChild<QDoubleSpinBox*>("featureLength")->setValue(10);confirmOperation(window);QVERIFY(std::abs(volume(window.document().shape())-15000)<1e-6);
+        auto* tree=window.findChild<QTreeWidget*>("featureTree");QTreeWidgetItem* item=nullptr;for(int i=0;i<tree->topLevelItemCount();++i){auto* root=tree->topLevelItem(i);for(int n=0;n<root->childCount();++n)if(root->child(n)->data(0,Qt::UserRole).toString()=="sketch-1")item=root->child(n);}QVERIFY(item);tree->setCurrentItem(item);command(window,"actionEditFeature");
+        command(window,"actionSelectSketchEntity");QTest::mouseDClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{25,-10}));auto* value=window.findChild<QDoubleSpinBox*>("dimensionValue");QVERIFY(value);value->setValue(80);QTest::mouseClick(window.findChild<QPushButton*>("confirmDimension"),Qt::LeftButton);QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
+        QVERIFY(std::abs(volume(viewport->m_shape)-24000)<1e-6);command(window,"actionFinishSketch");QVERIFY(std::abs(volume(window.document().shape())-24000)<1e-6);QCOMPARE(window.document().features()[0].sketch.dimensions[0].value,80.0);QVERIFY(window.errors.isEmpty());window.close();
+    }
+    void horizontalVerticalAndFixedRelationUi() {
+        WorkflowWindow window;window.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&window));auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
+        modeling::Sketch sketch;sketch.entities={{modeling::EntityKind::Line,{0,0},{30,40},1,"line"}};sketch.relations={{"anchor",modeling::RelationKind::Coincident,{"line",modeling::PointRole::First},{}}};viewport->sketchChanged(sketch);
+        for(int kind:{1,2}) {
+            command(window,"actionSmartDimension");window.findChild<QComboBox*>("dimensionKind")->setCurrentIndex(kind);
+            QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{0,0}));QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,viewport->m_sketch->entities[0].second));
+            QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{-15,45}));window.findChild<QDoubleSpinBox*>("dimensionValue")->setValue(kind==1?48:64);
+            QTest::mouseClick(window.findChild<QPushButton*>("confirmDimension"),Qt::LeftButton);QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);QVERIFY2(!window.findChild<QWidget*>("constraintPage"),"Point distance dimension should confirm");
+        }
+        QVERIFY(std::abs(viewport->m_sketch->entities[0].second.x-48)<1e-6);QVERIFY(std::abs(viewport->m_sketch->entities[0].second.y-64)<1e-6);QVERIFY(viewport->m_sketchFullyDefined);
+        command(window,"actionFinishSketch");window.close();
+        WorkflowWindow fixedWindow;fixedWindow.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&fixedWindow));viewport=fixedWindow.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(fixedWindow);
+        sketch={};sketch.entities={{modeling::EntityKind::Circle,{10,10},{},5,"circle"}};viewport->sketchChanged(sketch);command(fixedWindow,"actionDisplayDeleteRelations");
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{10,10}));fixedWindow.findChild<QComboBox*>("relationKind")->setCurrentIndex(3);QTest::mouseClick(fixedWindow.findChild<QPushButton*>("confirmRelation"),Qt::LeftButton);
+        QCOMPARE(viewport->m_sketch->relations.size(),std::size_t(1));QCOMPARE(viewport->m_sketch->relations[0].kind,modeling::RelationKind::FixedPoint);
+        auto* list=fixedWindow.findChild<QListWidget*>("sketchConstraints");list->setCurrentRow(0);QTest::mouseClick(fixedWindow.findChild<QPushButton*>("deleteConstraint"),Qt::LeftButton);QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);QVERIFY(viewport->m_sketch->relations.empty());
+        QTest::mouseClick(fixedWindow.findChild<QPushButton*>("cancelDimension"),Qt::LeftButton);QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);command(fixedWindow,"actionFinishSketch");QVERIFY(fixedWindow.errors.isEmpty());fixedWindow.close();
+    }
+    void selectMultipleRegionsCreatesMultipleBodies() {
+        WorkflowWindow window;window.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&window));auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
+        modeling::Sketch sketch;sketch.entities={{modeling::EntityKind::Circle,{-15,0},{},5,"left"},{modeling::EntityKind::Circle,{15,0},{},5,"right"}};viewport->sketchChanged(sketch);
+        window.findChild<QTabWidget*>("modelingTabs")->setCurrentIndex(0);command(window,"actionExtrude");
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{-15,0}));QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{15,0}));
+        auto* regions=window.findChild<QListWidget*>("operationContour");QCOMPARE(regions->selectedItems().size(),2);confirmOperation(window);
+        QCOMPARE(window.document().features().back().contours.size(),std::size_t(2));int solids=0;for(TopExp_Explorer it(window.document().shape(),TopAbs_SOLID);it.More();it.Next())++solids;QCOMPARE(solids,2);QVERIFY(window.errors.isEmpty());window.close();
+    }
+
     void activeSketchExtrudeCancelConfirmAndDirectCut() {
         QTemporaryDir directory; WorkflowWindow window;window.showMaximized();
         QVERIFY(QTest::qWaitForWindowExposed(&window));auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());
@@ -147,7 +211,7 @@ private slots:
         QVERIFY(!operation->findChild<QPushButton*>("operationPreview"));
         QVERIFY(!window.findChild<QTreeWidget*>("featureTree")->isVisible());
         QCOMPARE(operation->findChild<QComboBox*>("operationSketch")->currentData().toString().toStdString(),window.document().features()[0].id);
-        QVERIFY(!viewport->m_firstPoint);QCOMPARE(operation->findChild<QComboBox*>("operationContour")->currentIndex(),-1);
+        QVERIFY(!viewport->m_firstPoint);QCOMPARE(operation->findChild<QListWidget*>("operationContour")->currentRow(),-1);
         QCOMPARE(window.document().features()[0].sketch.entities.size(),std::size_t(0));
         QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{20,15}));
         auto* depth=operation->findChild<QDoubleSpinBox*>("featureLength");depth->setValue(20);
@@ -169,7 +233,7 @@ private slots:
         QCOMPARE(window.findChild<QDockWidget*>("historyDock")->windowTitle(),QString("FeatureManager"));
         QCOMPARE(viewport->m_sketch->entities.size(),active.entities.size());QCOMPARE(viewport->m_sketch->relations.size(),active.relations.size());
         window.findChild<QTabWidget*>("modelingTabs")->setCurrentIndex(0);command(window,"actionExtrude");
-        operation=window.findChild<QWidget*>("operationPanel");operation->findChild<QComboBox*>("operationContour")->setCurrentIndex(0);
+        operation=window.findChild<QWidget*>("operationPanel");operation->findChild<QListWidget*>("operationContour")->setCurrentRow(0,QItemSelectionModel::ClearAndSelect);
         operation->findChild<QDoubleSpinBox*>("featureLength")->setValue(25);
         QTest::mouseClick(operation->findChild<QPushButton*>("featureReverseDirection"),Qt::LeftButton);
         QCOMPARE(operation->findChild<QComboBox*>("featureDirection")->currentIndex(),1);QVERIFY(!viewport->m_previewPresentation.IsNull());
@@ -183,12 +247,12 @@ private slots:
         operation=window.findChild<QWidget*>("operationPanel");QVERIFY(operation);
         QCOMPARE(operation->findChild<QComboBox*>("operationSketch")->currentData().toString().toStdString(),window.document().features()[2].id);
         operation->findChild<QCheckBox*>("featureThroughAll")->setChecked(true);
-        operation->findChild<QComboBox*>("operationContour")->setCurrentIndex(0);
+        operation->findChild<QListWidget*>("operationContour")->setCurrentRow(0,QItemSelectionModel::ClearAndSelect);
         command(window,"actionCancelFeature");QCOMPARE(window.document().features().size(),std::size_t(3));
         QVERIFY(window.findChild<QAction*>("actionFinishSketch")->isEnabled());QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(1));
         window.findChild<QTabWidget*>("modelingTabs")->setCurrentIndex(0);command(window,"actionExtrudedCut");
         operation=window.findChild<QWidget*>("operationPanel");operation->findChild<QCheckBox*>("featureThroughAll")->setChecked(true);
-        operation->findChild<QComboBox*>("operationContour")->setCurrentIndex(0);confirmOperation(window);
+        operation->findChild<QListWidget*>("operationContour")->setCurrentRow(0,QItemSelectionModel::ClearAndSelect);confirmOperation(window);
         QCOMPARE(window.document().features().size(),std::size_t(4));QVERIFY(volume(window.document().shape())<solidVolume);
         QVERIFY(window.document().features()[3].throughAll);
         window.path=directory.filePath("active-sketch.thepart");command(window,"actionSave");command(window,"actionNew");command(window,"actionOpen");
@@ -237,13 +301,13 @@ private slots:
         auto* operation = window.findChild<QWidget*>("operationPanel");
         QVERIFY(operation);
         QVERIFY(operation->findChild<QCheckBox*>("featureThroughAll")->isHidden());
-        auto* contours = operation->findChild<QComboBox*>("operationContour");
+        auto* contours = operation->findChild<QListWidget*>("operationContour");
         QCOMPARE(contours->count(), 2);
-        QCOMPARE(contours->currentIndex(), -1);
+        QCOMPARE(contours->currentRow(), -1);
         QVERIFY(!operation->findChild<QDialogButtonBox*>("operationButtons")->button(QDialogButtonBox::Ok)->isEnabled());
         operation->findChild<QDoubleSpinBox*>("featureLength")->setValue(30);
         QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, point(viewport, {0, 0}));
-        QVERIFY(contours->currentIndex() >= 0);
+        QVERIFY(contours->currentRow() >= 0);
         QVERIFY(!viewport->m_previewPresentation.IsNull());
         QVERIFY(window.document().shape().IsNull()); // Preview is not a committed feature.
         confirmOperation(window);
@@ -276,7 +340,7 @@ private slots:
         command(window, "actionEditFeature");
         operation = window.findChild<QWidget*>("operationPanel");
         QVERIFY(operation);
-        QCOMPARE(operation->findChild<QComboBox*>("operationContour")->currentIndex(), 0);
+        QCOMPARE(operation->findChild<QListWidget*>("operationContour")->currentRow(), 0);
         operation->findChild<QDoubleSpinBox*>("featureLength")->setValue(45);
         confirmOperation(window);
         QVERIFY(!QTest::currentTestFailed());

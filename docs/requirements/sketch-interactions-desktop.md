@@ -1,5 +1,9 @@
 # Fundamental sketch interactions and desktop layout
 
+Current extension: [approved parametric constraints and multiple regions](parametric-constraints.md)
+supersede this milestone's earlier exclusions of dimensions, solver relations, nested
+regions and multiple bodies. Historical scope below is retained for context.
+
 The owner approved this milestone on 2026-11-03. It builds on graphical origin
 plane selection and the existing standalone C++ / Qt / OCCT implementation.
 

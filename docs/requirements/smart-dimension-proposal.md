@@ -1,7 +1,10 @@
 # Smart Dimension investigation and proposal
 
 Date: 2026-11-03
-Status: Proposal only; no solver selected or integrated
+Status: Historical proposal, superseded 2026-11-04 by owner approval of the
+[PlaneGCS integration prototype](../decisions/0009-planegcs-parametric-dimensions.md)
+and [implemented requirements](parametric-constraints.md). The text below records
+the earlier investigation; it is not the current decision.
 
 ## Existing model and limitation
 

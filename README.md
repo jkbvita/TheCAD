@@ -25,7 +25,8 @@ The finite reference graphics do not limit the infinite sketching plane. See the
 - Antialiased continuous lines, exact origin/endpoint snapping and always-visible endpoint markers.
 - Select-mode endpoint dragging, transactional joining and connected-geometry updates.
 - Rectangles made of four connected edges, and circles with snappable centers.
-- Persistent coincident, horizontal and vertical relations with safe coordinate editing.
+- Persistent geometric relations, PlaneGCS solving, editable driving/reference Smart Dimensions and constrained dragging.
+- Multiple selected regions, strict nested loops/holes and multiple solid bodies per part.
 - Light Features, Sketch and Evaluate command tabs, native menus and actual feature history.
 - Context entity properties and a docked Extrude/Cut PropertyManager with live previews.
 - Direct active-sketch Extrude/Cut with safe cancel/resume; unfinished tools stay disabled.
@@ -47,7 +48,7 @@ relations, the familiar desktop layout and independent Windows deployment.
 
 See [face sketching and contour checks](docs/verification/reference-faces-contours.md),
 the [attachment strategy](docs/decisions/0008-reference-face-attachments.md), and
-the [Smart Dimension proposal](docs/requirements/smart-dimension-proposal.md).
+the [parametric constraint guide](docs/requirements/parametric-constraints.md).
 
 See [Windows build, run, and modeling tutorial](docs/build-windows.md).
 With dependencies installed, run from the repository root:
@@ -79,18 +80,32 @@ center and a radius point. The origin stays at its true position during pan/zoom
 
 The property panel propagates supported relations when coordinates change. An
 edit that conflicts with the fixed origin or other equalities is rejected.
-This is a limited equality system, without a general solver or dimensions.
+The provisional standalone PlaneGCS adapter solves supported dimensions and relations,
+regenerating dependent features before accepting changes.
 
-Smart Dimension, Centerline, Construction Line, Arc, Spline, Trim, Convert,
-Offset, Mirror, Linear Sketch Pattern, Move, Display/Delete Relations, Repair
+Centerline, Construction Line, Arc, Spline, Trim, Convert,
+Offset, Mirror, Linear Sketch Pattern, Move, Repair
 Sketch, Shaded Sketch Contours, Measure, Mass Properties and Check Geometry are
 disabled until implemented.
 
 While editing a closed sketch, switch to Features and click Extrude or Extruded
-Cut. The active sketch is used automatically; select the intended contour in the
+Cut. The active sketch is used automatically; select the intended regions in the
 viewport or left PropertyManager. Depth/reverse/Through All changes update the
 preview live. Confirm adds the feature; Cancel returns to sketch editing with
 completed geometry intact. Tab switching alone does not finish a sketch.
+
+## Smart Dimension
+
+In an edited sketch select a line/circle and click Smart Dimension, or start the
+tool first. Choose a type, click empty viewport space to place the annotation,
+enter mm and Confirm dimension. For H/V distances select two points (including
+the origin). Double-click an existing annotation to edit. Reference measures
+without driving geometry. Display/Delete Relations opens supported relation
+controls and the constraint list. Cancel or Escape preserves the last valid sketch.
+
+See [current behavior and limits](docs/requirements/parametric-constraints.md) and
+[verification](docs/verification/parametric-constraints.md). Whole-sketch DOF=0 is
+required for black fully-defined geometry; mixed sketches remain blue.
 
 ## Source layout
 
@@ -125,10 +140,10 @@ docs/decisions/    Approval records and unresolved decisions
 - [Dependencies and licenses](docs/dependencies.md)
 - [Native document structure and legacy compatibility](docs/file-formats.md)
 
-`.theasmb` and `.thedrw` are reserved names. Assemblies, drawings, a general-purpose constraint
-solver, automatic dimensioning, resilient face reattachment, and permanent topology naming
+`.theasmb` and `.thedrw` are reserved names. Assemblies, drawings, spatial sketches,
+automatic dimensioning, resilient face reattachment, and permanent topology naming
 are outside this milestone. Independent simple closed contours are supported;
-nested, touching, or intersecting contours are rejected clearly.
+strictly nested loops and multiple bodies are supported; touching or intersecting boundaries are rejected clearly.
 
 ## License status
 

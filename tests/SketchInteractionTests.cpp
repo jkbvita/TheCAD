@@ -1,3 +1,4 @@
+#include "modeling/ConstraintSolver.h"
 #include "ui/CadViewport.h"
 #include "modeling/Box.h"
 #include <Graphic3d_Camera.hxx>
@@ -42,6 +43,16 @@ private slots:
         QVERIFY(QTest::qWaitForWindowExposed(host.get())); QTRY_VERIFY(viewport->isReady());
     }
     void init() { viewport->beginSketch({}); QApplication::processEvents(); }
+    void constrainedLineAndCircleDragging() {
+        using namespace modeling;Sketch sketch;sketch.entities={{EntityKind::Line,{0,0},{30,40},1,"line"},{EntityKind::Circle,{-30,-20},{},5,"circle"}};sketch.relations={{"anchor",RelationKind::Coincident,{"line",PointRole::First},{}}};
+        SketchDimension length;length.id="length";length.kind=DimensionKind::LineLength;length.first={"line",PointRole::First};length.second={"line",PointRole::Second};length.value=50;length.annotation={20,45};
+        SketchDimension radius;radius.id="radius";radius.kind=DimensionKind::CircleRadius;radius.first={"circle",PointRole::Center};radius.value=5;radius.annotation={-40,-30};sketch.dimensions={length,radius};
+        viewport->beginSketch(requireSolvedSketch(solvePlanarSketch(sketch)));viewport->selectSketchTool();
+        const auto drag=[&](Point2 from,Point2 to){QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,pixel(from));const auto p=pixel(to);QMouseEvent event(QEvent::MouseMove,p,viewport->mapToGlobal(p),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);QApplication::sendEvent(viewport,&event);QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,p);};
+        drag({30,40},{40,60});const auto endpoint=viewport->m_sketch->entities[0].second;QVERIFY(std::hypot(endpoint.x-30,endpoint.y-40)>1);QVERIFY(std::abs(std::hypot(endpoint.x,endpoint.y)-50)<1e-6);QCOMPARE(viewport->m_sketch->entities[0].first.x,0.0);
+        drag({-30,-20},{-20,-30});QVERIFY(std::abs(viewport->m_sketch->entities[1].radius-5)<1e-6);QVERIFY(std::abs(viewport->m_sketch->entities[1].first.x+20)<1);
+        auto pinned=*viewport->m_sketch;SketchRelation fixed;fixed.id="fixed-center";fixed.kind=RelationKind::FixedPoint;fixed.first={"circle",PointRole::Center};fixed.fixedPosition=pinned.entities[1].first;pinned.relations.push_back(fixed);viewport->setSketch(pinned);const auto center=pinned.entities[1].first;drag(center,{-40,-40});QCOMPARE(viewport->m_sketch->entities[1].first.x,center.x);QCOMPARE(viewport->m_sketch->entities[1].first.y,center.y);
+    }
     void renderingQualityBeforeAndAfter() {
         const auto expected=viewport->m_view->RenderingParams();
         if (viewport->m_viewer->Driver()->InquireLimit(Graphic3d_TypeOfLimit_MaxMsaa) >= 4)

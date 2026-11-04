@@ -1,5 +1,9 @@
 # Sketcher interaction and feature workflow
 
+Current extension: [approved parametric constraints and multiple regions](parametric-constraints.md)
+supersede this milestone's earlier exclusions of dimensions, solver relations, nested
+regions and multiple bodies. Historical scope below is retained for context.
+
 Owner-approved milestone, 2026-11-03. Extend the existing C++ / Qt / OCCT code.
 
 ## Sketch presentation and interaction

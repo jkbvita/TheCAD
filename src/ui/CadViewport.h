@@ -47,10 +47,15 @@ public:
     void endContourSelection();
     void previewShape(const TopoDS_Shape& shape);
     void clearPreview();
+    void setConstraintPicking(bool enabled);
+    void setConstraintErrors(const std::vector<std::string>& ids);
     void fitAll();
     void resetView();
 
 signals:
+    void constraintPickingCanceled();
+    void dimensionPlacementRequested(thecad::modeling::Point2 point);
+    void dimensionEditRequested(const QString& id);
     void initializationFailed(const QString& message);
     void sketchInteractionError(const QString& message);
     void sketchChanged(const thecad::modeling::Sketch& sketch);
@@ -67,6 +72,7 @@ protected:
     void showEvent(QShowEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
@@ -86,6 +92,12 @@ private:
     void orientSketch();
     void updateReferencePlanes();
     void updatePlaneStyles();
+    void updateConstraintPresentation();
+    std::vector<Handle(AIS_TextLabel)> m_constraintLabels;
+    std::vector<Handle(AIS_Shape)> m_dimensionGuides;
+    bool m_constraintPicking = false;
+    bool m_sketchFullyDefined = false;
+    std::vector<std::string> m_constraintErrors;
     void updateSketchAxes();
     void updateGlobalAxes();
     int faceAt(const QPointF& position);

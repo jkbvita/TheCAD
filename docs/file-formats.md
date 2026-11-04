@@ -1,222 +1,135 @@
 # Native TheCAD documents
 
-The project owner superseded the previous naming convention and approved these
-permanent extensions for the parametric modeling milestone:
+Permanent owner-approved extensions are .thepart (Part), .theasmb (Assembly), and
+.thedrw (Drawing). Only Part is implemented. Older .tcpart documents are read-only
+inputs: conversion saves to a separate .thepart path, retaining the original file.
+No assembly/drawing reader or placeholder is implemented. Internal serialization
+is provisional and versioned; filename conventions are permanent.
 
-| Extension | Document kind | Current support |
-| --- | --- | --- |
-| `.thepart` | Part | Versions 3/4 parametric parts; versions 1/2 import |
-| `.theasmb` | Assembly | Reserved; no assembly implementation |
-| `.thedrw` | Technical drawing | Reserved; no drawing implementation |
+## Version 5 part structure
 
-Existing `.tcpart` files remain readable legacy input. Save never writes to a
-`.tcpart` path: conversion must use a `.thepart` destination. The UI prompts for a
-new path when saving an opened legacy document and retains the original legacy
-file unchanged. The old `.tcasmb` and `.tcdrw` names have no implemented readers.
+The UTF-8 JSON root contains exactly format: "TheCAD.Part", version: 5, units:
+"mm", features (ordered array) and resultFeature (last solid feature ID, or empty
+for empty/sketch-only documents). Writers always emit version 5. Readers accept
+versions 1–5 and reject unknown versions, fields, units and unsupported features.
 
-The filename extensions are permanent. The internal serialization remains
-provisional; it does not settle a final parametric architecture, feature-reference
-strategy, or topological naming scheme.
-
-## Version 3 part structure
-
-A `.thepart` is a UTF-8 JSON object with these root fields:
-
-- `format`: exactly `TheCAD.Part`.
-- `version`: `3` for origin-only parts; `4` when a face attachment is present.
-- `units`: exactly `mm`.
-- `features`: ordered array of feature records.
-- `resultFeature`: the ID of the last solid-producing feature, or an empty string
-  for an empty or sketch-only part.
-
-For example, a rectangle extruded into a solid and cut with a circular profile:
-
-```json
-{
-  "format": "TheCAD.Part",
-  "version": 3,
-  "units": "mm",
-  "features": [
-    {
-      "id": "sketch-1", "name": "Sketch1", "type": "sketch",
-      "plane": "XY", "dependencies": [], "relations": [],
-      "entities": [
-        { "id": "entity-1", "type": "rectangle", "first": [0, 0], "second": [40, 30] }
-      ]
-    },
-    {
-      "id": "extrude-1", "name": "Extrude1", "type": "extrude",
-      "sketch": "sketch-1", "contour": ["entity-1"],
-      "length": 20, "direction": "positive", "dependencies": ["sketch-1"]
-    },
-    {
-      "id": "sketch-2", "name": "Sketch2", "type": "sketch",
-      "plane": "XY", "dependencies": [],
-      "entities": [
-        { "id": "entity-1", "type": "circle", "center": [20, 15], "radius": 4 }
-      ]
-    },
-    {
-      "id": "cut-1", "name": "ExtrudedCut1", "type": "cut",
-      "sketch": "sketch-2", "contour": ["entity-1"],
-      "length": 5, "throughAll": true, "direction": "positive",
-      "dependencies": ["sketch-2", "extrude-1"]
-    }
-  ],
-  "resultFeature": "cut-1"
-}
-```
-
-## Sketch data and references
-
-Sketch entity coordinates are exact model-space millimeters on the sketch's
-origin plane. The right-handed mappings are:
-
-| Plane | Sketch X coordinate | Sketch Y coordinate | Positive normal |
-| --- | --- | --- | --- |
-| XY | World X | World Y | +Z |
-| XZ | World X | World Z | -Y |
-| YZ | World Y | World Z | +X |
-
-A line stores `first` and `second` coordinate pairs. A legacy rectangle stores two
-opposite corners in those fields. New rectangle drawing creates four line entities
-with coincident corners and horizontal/vertical relations. A circle stores `center`
-and `radius`.
-Every entity has an explicit stable ID scoped to its sketch. New entities receive
-IDs before new drawing references are created; valid existing IDs are preserved. A sketch may contain
-multiple independent closed contours and open geometry.
-
-Extrude/Cut explicitly reference both a source sketch ID and a nonempty `contour`
-array of its entity IDs. A rectangle or circle contour has one entity ID; a
-line-loop contour references all member line IDs. The selected IDs must still
-identify a valid closed contour on recomputation. The reader and evaluator never
-silently choose another profile if that contour becomes invalid or is removed.
-These references deliberately name model entities, not screen pixels or transient
-rendered objects.
-
-## Persistent sketch relations
-
-Every version 3 sketch contains a `relations` array, including when empty. Each
-relation has a unique stable `id` scoped to the sketch, `type`, `first`, and
-`second` point reference. The supported types are `coincident`, `horizontal`,
-and `vertical`.
-
-A point reference contains exactly `entity` and `point`. The immutable local
-origin is `{"entity":"","point":"origin"}`; its exact coordinates are (0,0).
-Line endpoints use `first` or `second` with the line's stable entity ID. Circle
-centers use `center`. Legacy rectangle diagonal corners may use `first` and
-`second`. Unknown entities, invalid point roles, and dangling references fail
-validation rather than being redirected to another point.
-
-For example, a line beginning at the origin and remaining horizontal records:
-
-```json
-[
-  {"id":"origin-join","type":"coincident",
-   "first":{"entity":"line-a","point":"first"},
-   "second":{"entity":"","point":"origin"}},
-  {"id":"horizontal-a","type":"horizontal",
-   "first":{"entity":"line-a","point":"first"},
-   "second":{"entity":"line-a","point":"second"}}
-]
-```
-
-Coincident relations require exactly equal X and Y coordinates. Horizontal and
-vertical relations apply to the two endpoints of one line and require equal Y
-or X respectively. Coordinates are the model data; the reader verifies the
-stored relations against them and rejects inconsistent files. It does not
-silently repair a malformed document.
-
-Coordinate edits propagate through the affected equality groups. The origin
-stays fixed; conflicting requested coordinates or collapsed geometry reject the
-edit transactionally. Deleting an entity explicitly removes its attached
-relations. This limited equality mechanism introduces no solver dependency and
-does not implement dimensions, angles, tangency, or a general constraint solver.
-
-## Feature records and recomputation
-
-Each feature has `id`, `name`, `type`, and `dependencies`. IDs contain 1–128 ASCII
-letters, digits, underscores, or hyphens. IDs are unique in the part. Names contain
-1–128 printable characters. Additional supported fields are:
+Every feature has stable id, printable name, type and explicit dependencies.
+Types and additional fields:
 
 | Type | Fields |
 | --- | --- |
-| `box` | `parameters` object with `width`, `depth`, `height`; retained for legacy box documents |
-| `sketch` | `plane` (`XY`, `XZ`, `YZ`), `entities` and `relations` arrays |
-| `extrude` | `sketch`, `contour`, positive `length`, `direction` (`positive` or `negative`) |
-| `cut` | Extrude fields plus Boolean `throughAll`; `length` is specified depth, retained even when through-all is active |
+| box | parameters: width/depth/height; legacy editable box |
+| sketch | plane: XY/XZ/YZ, space: planar2d, entities, relations, dimensions; optional attachment |
+| extrude | sketch ID, contour OR contours, length, direction: positive/negative |
+| cut | Extrude fields plus Boolean throughAll; specified length retained |
 
-This provisional evaluator walks the ordered history. Sketches do not replace
-the current solid. An initial extrusion generates a precise OCCT BRep solid;
-subsequent additive extrusions join the prior solid. A cut applies an OCCT Boolean
-to the prior body. Solid operations must retain one valid, positive-volume solid.
-Open, unsuitable, or invalid selected contours are rejected. Direction is explicit
-relative to the origin-plane normal; through-all computes its required extent
-from the existing body's bounds rather than using a fixed guessed depth.
+An initial sketch can be empty. A solid operation references an earlier sketch and
+the previous solid result, in that order. Face-attached sketches depend on their
+supporting feature. resultFeature identifies the final solid-producing feature.
+The reader validates backward references and exact dependency order.
 
-Sketches have no dependencies in this origin-plane milestone. An extrusion's
-dependencies are its source sketch followed by the prior solid feature when one
-exists. A cut's dependencies are its source sketch followed by the prior body.
-The reader validates those exact backward references and feature order. There is
-no suppression, rollback UI, reordering, or general dependency
-solver. Version 4 adds conservative planar-face support; resilient attachment tracking
-and permanent topology naming need separately
-approved semantics; neither is encoded implicitly in the current origin planes.
+## Sketch geometry and stable references
 
-Editing a sketch or feature recomputes a candidate history from its parameters.
-Only a fully successful recomputation replaces the active document and shape.
-Failure preserves the previous feature data and BRep. On reopen, the complete
-editable history is read and the actual solid is reconstructed. No mesh,
-screenshot, or opaque geometric snapshot is used as the authoritative model.
-Camera position is view state and is not saved.
+Lines store id/type/first/second; legacy rectangles use two opposite corners;
+circles use id/type/center/radius. Coordinates are local model-space mm, not pixels.
+New rectangle drawing creates four connected lines with H/V relations.
+Entity IDs are unique within each sketch; constraint IDs are unique across its
+relations and dimensions. Valid IDs contain 1–128 ASCII letters, digits, '_' or '-'.
+Deleted entity identities are not reused within the same replacement edit.
 
-## Legacy versions and safe file operations
+Origin frames are XY=(X,Y,+Z), XZ=(X,Z,-Y), YZ=(Y,Z,+X). An attachment instead
+provides its own backend-independent orthonormal frame. Point references contain
+exactly entity and point: first/second for line or legacy rectangle corners,
+center for circles, or {"entity":"","point":"origin"} for fixed local (0,0).
+Missing entities or invalid roles fail; no nearest-point retargeting is performed.
 
-Version 1 consists of the original root fields with `version: 1`, exactly one
-`box` feature, an empty dependency list, and `resultFeature` referencing the box.
-It has no feature `name` field. Valid legacy boxes are loaded with their IDs and
-exact dimensions preserved. Conversion writes the equivalent editable box as a
-version 3 `.thepart`; it does not reinterpret a box as an unapproved extrusion.
+space is planar2d. Spatial sketch kinds require a future version and backend;
+this reader rejects them explicitly. GCS, Eigen and Boost types or solver handles
+are never serialized. Version 5 readers accept omitted space/dimensions as
+planar2d/empty for compatibility with the earlier multi-contour version-5 writer.
+Current writers always include them.
 
-Version 2 has the same parametric entity/history records but no sketch
-`relations` field. It remains readable without inventing constraints from
-apparently touching coordinates. Saving upgrades it to version 3. Existing
-single-record rectangle entities remain supported and retain their IDs.
+## Relations and dimensions
 
-Save uses Qt `QSaveFile` with direct-write fallback disabled. Failed atomic
-replacement preserves an existing destination. Save reuses the active `.thepart`
-path; Save As selects another path. New, Open, Exit, and close honor unsaved
-Save/Discard/Cancel choices. Invalid/unsupported files are validated before active
-document replacement.
+Relations contain id/type/first/second. Types: coincident, horizontal, vertical,
+fixed, parallel, perpendicular, tangent. Fixed adds position: [x,y], an exact
+anchor for first; second is the origin placeholder. Horizontal/vertical relations
+reference one line's endpoints. Parallel/perpendicular reference the first point
+of two distinct lines. Tangent supports a line and circle, or external circles;
+the previous geometry supplies the side for a line/circle solve.
 
-Readers reject unsupported formats/versions/units, unknown or missing fields,
-invalid IDs/references/order, unsupported features, invalid numeric geometry,
-and oversized input. Prototype limits are 1 MiB per document, 500 features,
-1000 entities and 4000 relations per sketch, and finite coordinates/lengths within 1e9 mm. Open
-sketches are valid document data but are not automatically valid extrusion
-profiles. No general constraint solver, automatic dimensioning, or advanced relations
-are implied by this schema.
+Dimensions contain exactly id, type, first, second, value, driving, annotation
+and sense. Supported types: length, horizontal, vertical, radius, diameter.
+Length references one line's first/second endpoints; H/V reference two distinct
+points, including centers or the origin. Radius/diameter reference a circle
+center; second is the origin placeholder. A reference dimension has driving=false
+and its value is recomputed as a measurement, not added as an equation.
 
-## Endpoint joining and feature drafts
+Example driving line length:
 
-Dragging an endpoint to another endpoint or the fixed origin creates a normal
-Coincident relation using the existing entity/point references. No display
-guides, antialiasing data or drag previews are serialized. The schema remains 3.
-An active-sketch feature draft is transient; Confirm persists the supported
-sketch changes and feature together, while Cancel preserves the ongoing sketch
-edit. Saving a resumed sketch follows the normal sketch-finish validation path.
+~~~json
+{"id":"dimension-1","type":"length",
+ "first":{"entity":"line-a","point":"first"},
+ "second":{"entity":"line-a","point":"second"},
+ "value":50,"driving":true,"annotation":[25,15],"sense":1}
+~~~
 
-## Version 4 face attachment
+Value is mm; length/radius/diameter must exceed kernel tolerance. H/V values are
+nonnegative, with sense +1 or -1 retaining the coordinate side. Annotation is an
+independent local [x,y] location; moving it never changes the target equation.
+No transient drag target, graphics presentation or camera state is stored.
 
-Version 4 retains version 3 fields. A face-supported sketch additionally stores
-an attachment object with source (earlier solid feature ID), face (one-based OCCT
-face map index), signature (SHA-256 of its untriangulated source body BRep) and
+The reader reconstructs and solves every sketch before dependent operations.
+Legacy Coincident/H/V coordinates must already agree exactly; malformed equality
+records are rejected. New dimensional targets and solver relations solve on a
+candidate copy. Contradictions, redundancy, failed convergence or invalid solved
+geometry reject the transaction; constraints are never silently disabled.
+
+## Selected planar regions and multiple bodies
+
+One selected region uses contour: [boundary entity IDs]. Several use contours:
+[[region boundary IDs], ...], never both fields. Regions are actual planar faces.
+Each loop excludes its immediate nested children as holes; those child interiors
+can also be selected independently. A region's reference set includes outer and
+immediate hole boundaries. Selecting all adjacent nested regions fills them.
+Unrelated open branches remain sketch data and do not become feature boundaries.
+
+Selections are explicit and exact. Missing/changing boundaries, including a new
+hole that changes an existing selected region, fail instead of silently selecting
+a different profile. Independent and strictly nested closed loops work; crossing,
+touching and shared-edge arrangements remain unsupported. Invalid/open selected
+geometry never produces a stored solid.
+
+Extrude fuses selected prisms and the existing result. A result may contain several
+valid positive-volume solids. Cuts affect intersected solids in the current part
+and can split/remove bodies while retaining a nonempty valid solid result.
+No persistent body naming or per-body operation scope is stored yet.
+Through All computes extent from current bounds in the chosen plane direction.
+
+## Conservative face attachment (introduced in version 4)
+
+An attachment object contains source (earlier solid feature ID), face (one-based
+OCCT face map index), signature (SHA-256 of the source's untriangulated BRep), and
 frame (nine numbers: origin XYZ, unit outward normal XYZ, unit X direction XYZ).
-Normal and X must be perpendicular; Y is derived. The legacy plane field is
-retained for structural compatibility but the attachment frame governs geometry.
-The sketch dependencies include source. Readers validate support and frame before
-using the reference. Origin-plane sketches omit attachment.
+Y is derived. Source, fingerprint and orthonormal frame are verified. A changed
+supporting BRep fails regeneration; there is no automatic face reattachment or
+permanent topology naming. See decision 0008.
 
-See [the provisional reference strategy](decisions/0008-reference-face-attachments.md).
-Changed support causes a clear failure, never a guessed reattachment. Version 4
-files require this reader; older readers reject their unsupported version safely.
+## Compatibility and safety
+
+Version 1 is exactly one legacy box with no feature name. Version 2 adds named
+parametric history/entities but no relations. Version 3 adds Coincident/H/V;
+version 4 adds face attachments. These are read without inventing constraints or
+features. Saving intentionally writes version 5 .thepart to the selected path.
+The older application versions reject version 5 safely.
+
+Only a fully successful candidate history replaces the document and precise OCCT
+BRep. Opening invalid files, dimensional edits and failed dependent regeneration
+retain the old document. Save uses QSaveFile with direct-write fallback disabled;
+failed replacement preserves the existing destination. Save reuses the active
+path, Save As switches paths, and unsaved changes use Save/Discard/Cancel.
+
+Limits: 1 MiB input/output, 500 features, 1000 entities and at most 4000 relations
+and 4000 dimensions per sketch; finite coordinates/values within 1e9 mm.
+There is no undo/redo, suppression, history reordering, spatial sketching,
+assembly/drawing implementation, angular dimension, trimming or automatic repair.

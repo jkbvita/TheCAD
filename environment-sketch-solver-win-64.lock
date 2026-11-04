@@ -1,0 +1,9 @@
+# PlaneGCS header dependency environment, Windows x64.
+# Recreate with micromamba create --prefix <path> --file environment-sketch-solver-win-64.lock
+@EXPLICIT
+https://conda.anaconda.org/conda-forge/win-64/eigen-3.4.0-h5112557_2.conda#sha256:c6a44edf0381f66826cd60ed30b07aa4bc5b9ce5de94d458f0c5457fb1d49dfd
+https://conda.anaconda.org/conda-forge/win-64/libboost-headers-1.86.0-h57928b3_5.conda#sha256:010d6a8326620357cb644538f6b6f9d3653415b7e043a1dd648bad4f283551e6
+https://conda.anaconda.org/conda-forge/win-64/ucrt-10.0.26100.0-h57928b3_0.conda#sha256:3005729dce6f3d3f5ec91dfc49fc75a0095f9cd23bab49efb899657297ac91a5
+https://conda.anaconda.org/conda-forge/win-64/vc-14.5-ha367084_42.conda#sha256:0598ca1ce913618cff9bd90391bcf75cd9edb22057c85dd6784dd762b7a888e2
+https://conda.anaconda.org/conda-forge/win-64/vc14_runtime-14.51.36247-habf1de7_42.conda#sha256:8dfbfd68ebf53249d11e528cbb80ad5a2460b0c5b4636eed82ee0d3950827a3d
+https://conda.anaconda.org/conda-forge/win-64/vcomp14-14.51.36247-habf1de7_42.conda#sha256:b3558ed059d6272ef919ea959311af73c35b5fe43c789cd43f71b398671fec49

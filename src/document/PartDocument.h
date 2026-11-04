@@ -18,6 +18,7 @@ struct Feature {
     modeling::Sketch sketch;
     std::string sketchId;
     std::vector<std::string> contour;
+    modeling::RegionReferences contours;
     double length = 10.0;
     modeling::Direction direction = modeling::Direction::Positive;
     bool throughAll = false;
@@ -40,6 +41,8 @@ public:
     std::string addSketch(const modeling::Sketch& sketch);
     std::string addExtrude(const std::string& sketchId, const std::vector<std::string>& contour, double length, modeling::Direction direction);
     std::string addCut(const std::string& sketchId, const std::vector<std::string>& contour, double depth, bool throughAll, modeling::Direction direction);
+    std::string addExtrudeRegions(const std::string& sketchId,const modeling::RegionReferences& contours,double length,modeling::Direction direction);
+    std::string addCutRegions(const std::string& sketchId,const modeling::RegionReferences& contours,double depth,bool throughAll,modeling::Direction direction);
     void replaceFeature(const Feature& feature);
 
 private:

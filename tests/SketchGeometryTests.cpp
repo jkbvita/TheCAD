@@ -220,7 +220,7 @@ int main()
         rejected([&] { makeExtrusion(branched, 10, Direction::Positive); });
         auto mixed = rectangle();
         mixed.entities.push_back(circle().entities[0]);
-        rejected([&] { makeExtrusion(mixed, 10, Direction::Positive); });
+        requireNear(volume(makeExtrusion(mixed,10,Direction::Positive)),(1200-25*pi)*10);
         rejected([&] { makeExtrusion(Sketch{}, 10, Direction::Positive); });
         rejected([&] { makeExtrusion(profile, 0, Direction::Positive); });
         rejected([&] { makeExtrusion(profile, -10, Direction::Positive); });
@@ -265,7 +265,7 @@ int main()
         rejected([&] { selectContour(selectable, {"left-rectangle", "left-rectangle"}); });
         auto nested = rectangle();
         nested.entities.push_back(circle().entities[0]);
-        rejected([&] { closedContours(nested); });
+        require(closedContours(nested).size()==2,"Nested boundaries create an annulus and an inner selectable region");
         auto touching = rectangle();
         secondRectangle.first = {40, 0};
         secondRectangle.second = {60, 30};

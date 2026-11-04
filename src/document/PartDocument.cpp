@@ -6,6 +6,7 @@
 #include <sstream>
 #include "document/PartDocument.h"
 #include "modeling/Box.h"
+#include "modeling/ConstraintSolver.h"
 
 #include <BRepCheck_Analyzer.hxx>
 #include <Standard_Failure.hxx>
@@ -168,15 +169,23 @@ QJsonObject writeRelation(const modeling::SketchRelation& relation)
     case modeling::RelationKind::Coincident: type = "coincident"; break;
     case modeling::RelationKind::Horizontal: type = "horizontal"; break;
     case modeling::RelationKind::Vertical: type = "vertical"; break;
+    case modeling::RelationKind::FixedPoint: type = "fixed"; break;
+    case modeling::RelationKind::Parallel: type = "parallel"; break;
+    case modeling::RelationKind::Perpendicular: type = "perpendicular"; break;
+    case modeling::RelationKind::Tangent: type = "tangent"; break;
     default: fail("Unsupported sketch relation type.");
     }
-    return {{"id", q(relation.id)}, {"type", type}, {"first", writePointRef(relation.first)}, {"second", writePointRef(relation.second)}};
+    QJsonObject result{{"id", q(relation.id)}, {"type", type}, {"first", writePointRef(relation.first)}, {"second", writePointRef(relation.second)}};
+    if(relation.kind==modeling::RelationKind::FixedPoint)result["position"]=point(relation.fixedPosition);
+    return result;
 }
-modeling::SketchRelation readRelation(const QJsonValue& value)
+modeling::SketchRelation readRelation(const QJsonValue& value, int version)
 {
     if (!value.isObject()) fail("Sketch relation must be an object.");
     const auto object = value.toObject();
-    fields(object, {"id", "type", "first", "second"}, "Sketch relation");
+    QSet<QString> expected{"id", "type", "first", "second"};
+    if(version>=5 && object.value("type")=="fixed")expected.insert("position");
+    fields(object, expected, "Sketch relation");
     modeling::SketchRelation relation;
     relation.id = stringValue(object.value("id"), "Relation ID").toStdString();
     validId(relation.id);
@@ -184,10 +193,40 @@ modeling::SketchRelation readRelation(const QJsonValue& value)
     if (type == "coincident") relation.kind = modeling::RelationKind::Coincident;
     else if (type == "horizontal") relation.kind = modeling::RelationKind::Horizontal;
     else if (type == "vertical") relation.kind = modeling::RelationKind::Vertical;
+    else if(version>=5 && type=="fixed") {relation.kind=modeling::RelationKind::FixedPoint;relation.fixedPosition=readPoint(object.value("position"));}
+    else if(version>=5 && type=="parallel")relation.kind=modeling::RelationKind::Parallel;
+    else if(version>=5 && type=="perpendicular")relation.kind=modeling::RelationKind::Perpendicular;
+    else if(version>=5 && type=="tangent")relation.kind=modeling::RelationKind::Tangent;
     else fail("Unsupported sketch relation type.");
     relation.first = readPointRef(object.value("first"));
     relation.second = readPointRef(object.value("second"));
     return relation;
+}
+const char* dimensionName(modeling::DimensionKind kind) {
+    switch(kind) {
+    case modeling::DimensionKind::LineLength:return "length";
+    case modeling::DimensionKind::HorizontalDistance:return "horizontal";
+    case modeling::DimensionKind::VerticalDistance:return "vertical";
+    case modeling::DimensionKind::CircleRadius:return "radius";
+    case modeling::DimensionKind::CircleDiameter:return "diameter";
+    } fail("Unsupported dimension type.");
+}
+QJsonObject writeDimension(const modeling::SketchDimension& d) {
+    return {{"id",q(d.id)},{"type",dimensionName(d.kind)},{"first",writePointRef(d.first)},
+        {"second",writePointRef(d.second)},{"value",d.value},{"driving",d.driving},{"annotation",point(d.annotation)},{"sense",d.sense}};
+}
+modeling::SketchDimension readDimension(const QJsonValue& value) {
+    if(!value.isObject())fail("Dimension must be an object.");
+    const auto o=value.toObject();fields(o,{"id","type","first","second","value","driving","annotation","sense"},"Dimension");
+    modeling::SketchDimension d;d.id=stringValue(o.value("id"),"Dimension ID").toStdString();validId(d.id);
+    const auto type=stringValue(o.value("type"),"Dimension type");bool found=false;
+    for(const auto kind:{modeling::DimensionKind::LineLength,modeling::DimensionKind::HorizontalDistance,modeling::DimensionKind::VerticalDistance,modeling::DimensionKind::CircleRadius,modeling::DimensionKind::CircleDiameter})
+        if(type==dimensionName(kind)){d.kind=kind;found=true;}
+    if(!found)fail("Unsupported dimension type.");
+    d.first=readPointRef(o.value("first"));d.second=readPointRef(o.value("second"));d.value=number(o.value("value"),"Dimension value");
+    if(!o.value("driving").isBool())fail("Dimension driving status must be boolean.");d.driving=o.value("driving").toBool();
+    d.annotation=readPoint(o.value("annotation"));const double sense=number(o.value("sense"),"Dimension sense");
+    if(sense!=1 && sense!=-1)fail("Dimension sense must be +1 or -1.");d.sense=int(sense);return d;
 }
 QJsonObject writeBox(BoxParameters box)
 {
@@ -311,6 +350,12 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
                        !actual.XDirection().IsEqual(attachment.frame.XDirection(),1e-9)) fail("Stored sketch frame does not match its supporting face.");
                     expected.push_back(attachment.sourceFeature);
                 }
+                // Legacy equalities must already be internally consistent; dimensional
+                // targets and the new solver relations may intentionally require a solve.
+                auto legacy=feature.sketch;legacy.dimensions.clear();
+                legacy.relations.erase(std::remove_if(legacy.relations.begin(),legacy.relations.end(),[](const auto& r){return r.kind!=modeling::RelationKind::Coincident && r.kind!=modeling::RelationKind::Horizontal && r.kind!=modeling::RelationKind::Vertical;}),legacy.relations.end());
+                validSketch(legacy);
+                feature.sketch=modeling::requireSolvedSketch(modeling::solvePlanarSketch(feature.sketch));
                 validSketch(feature.sketch);
                 sketches.emplace(feature.id, feature.sketch);
             } else if (feature.kind == FeatureKind::Extrude || feature.kind == FeatureKind::Cut) {
@@ -321,11 +366,16 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
                     fail("Extrusion length/depth must be positive and no larger than 1e9 mm.");
                 expected.push_back(feature.sketchId);
                 if (!bodyId.empty()) expected.push_back(bodyId);
-                if (feature.kind == FeatureKind::Cut) {
+                if(!feature.contours.empty()) {
+                    if(!feature.contour.empty())fail("Feature cannot contain both a single contour and multiple regions.");
+                    body=feature.kind==FeatureKind::Cut
+                        ? modeling::makeCuts(body,source->second,feature.contours,feature.length,feature.throughAll,feature.direction)
+                        : modeling::makeExtrusions(source->second,feature.contours,feature.length,feature.direction,body);
+                } else if (feature.kind == FeatureKind::Cut) {
                     if (body.IsNull()) fail("Extruded Cut requires an earlier solid.");
-                    body = modeling::makeCut(body, modeling::selectContour(source->second, feature.contour), feature.length, feature.throughAll, feature.direction);
+                    body = modeling::makeCuts(body,source->second,{feature.contour},feature.length,feature.throughAll,feature.direction);
                 } else {
-                    body = modeling::makeExtrusion(modeling::selectContour(source->second, feature.contour), feature.length, feature.direction, body);
+                    body = modeling::makeExtrusions(source->second,{feature.contour},feature.length,feature.direction,body);
                 }
                 bodyId = feature.id;
             } else fail("Unsupported feature kind.");
@@ -408,6 +458,25 @@ std::string PartDocument::addCut(const std::string& sketchId, const std::vector<
     return feature.id;
 }
 
+std::string PartDocument::addExtrudeRegions(const std::string& sketchId,const modeling::RegionReferences& contours,double length,modeling::Direction direction)
+{
+    if(contours.size()==1)return addExtrude(sketchId,contours.front(),length,direction);
+    if(contours.empty())fail("Select at least one closed region.");
+    Feature feature;feature.kind=FeatureKind::Extrude;feature.id=nextId(feature.kind);
+    feature.name="Extrude"+feature.id.substr(feature.id.find('-')+1);feature.sketchId=sketchId;
+    feature.contours=contours;feature.length=length;feature.direction=direction;
+    auto candidate=m_features;candidate.push_back(feature);apply(std::move(candidate));return feature.id;
+}
+std::string PartDocument::addCutRegions(const std::string& sketchId,const modeling::RegionReferences& contours,double depth,bool throughAll,modeling::Direction direction)
+{
+    if(contours.size()==1)return addCut(sketchId,contours.front(),depth,throughAll,direction);
+    if(contours.empty())fail("Select at least one closed region.");
+    Feature feature;feature.kind=FeatureKind::Cut;feature.id=nextId(feature.kind);
+    feature.name="ExtrudedCut"+feature.id.substr(feature.id.find('-')+1);feature.sketchId=sketchId;
+    feature.contours=contours;feature.length=depth;feature.direction=direction;feature.throughAll=throughAll;
+    auto candidate=m_features;candidate.push_back(feature);apply(std::move(candidate));return feature.id;
+}
+
 void PartDocument::replaceFeature(const Feature& feature)
 {
     auto candidate = m_features;
@@ -436,7 +505,7 @@ PartDocument PartDocument::load(const QString& path)
     if (root.value("format") != QJsonValue("TheCAD.Part")) fail("Unsupported document format; expected TheCAD.Part.");
     if (root.value("units") != QJsonValue("mm")) fail("Unsupported units; this prototype supports millimeters only.");
     const auto versionValue = root.value("version");
-    if (!versionValue.isDouble() || (versionValue.toDouble() != 1 && versionValue.toDouble() != 2 && versionValue.toDouble() != 3 && versionValue.toDouble() != 4)) fail("Unsupported part document version; expected 1, 2, 3, or 4.");
+    if (!versionValue.isDouble() || (versionValue.toDouble() != 1 && versionValue.toDouble() != 2 && versionValue.toDouble() != 3 && versionValue.toDouble() != 4 && versionValue.toDouble() != 5)) fail("Unsupported part document version; expected versions 1 through 5.");
     const int version = versionValue.toInt();
     if (!root.value("features").isArray()) fail("Part features must be an ordered array.");
     const auto array = root.value("features").toArray();
@@ -463,10 +532,16 @@ PartDocument PartDocument::load(const QString& path)
             } else if (type == "sketch") {
                 QSet<QString> expected{"id", "name", "type", "plane", "entities", "dependencies"};
                 if (version >= 3) expected.insert("relations");
+                if(version>=5)for(const auto* key:{"space","dimensions"})if(object.contains(key))expected.insert(key);
                 if(version>=4 && object.contains("attachment")) expected.insert("attachment");
                 fields(object, expected, "Sketch feature");
                 feature.kind = FeatureKind::Sketch;
                 feature.sketch.plane = readPlane(object.value("plane"));
+                if(object.contains("space") && object.value("space")!=QJsonValue("planar2d"))fail("Spatial or unsupported sketch space requires a future TheCAD version.");
+                if(object.contains("dimensions")){
+                    if(!object.value("dimensions").isArray() || object.value("dimensions").toArray().size()>4000)fail("Invalid dimension array (maximum 4000).");
+                    for(const auto& d:object.value("dimensions").toArray())feature.sketch.dimensions.push_back(readDimension(d));
+                }
                 if(object.contains("attachment")) {
                     if(!object.value("attachment").isObject()) fail("Invalid face attachment.");
                     const auto a=object.value("attachment").toObject();fields(a,{"source","face","signature","frame"},"Face attachment");
@@ -485,16 +560,25 @@ PartDocument PartDocument::load(const QString& path)
                 if (version >= 3) {
                     if (!object.value("relations").isArray() || object.value("relations").toArray().size() > 4000)
                         fail("Sketch relations must be an array of no more than 4000 elements.");
-                    for (const auto& relation : object.value("relations").toArray()) feature.sketch.relations.push_back(readRelation(relation));
+                    for (const auto& relation : object.value("relations").toArray()) feature.sketch.relations.push_back(readRelation(relation,version));
                 }
             } else if (type == "extrude" || type == "cut") {
                 QSet<QString> expected{"id", "name", "type", "sketch", "contour", "length", "direction", "dependencies"};
                 if (type == "cut") expected.insert("throughAll");
+                if(version>=5 && object.contains("contours")){expected.remove("contour");expected.insert("contours");}
                 fields(object, expected, "Extrusion feature");
                 feature.kind = type == "cut" ? FeatureKind::Cut : FeatureKind::Extrude;
                 feature.sketchId = stringValue(object.value("sketch"), "Source sketch").toStdString();
-                if (!object.value("contour").isArray()) fail("Feature contour must be an explicit array of sketch entity IDs.");
-                for (const auto& entityId : object.value("contour").toArray()) feature.contour.push_back(stringValue(entityId, "Contour entity ID").toStdString());
+                if(object.contains("contours")) {
+                    if(!object.value("contours").isArray() || object.value("contours").toArray().isEmpty() || object.value("contours").toArray().size()>1000)fail("Feature contours must contain 1 to 1000 explicit region reference arrays.");
+                    for(const auto& region:object.value("contours").toArray()) {
+                        if(!region.isArray() || region.toArray().isEmpty() || region.toArray().size()>1000)fail("Invalid selected region reference array.");
+                        std::vector<std::string> ids;for(const auto& id:region.toArray())ids.push_back(stringValue(id,"Region entity ID").toStdString());feature.contours.push_back(std::move(ids));
+                    }
+                } else {
+                    if (!object.value("contour").isArray()) fail("Feature contour must be an explicit array of sketch entity IDs.");
+                    for (const auto& entityId : object.value("contour").toArray()) feature.contour.push_back(stringValue(entityId, "Contour entity ID").toStdString());
+                }
                 feature.length = number(object.value("length"), "Extrusion length");
                 feature.direction = readDirection(object.value("direction"));
                 if (type == "cut") {
@@ -530,6 +614,8 @@ void PartDocument::save(const QString& path) const
             object["parameters"] = writeBox(feature.box);
         } else if (feature.kind == FeatureKind::Sketch) {
             object["plane"] = planeName(feature.sketch.plane);
+            object["space"]="planar2d";
+            QJsonArray dimensions;for(const auto& d:feature.sketch.dimensions)dimensions.append(writeDimension(d));object["dimensions"]=dimensions;
             if(feature.sketch.attachment) {
                 const auto& a=*feature.sketch.attachment;const auto& f=a.frame;const auto p=f.Location();const auto n=f.Direction();const auto x=f.XDirection();
                 object["attachment"]=QJsonObject{{"source",q(a.sourceFeature)},{"face",a.faceIndex},{"signature",q(a.sourceSignature)},
@@ -545,7 +631,8 @@ void PartDocument::save(const QString& path) const
             object["sketch"] = q(feature.sketchId);
             QJsonArray contour;
             for (const auto& entityId : feature.contour) contour.append(q(entityId));
-            object["contour"] = contour;
+            if(feature.contours.empty())object["contour"]=contour;
+            else {QJsonArray regions;for(const auto& region:feature.contours){QJsonArray ids;for(const auto& id:region)ids.append(q(id));regions.append(ids);}object["contours"]=regions;}
             object["length"] = feature.length;
             object["direction"] = directionName(feature.direction);
             if (feature.kind == FeatureKind::Cut) object["throughAll"] = feature.throughAll;
@@ -553,8 +640,7 @@ void PartDocument::save(const QString& path) const
         if (feature.kind != FeatureKind::Sketch) resultId = feature.id;
         features.append(object);
     }
-    const bool attached=std::any_of(m_features.begin(),m_features.end(),[](const auto& f){return f.kind==FeatureKind::Sketch && f.sketch.attachment.has_value();});
-    const QJsonObject root{{"format", "TheCAD.Part"}, {"version", attached?4:3}, {"units", "mm"}, {"features", features}, {"resultFeature", q(resultId)}};
+    const QJsonObject root{{"format", "TheCAD.Part"}, {"version", 5}, {"units", "mm"}, {"features", features}, {"resultFeature", q(resultId)}};
     const auto bytes = QJsonDocument(root).toJson(QJsonDocument::Indented);
     if (bytes.size() > maximumDocumentBytes) fail("Part document exceeds the 1 MiB prototype size limit.");
     QSaveFile file(path);

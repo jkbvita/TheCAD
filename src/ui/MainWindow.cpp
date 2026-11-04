@@ -1,6 +1,7 @@
 #include "ui/MainWindow.h"
 #include "ui/CadViewport.h"
 #include "modeling/Sketch.h"
+#include "modeling/ConstraintSolver.h"
 #include "modeling/ReferencePlanes.h"
 
 #include <QAction>
@@ -178,7 +179,7 @@ struct MainWindow::OperationDraft {
     std::optional<document::PartDocument> sourceDocument;
     QWidget* panel = nullptr;
     QComboBox* sketches = nullptr;
-    QComboBox* contours = nullptr;
+    QListWidget* contours = nullptr;
     QDoubleSpinBox* length = nullptr;
     QComboBox* direction = nullptr;
     QCheckBox* through = nullptr;
@@ -315,7 +316,7 @@ MainWindow::MainWindow(QWidget* parent)
     m_finishSketch = action("Exit Sketch", "actionFinishSketch", [this] { finishSketch(); });
     commandButton(m_createSketch, sketchGrid, 0, 0, true);
     commandButton(m_finishSketch, sketchGrid, 0, 1, true);
-    commandButton(unavailable("Smart Dimension", "actionSmartDimension"), sketchGrid, 0, 2, true);
+    commandButton(action("Smart Dimension", "actionSmartDimension", [this]{startConstraints();}), sketchGrid, 0, 2, true);
     commandGroup(sketchButtons, "Draw", drawGrid);
     m_selectEntity = action("Select", "actionSelectSketchEntity", [this] { m_viewport->selectSketchTool(); });
     m_line = action("Line", "actionLine", [this] { m_viewport->setSketchTool(modeling::EntityKind::Line); });
@@ -337,7 +338,7 @@ MainWindow::MainWindow(QWidget* parent)
     for (int i = 0; i < modifyCommands.size(); ++i)
         commandButton(unavailable(modifyCommands[i].first, modifyCommands[i].second), modifyGrid, i % 3, i / 3);
     commandGroup(sketchButtons, "Relations / inspection", relationGrid);
-    commandButton(unavailable("Display/Delete Relations", "actionDisplayDeleteRelations"), relationGrid, 0, 0);
+    commandButton(action("Display/Delete Relations", "actionDisplayDeleteRelations", [this]{startConstraints();}), relationGrid, 0, 0);
     commandButton(unavailable("Repair Sketch", "actionRepairSketch"), relationGrid, 1, 0);
     commandButton(unavailable("Shaded Sketch Contours", "actionShadedSketchContours"), relationGrid, 2, 0);
     sketchButtons->addStretch();
@@ -474,6 +475,7 @@ MainWindow::MainWindow(QWidget* parent)
     });
     connect(m_viewport, &CadViewport::sketchEntitySelected, this, [this](const QString& id) {
         if (!m_editSketch) return;
+        constraintEntitySelected(id);
         for (std::size_t i = 0; i < m_editSketch->entities.size(); ++i) {
             if (m_editSketch->entities[i].id == id.toStdString()) {
                 m_entities->setCurrentRow(int(i));
@@ -487,16 +489,22 @@ MainWindow::MainWindow(QWidget* parent)
         statusBar()->showMessage(message);
     });
     connect(m_viewport, &CadViewport::sketchPointSelected, this, [this](const QString& id, int role) {
+        m_constraintPoint=modeling::SketchPointRef{id.toStdString(),modeling::PointRole(role)};
+        constraintPointSelected(*m_constraintPoint);
         const QString pointName = id.isEmpty() ? "Sketch origin (0, 0)" : QString("%1 of %2")
             .arg(role == int(modeling::PointRole::Second) ? "Endpoint" : role == int(modeling::PointRole::Center) ? "Center" : "Start point", id);
         statusBar()->showMessage(pointName + " selected. Snapping uses exact sketch coordinates.");
     });
+    connect(m_viewport,&CadViewport::constraintPickingCanceled,this,[this]{closeConstraints();});
+    connect(m_viewport,&CadViewport::dimensionPlacementRequested,this,[this](modeling::Point2 point){if(m_constraints){m_constraints->annotation=point;updateConstraintDraft();}});
+    connect(m_viewport,&CadViewport::dimensionEditRequested,this,[this](const QString& id){if(m_editSketch){closeConstraints();startConstraints(id.toStdString());}});
     connect(m_viewport, &CadViewport::sketchChanged, this, [this](const modeling::Sketch& sketch) {
         if (!m_editSketch) return;
         try {
             modeling::validateSketchRelations(sketch);
             (void)modeling::sketchShape(sketch);
-            m_editSketch = sketch;
+            acceptConstrainedSketch(sketch);
+            m_viewport->setSketch(*m_editSketch);
             setWindowModified(true);
             updateEntityList();
             updateActions();
@@ -850,22 +858,24 @@ void MainWindow::updateEntityList()
 void MainWindow::updateActions()
 {
     const bool operation = bool(m_operation);
-    const bool editing = m_mode == WorkspaceMode::EditingSketch;
+    const bool editing = m_mode == WorkspaceMode::EditingSketch && !m_constraints;
+    findChild<QAction*>("actionSmartDimension")->setEnabled(editing && !operation);
+    findChild<QAction*>("actionDisplayDeleteRelations")->setEnabled(editing && !operation);
     const bool selecting = m_selectingPlane;
     m_tabs->setEnabled(!operation);
     findChild<QAction*>("actionCancelFeature")->setEnabled(operation);
     m_tree->setEnabled(!operation && !editing && !selecting);
     for (const auto* name : {"actionNew", "actionOpen", "actionSave", "actionSaveAs"}) {
-        if (auto* action = findChild<QAction*>(name)) action->setEnabled(!operation && !selecting);
+        if (auto* action = findChild<QAction*>(name)) action->setEnabled(!operation && !selecting && !m_constraints);
     }
-    m_createSketch->setEnabled(!editing && !operation && !selecting);
+    m_createSketch->setEnabled(!m_editSketch && !operation && !selecting);
     m_selectEntity->setEnabled(editing && !operation);
     m_line->setEnabled(editing && !operation);
     m_rectangle->setEnabled(editing && !operation);
     m_circle->setEnabled(editing && !operation);
     m_finishSketch->setEnabled(editing && !operation);
     const auto* selected = selectedFeature();
-    m_editFeature->setEnabled(!editing && !operation && !selecting && selected);
+    m_editFeature->setEnabled(!m_editSketch && !operation && !selecting && selected);
     m_editEntity->setEnabled(editing && !operation && m_entities->currentRow() >= 0);
     m_deleteEntity->setEnabled(editing && !operation && m_entities->currentRow() >= 0);
     m_applyProperties->setEnabled(editing && !operation && m_entities->currentRow() >= 0);
@@ -879,8 +889,8 @@ void MainWindow::updateActions()
             if (profile) break;
         }
     }
-    m_extrude->setEnabled(profile);
-    m_cut->setEnabled(profile && !m_document.shape().IsNull());
+    m_extrude->setEnabled(profile && !m_constraints);
+    m_cut->setEnabled(profile && !m_constraints && !m_document.shape().IsNull());
 }
 void MainWindow::createSketch()
 {
@@ -953,6 +963,7 @@ void MainWindow::startSketchEditing(const document::Feature& feature)
     m_selectedPlane.reset();
     m_viewport->setSelectedReferencePlane({});
     m_mode = WorkspaceMode::EditingSketch;
+    m_constraintPoint.reset();
     m_editSketch = feature.sketch;
     m_editSketchId = feature.id;
     m_selectedId = feature.id;
@@ -965,6 +976,7 @@ void MainWindow::startSketchEditing(const document::Feature& feature)
 
 bool MainWindow::finishSketch()
 {
+    if(m_constraints)return false;
     if (!m_editSketch) return true;
     try {
         auto candidate = m_document;
@@ -1006,6 +1018,11 @@ void MainWindow::updateEntityProperties()
         .arg(std::count_if(sketch->relations.begin(), sketch->relations.end(), [&entity](const auto& relation) {
             return relation.first.entityId == entity.id || relation.second.entityId == entity.id;
         })));
+    QStringList associated;
+    for(const auto& r:sketch->relations)if(r.first.entityId==entity.id || r.second.entityId==entity.id)associated<<QString::fromStdString(r.id);
+    for(const auto& d:sketch->dimensions)if(d.first.entityId==entity.id || d.second.entityId==entity.id)associated<<QString::fromStdString(d.id);
+    const auto diagnostic=modeling::solvePlanarSketch(*sketch).diagnostics;
+    m_entitySummary->setText(m_entitySummary->text()+"\n"+QString::fromStdString(diagnostic.message)+"\nConstraints: "+associated.join(", "));
     m_propertyFirstX->setValue(entity.first.x);
     m_propertyFirstY->setValue(entity.first.y);
     m_propertySecondX->setValue(entity.second.x);
@@ -1030,7 +1047,7 @@ void MainWindow::applySketchEntityEdit(const modeling::SketchEntity& entity)
     try {
         auto candidate = modeling::editSketchEntity(*m_editSketch, entity);
         (void)modeling::sketchShape(candidate);
-        m_editSketch = std::move(candidate);
+        acceptConstrainedSketch(candidate);
         m_viewport->setSketch(*m_editSketch);
         setWindowModified(true);
         updateEntityList();
@@ -1143,13 +1160,14 @@ void MainWindow::startOperation(document::Feature feature, bool editing)
         if(item.id==draft.feature.sketchId) selectedIndex=draft.sketches->count()-1;
     }
     selectionForm->addRow("Sketch",draft.sketches);draft.sketches->setEnabled(!draft.fromSketch);
-    draft.contours=new QComboBox;draft.contours->setObjectName("operationContour");draft.contours->setPlaceholderText("Select a contour");
+    draft.contours=new QListWidget;draft.contours->setObjectName("operationContour");
+    draft.contours->setSelectionMode(QAbstractItemView::MultiSelection);draft.contours->setMaximumHeight(150);
     selectionForm->addRow("Contour",draft.contours);
-    auto* instructions=new QLabel("Click inside the intended closed region in the viewport, or select its contour here.");
+    auto* instructions=new QLabel("Click regions to add or remove them, or select multiple contours here. Inner boundaries form holes in their surrounding region.");
     instructions->setWordWrap(true);selectionForm->addRow(instructions);settings->addWidget(selectionGroup);
     draft.status=new QLabel;draft.status->setObjectName("operationStatus");draft.status->setWordWrap(true);settings->addWidget(draft.status);settings->addStretch();
     connect(draft.sketches,&QComboBox::currentIndexChanged,this,[this]{operationSketchChanged();});
-    connect(draft.contours,&QComboBox::currentIndexChanged,this,[this]{updateOperationPreview();});
+    connect(draft.contours,&QListWidget::itemSelectionChanged,this,[this]{updateOperationPreview();});
     connect(draft.length,&QDoubleSpinBox::valueChanged,this,[this]{updateOperationPreview();});
     connect(draft.length->findChild<QLineEdit*>(),&QLineEdit::textChanged,this,[this]{
         if(m_operation && (!m_operation->length->hasAcceptableInput() || !m_operation->candidate)) updateOperationPreview();
@@ -1166,13 +1184,21 @@ void MainWindow::startOperation(document::Feature feature, bool editing)
     });
     draft.sketches->setCurrentIndex(selectedIndex);operationSketchChanged();
     if(editing) {
-        auto expected=draft.feature.contour;std::sort(expected.begin(),expected.end());
-        for(int i=0;i<int(draft.availableContours.size());++i) {
-            auto actual=draft.availableContours[std::size_t(i)].entityIds;std::sort(actual.begin(),actual.end());
-            if(actual==expected){draft.contours->setCurrentIndex(i);break;}
+        const auto references=draft.feature.contours.empty()?modeling::RegionReferences{draft.feature.contour}:draft.feature.contours;
+        {const QSignalBlocker blocker(draft.contours);for(auto expected:references) {
+            std::sort(expected.begin(),expected.end());
+            for(int i=0;i<int(draft.availableContours.size());++i) {
+                auto actual=draft.availableContours[std::size_t(i)].entityIds;std::sort(actual.begin(),actual.end());
+                if(actual==expected){draft.contours->setCurrentRow(i,QItemSelectionModel::NoUpdate);draft.contours->item(i)->setSelected(true);break;}
+            }
+        }}
+        if(draft.contours->selectedItems().size()!=int(references.size())) {
+            const QSignalBlocker blocker(draft.contours);draft.contours->clearSelection();
+            draft.status->setText("A saved region is unavailable. Reselect the intended regions explicitly.");
         }
+        updateOperationPreview();
         if(draft.sketches->currentIndex()<0)draft.status->setText("The saved source sketch is unavailable. Select a replacement explicitly.");
-        else if(draft.contours->currentIndex()<0)draft.status->setText("The saved contour is unavailable. Select a replacement explicitly.");
+        else if(draft.contours->selectedItems().isEmpty())draft.status->setText("The saved contour is unavailable. Select a replacement explicitly.");
     }
     m_managerStack->addWidget(draft.panel);m_managerStack->setCurrentWidget(draft.panel);
     m_historyDock->setWindowTitle("PropertyManager");updateDocumentUi();
@@ -1229,9 +1255,10 @@ void MainWindow::operationSketchChanged()
         for (std::size_t i = 0; i < draft.availableContours.size(); ++i) {
             QVariantList ids;
             for (const auto& id : draft.availableContours[i].entityIds) ids.append(QString::fromStdString(id));
-            draft.contours->addItem(QString("Contour %1 (%2 entities)").arg(i + 1).arg(ids.size()), ids);
+            auto* item=new QListWidgetItem(QString("Contour %1 (%2 boundary entities)").arg(i+1).arg(ids.size()),draft.contours);
+            item->setData(Qt::UserRole,ids);
         }
-        draft.contours->setCurrentIndex(-1);
+        draft.contours->setCurrentRow(-1);draft.contours->clearSelection();
         draft.status->setText(draft.availableContours.empty()
             ? "This sketch has no valid closed contour. Finish a valid closed profile before using it."
             : "Select a contour explicitly to generate a preview.");
@@ -1249,8 +1276,8 @@ void MainWindow::updateOperationPreview()
         m_viewport->clearPreview();draft.status->setText("Enter a valid positive depth in millimeters.");return;
     }
     {const QSignalBlocker blocker(draft.length);const QSignalBlocker editorBlocker(draft.length->findChild<QLineEdit*>());draft.length->interpretText();}
-    const int index = draft.contours->currentIndex();
-    if (index < 0 || index >= int(draft.availableContours.size())) {
+    const auto selected=draft.contours->selectedItems();
+    if(selected.isEmpty()) {
         m_viewport->clearPreview();
         draft.status->setText("Select a contour explicitly to generate a preview.");
         return;
@@ -1258,7 +1285,10 @@ void MainWindow::updateOperationPreview()
     try {
         auto feature = draft.feature;
         feature.sketchId = draft.sketches->currentData().toString().toStdString();
-        feature.contour = draft.availableContours[std::size_t(index)].entityIds;
+        modeling::RegionReferences references;
+        for(auto* item:selected)references.push_back(draft.availableContours[std::size_t(draft.contours->row(item))].entityIds);
+        feature.contour.clear();feature.contours.clear();
+        if(references.size()==1)feature.contour=references.front();else feature.contours=references;
         feature.length = draft.length->value();
         feature.direction = draft.direction->currentIndex() == 0 ? modeling::Direction::Positive : modeling::Direction::Negative;
         feature.throughAll = feature.kind == document::FeatureKind::Cut && draft.through->isChecked();
@@ -1268,9 +1298,9 @@ void MainWindow::updateOperationPreview()
             candidate.replaceFeature(feature);
             id = feature.id;
         } else if (feature.kind == document::FeatureKind::Cut) {
-            id = candidate.addCut(feature.sketchId, feature.contour, feature.length, feature.throughAll, feature.direction);
+            id = candidate.addCutRegions(feature.sketchId, references, feature.length, feature.throughAll, feature.direction);
         } else {
-            id = candidate.addExtrude(feature.sketchId, feature.contour, feature.length, feature.direction);
+            id = candidate.addExtrudeRegions(feature.sketchId, references, feature.length, feature.direction);
         }
         m_viewport->previewShape(candidate.shape());
         draft.candidate = std::move(candidate);
@@ -1302,7 +1332,8 @@ void MainWindow::operationRegionClicked(modeling::Point2 point)
             selected = int(i);
         }
         if (selected >= 0) {
-            draft.contours->setCurrentIndex(selected);
+            draft.contours->setCurrentRow(selected,QItemSelectionModel::NoUpdate);
+            draft.contours->item(selected)->setSelected(!draft.contours->item(selected)->isSelected());
             updateOperationPreview();
         } else draft.status->setText("No valid closed contour contains this point. Click inside a region or choose it in the list.");
     } catch (const std::exception& error) { draft.status->setText(QString::fromUtf8(error.what())); }

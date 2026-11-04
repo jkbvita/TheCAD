@@ -1,5 +1,9 @@
 # Foundational sketch interaction and relations
 
+Current extension: [approved parametric constraints and multiple regions](parametric-constraints.md)
+supersede this milestone's earlier exclusions of dimensions, solver relations, nested
+regions and multiple bodies. Historical scope below is retained for context.
+
 ## Approved scope
 
 Preserve TheCAD's existing C++/Qt/Open CASCADE implementation, graphical origin

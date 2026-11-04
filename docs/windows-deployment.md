@@ -77,3 +77,7 @@ linked, replaceable libraries. The repository's existing application LICENSE is
 copied unchanged. Packaging does not make a new application licensing decision.
 A public release's full source-offer and redistribution process remains future
 release work.
+
+The PlaneGCS milestone adds replaceable thecad_planegcs.dll and a complete modified
+solver source/license bundle under licenses/planegcs/, with Eigen header sources,
+Boost notices, provenance hashes, dependency lock and rebuild instructions.

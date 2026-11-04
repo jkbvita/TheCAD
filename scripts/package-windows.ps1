@@ -64,6 +64,8 @@ Plugins=plugins
 $shippedPaths = @($dependencies) + $plugins + @((Join-Path $shaderSource 'Declarations.glsl'))
 $relativePaths = @{}
 foreach ($source in $shippedPaths) {
+    # The locally built PlaneGCS DLL has its own source/license bundle below.
+    if (-not [IO.Path]::GetFullPath($source).StartsWith($dependencyRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { continue }
     $relative = $source.Substring($dependencyRoot.Length + 1).Replace('\', '/').ToLowerInvariant()
     $relativePaths[$relative] = $true
 }
@@ -91,6 +93,14 @@ foreach ($metadataFile in Get-ChildItem -LiteralPath (Join-Path $dependencyRoot 
     Copy-Item -LiteralPath $noticeSource -Destination $noticeDestination -Recurse
     $inventory += [ordered]@{ name=$metadata.name; version=$metadata.version; build=$metadata.build; license=$metadata.license; source=$metadata.url }
 }
+$solverNotices = Join-Path $noticesRoot 'planegcs'
+Copy-Item -LiteralPath (Join-Path $repoRoot 'third_party\planegcs') -Destination $solverNotices -Recurse
+Copy-Item -LiteralPath (Join-Path $repoRoot 'environment-sketch-solver-win-64.lock') -Destination $solverNotices
+# Include the covered Eigen header sources used to compile the distributed DLL.
+$solverHeaders = Join-Path $env:LOCALAPPDATA 'TheCAD\dev\sketch-solver\Library\include\eigen3\Eigen'
+if (-not (Test-Path -LiteralPath $solverHeaders)) { throw 'Eigen sources are required for the PlaneGCS source bundle.' }
+Copy-Item -LiteralPath $solverHeaders -Destination (Join-Path $solverNotices 'Eigen') -Recurse
+$inventory += [ordered]@{ name='PlaneGCS'; version='0cafef1e58284d08a244f9eba85aee0002e3e350'; license='LGPL-2.1-or-later'; source='https://github.com/FreeCAD/FreeCAD/tree/0cafef1e58284d08a244f9eba85aee0002e3e350/src/Mod/Sketcher/App/planegcs'; modifications='See planegcs/README.TheCAD.md and the complete modified source alongside it.' }
 $inventory | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $noticesRoot 'packages.json') -Encoding utf8
 Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE') -Destination (Join-Path $noticesRoot 'TheCAD-LICENSE.txt')
 # OCCT stores its exception alongside the installed documentation, not info/licenses.
@@ -110,7 +120,11 @@ and supplied license notices are in licenses/. The repository's existing
 application license text is retained; this does not select a new license.
 
 TheCAD uses Qt 6 for its desktop interface and Open CASCADE Technology for
-precise geometry and visualization. Their license notices are retained in
+precise geometry and visualization, and the standalone PlaneGCS solver component.
+The replaceable thecad_planegcs.dll has LGPL-2.1-or-later source, modifications,
+build instructions and dependency notices in licenses/planegcs/. Eigen header
+sources are included there; Boost is available via the pinned package lock.
+Their license notices are retained in
 licenses/qt6-main/ and licenses/occt/, including the OCCT LGPL exception.
 
 This is a local prototype package, not an installer or signed public release.

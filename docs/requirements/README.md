@@ -17,3 +17,6 @@ proposal does not constitute implementation approval.
 - [Parametric sketch and feature foundation](parametric-modeling.md).
 - [Window, viewport, and native part documents](part-documents-viewport.md) — historical names/schema.
 - [Initial Windows prototype](windows-prototype.md).
+
+Current additions: [parametric constraints](parametric-constraints.md), including
+owner-approved PlaneGCS evaluation, Smart Dimension, multiple regions and bodies.

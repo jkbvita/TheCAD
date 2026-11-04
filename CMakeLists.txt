@@ -10,6 +10,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
 
+add_subdirectory(third_party/planegcs)
+
 find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets)
 find_package(OpenCASCADE 7.9.3 EXACT REQUIRED COMPONENTS
     FoundationClasses ModelingData ModelingAlgorithms Visualization)
@@ -18,10 +20,10 @@ find_package(OpenCASCADE 7.9.3 EXACT REQUIRED COMPONENTS
 add_library(thecad_occt INTERFACE)
 target_include_directories(thecad_occt SYSTEM INTERFACE "${OpenCASCADE_INCLUDE_DIR}")
 
-add_library(thecad_modeling STATIC src/modeling/Box.cpp src/modeling/Sketch.cpp src/modeling/ReferencePlanes.cpp)
+add_library(thecad_modeling STATIC src/modeling/Box.cpp src/modeling/Sketch.cpp src/modeling/ReferencePlanes.cpp src/modeling/ConstraintSolver.cpp)
 set_target_properties(thecad_modeling PROPERTIES AUTOMOC OFF)
 target_include_directories(thecad_modeling PUBLIC src)
-target_link_libraries(thecad_modeling PUBLIC thecad_occt TKPrim TKTopAlgo TKBRep TKBO TKBool TKShHealing)
+target_link_libraries(thecad_modeling PRIVATE thecad_planegcs PUBLIC thecad_occt TKPrim TKTopAlgo TKBRep TKBO TKBool TKShHealing)
 
 add_library(thecad_document STATIC src/document/PartDocument.cpp)
 set_target_properties(thecad_document PROPERTIES AUTOMOC OFF)
@@ -30,7 +32,7 @@ target_link_libraries(thecad_document PUBLIC thecad_modeling Qt6::Core)
 
 add_library(thecad_ui STATIC
     src/ui/CadViewport.cpp src/ui/CadViewport.h
-    src/ui/MainWindow.cpp src/ui/MainWindow.h)
+    src/ui/MainWindow.cpp src/ui/MainWindow.h src/ui/SketchConstraintsUi.cpp)
 target_include_directories(thecad_ui PUBLIC src)
 target_link_libraries(thecad_ui PUBLIC Qt6::Widgets thecad_document thecad_occt TKV3d TKOpenGl)
 
@@ -47,6 +49,21 @@ endforeach()
 include(CTest)
 option(THECAD_GUI_TESTS "Run viewport tests (requires a desktop and OpenGL)" OFF)
 if(BUILD_TESTING)
+    add_executable(thecad_dimension_document_tests tests/DimensionDocumentTests.cpp)
+    set_target_properties(thecad_dimension_document_tests PROPERTIES AUTOMOC OFF)
+    target_link_libraries(thecad_dimension_document_tests PRIVATE thecad_document)
+    add_test(NAME document.dimensions COMMAND thecad_dimension_document_tests)
+
+    add_executable(thecad_constraint_solver_tests tests/ConstraintSolverTests.cpp)
+    set_target_properties(thecad_constraint_solver_tests PROPERTIES AUTOMOC OFF)
+    target_link_libraries(thecad_constraint_solver_tests PRIVATE thecad_modeling)
+    add_test(NAME solver.adapter COMMAND thecad_constraint_solver_tests)
+
+    add_executable(thecad_planegcs_prototype_tests tests/PlaneGcsPrototypeTests.cpp)
+    set_target_properties(thecad_planegcs_prototype_tests PROPERTIES AUTOMOC OFF CXX_STANDARD 20)
+    target_link_libraries(thecad_planegcs_prototype_tests PRIVATE thecad_planegcs)
+    add_test(NAME solver.planegcs-prototype COMMAND thecad_planegcs_prototype_tests)
+
     add_executable(thecad_modeling_tests tests/BoxTests.cpp)
     set_target_properties(thecad_modeling_tests PROPERTIES AUTOMOC OFF)
     target_link_libraries(thecad_modeling_tests PRIVATE thecad_modeling)
@@ -66,6 +83,11 @@ if(BUILD_TESTING)
     set_target_properties(thecad_document_tests PROPERTIES AUTOMOC OFF)
     target_link_libraries(thecad_document_tests PRIVATE thecad_document)
     add_test(NAME document.part COMMAND thecad_document_tests)
+
+    add_executable(thecad_multi_contour_tests tests/MultiContourTests.cpp)
+    set_target_properties(thecad_multi_contour_tests PROPERTIES AUTOMOC OFF)
+    target_link_libraries(thecad_multi_contour_tests PRIVATE thecad_document)
+    add_test(NAME modeling.multiple-contours COMMAND thecad_multi_contour_tests)
 
     add_executable(thecad_reference_face_tests tests/ReferenceFaceContourTests.cpp)
     set_target_properties(thecad_reference_face_tests PROPERTIES AUTOMOC OFF)

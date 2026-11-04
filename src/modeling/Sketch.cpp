@@ -1,6 +1,11 @@
+#include <BRepTools.hxx>
+#include <BRep_Tool.hxx>
+#include <TopExp.hxx>
+#include <TopoDS.hxx>
 #include <functional>
 #include <BRepAdaptor_Surface.hxx>
 #include "modeling/Sketch.h"
+#include "modeling/ConstraintSolver.h"
 
 #include <BRep_Builder.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
@@ -77,6 +82,7 @@ bool samePoint(Point2 first, Point2 second)
 
 void validate(const Sketch& sketch)
 {
+    if(sketch.space!=SketchSpace::Planar2D)fail("Spatial 3D sketches require a future solver/backend milestone.");
     (void)sketchAxes(sketch);
     validateSketchRelations(sketch);
     if (sketch.entities.size() > maximumEntities) {
@@ -249,7 +255,8 @@ std::vector<Point2> orderedLineLoop(const Sketch& sketch)
     return polygon;
 }
 
-TopoDS_Face profileFace(const Sketch& sketch)
+TopoDS_Face profileFace(const Sketch& sketch);
+TopoDS_Face simpleProfileFace(const Sketch& sketch)
 {
     validate(sketch);
     if (sketch.entities.empty()) {
@@ -283,18 +290,25 @@ double volume(const TopoDS_Shape& shape)
     return properties.Mass();
 }
 
-void requireSolid(const TopoDS_Shape& shape, const char* explanation)
+void requireSolids(const TopoDS_Shape& shape, const char* explanation)
 {
     int count = 0;
     for (TopExp_Explorer explorer(shape, TopAbs_SOLID); explorer.More(); explorer.Next()) {
         ++count;
     }
     const double mass = shape.IsNull() ? 0.0 : volume(shape);
-    if (shape.IsNull() || count != 1 || !std::isfinite(mass)
+    if (shape.IsNull() || count < 1 || !std::isfinite(mass)
         || mass <= std::pow(Precision::Confusion(), 3)
         || !BRepCheck_Analyzer(shape).IsValid()) {
         fail(explanation);
     }
+}
+
+void requireSolid(const TopoDS_Shape& shape,const char* explanation)
+{
+    requireSolids(shape,explanation);
+    int count=0;for(TopExp_Explorer e(shape,TopAbs_SOLID);e.More();e.Next())++count;
+    if(count!=1)fail(explanation);
 }
 
 gp_Vec sweepVector(const Sketch& plane, double length, Direction direction)
@@ -494,7 +508,7 @@ std::vector<Contour> closedContours(const Sketch& sketch)
         const auto append=[&](const std::vector<std::size_t>& entities) {
             Sketch candidate;candidate.plane=sketch.plane;candidate.attachment=sketch.attachment;Contour contour;
             for(auto i:entities){candidate.entities.push_back(sketch.entities[i]);contour.entityIds.push_back(identifiers[i]);}
-            contour.face=profileFace(candidate);result.push_back(std::move(contour));
+            contour.face=simpleProfileFace(candidate);result.push_back(std::move(contour));
         };
         std::vector<bool> visited(edges.size(),false);
         for(std::size_t seed=0;seed<edges.size();++seed) {
@@ -509,30 +523,96 @@ std::vector<Contour> closedContours(const Sketch& sketch)
             std::vector<std::size_t> entities;for(int index:component)entities.push_back(edges[index].entity);append(entities);
         }
         for(std::size_t i=0;i<sketch.entities.size();++i)if(sketch.entities[i].kind!=EntityKind::Line)append({i});
-        // Adjacent, overlapping, or nested regions need region/inner-wire
-        // semantics. Reject them explicitly until that workflow is designed.
-        for (std::size_t first = 0; first < result.size(); ++first) {
-            Bnd_Box firstBounds;
-            BRepBndLib::Add(result[first].face, firstBounds);
-            for (std::size_t second = first + 1; second < result.size(); ++second) {
-                Bnd_Box secondBounds;
-                BRepBndLib::Add(result[second].face, secondBounds);
-                if (firstBounds.IsOut(secondBounds)) {
-                    continue;
-                }
-                BRepExtrema_DistShapeShape separation(result[first].face, result[second].face);
-                if (!separation.IsDone()) {
-                    fail("The sketch regions could not be checked for overlap.");
-                }
-                if (separation.Value() <= joiningTolerance) {
-                    fail("Nested, touching, or intersecting contours are not supported yet. Use separate non-overlapping simple closed profiles.");
-                }
+        // Boundary contact/crossing is ambiguous; strict containment is not.
+        // Each simple loop defines a selectable bounded region with its direct
+        // children removed as holes. Inner regions remain selectable separately.
+        const auto simple=result;
+        std::vector<int> parent(simple.size(),-1);std::vector<double> areas;
+        for(const auto& region:simple){GProp_GProps p;BRepGProp::SurfaceProperties(region.face,p);areas.push_back(p.Mass());}
+        const auto pointOnBoundary=[](const TopoDS_Face& face) {
+            const auto wire=BRepTools::OuterWire(face);TopExp_Explorer edges(wire,TopAbs_EDGE);
+            if(!edges.More())fail("A closed region has no valid boundary.");
+            return BRep_Tool::Pnt(TopExp::FirstVertex(TopoDS::Edge(edges.Current())));
+        };
+        for(std::size_t i=0;i<simple.size();++i)for(std::size_t j=i+1;j<simple.size();++j) {
+            Bnd_Box aBounds,bBounds;BRepBndLib::Add(simple[i].face,aBounds);BRepBndLib::Add(simple[j].face,bBounds);
+            if(aBounds.IsOut(bBounds))continue;
+            BRepExtrema_DistShapeShape distance(BRepTools::OuterWire(simple[i].face),BRepTools::OuterWire(simple[j].face));
+            if(!distance.IsDone())fail("Cannot validate sketch boundaries.");
+            if(distance.Value()<=joiningTolerance)fail("Touching or intersecting contour boundaries are ambiguous. Separate or trim their boundaries first.");
+            for(const auto pair:{std::pair<std::size_t,std::size_t>{i,j},{j,i}}) {
+                BRepClass_FaceClassifier classifier(simple[pair.first].face,pointOnBoundary(simple[pair.second].face),joiningTolerance);
+                if(classifier.State()==TopAbs_IN && (parent[pair.second]<0 || areas[pair.first]<areas[std::size_t(parent[pair.second])]))parent[pair.second]=int(pair.first);
             }
+        }
+        for(std::size_t i=0;i<simple.size();++i) {
+            BRepBuilderAPI_MakeFace builder(gp_Pln(sketchAxes(sketch)),BRepTools::OuterWire(simple[i].face),Standard_True);
+            result[i].entityIds=simple[i].entityIds;
+            for(std::size_t j=0;j<simple.size();++j)if(parent[j]==int(i)) {
+                builder.Add(TopoDS::Wire(BRepTools::OuterWire(simple[j].face).Reversed()));
+                result[i].entityIds.insert(result[i].entityIds.end(),simple[j].entityIds.begin(),simple[j].entityIds.end());
+            }
+            if(!builder.IsDone() || !BRepCheck_Analyzer(builder.Face()).IsValid())fail("The nested boundaries do not form a valid planar region.");
+            result[i].face=builder.Face();
         }
         return result;
     } catch (const Standard_Failure& error) {
         fail(std::string("Cannot identify sketch contours: ") + error.GetMessageString());
     }
+}
+
+namespace {
+TopoDS_Face profileFace(const Sketch& sketch)
+{
+    std::set<std::string> requested;
+    for(std::size_t i=0;i<sketch.entities.size();++i)requested.insert(sketch.entities[i].id.empty()?"entity-"+std::to_string(i+1):sketch.entities[i].id);
+    for(const auto& region:closedContours(sketch))if(std::set<std::string>(region.entityIds.begin(),region.entityIds.end())==requested)return region.face;
+    fail("Select one or more closed regions explicitly; open geometry and unrelated regions are not an extrusion boundary.");
+}
+std::vector<TopoDS_Shape> regionPrisms(const Sketch& sketch,const RegionReferences& references,double length,Direction direction)
+{
+    if(references.empty())fail("Select at least one closed region.");
+    const auto regions=closedContours(sketch);std::set<std::set<std::string>> selected;std::vector<TopoDS_Shape> tools;
+    for(const auto& ids:references) {
+        const std::set<std::string> key(ids.begin(),ids.end());
+        if(key.empty() || key.size()!=ids.size() || !selected.insert(key).second)fail("Selected regions contain empty or duplicate references.");
+        const auto found=std::find_if(regions.begin(),regions.end(),[&](const auto& region){return std::set<std::string>(region.entityIds.begin(),region.entityIds.end())==key;});
+        if(found==regions.end())fail("A selected region changed or disappeared. Reselect it explicitly.");
+        BRepPrimAPI_MakePrism prism(found->face,sweepVector(sketch,length,direction),Standard_True);
+        if(!prism.IsDone())fail("Cannot extrude a selected region.");
+        requireSolid(prism.Shape(),"A selected region did not produce a valid solid.");tools.push_back(prism.Shape());
+    }
+    return tools;
+}
+}
+TopoDS_Shape makeExtrusions(const Sketch& sketch,const RegionReferences& references,double length,Direction direction,const TopoDS_Shape& base)
+{
+    try {
+        positiveLength(length,"Extrusion length");const auto prisms=regionPrisms(sketch,references,length,direction);
+        TopTools_ListOfShape arguments,tools;
+        if(!base.IsNull()){requireSolids(base,"The current part must contain valid solids.");arguments.Append(BRepBuilderAPI_Copy(base,Standard_True,Standard_False).Shape());}
+        else arguments.Append(prisms.front());
+        for(std::size_t i=base.IsNull()?1:0;i<prisms.size();++i)tools.Append(prisms[i]);
+        if(tools.IsEmpty())return prisms.front();
+        BRepAlgoAPI_Fuse operation;operation.SetArguments(arguments);operation.SetTools(tools);operation.SetNonDestructive(Standard_True);operation.Build();
+        if(!operation.IsDone() || operation.HasErrors())fail("Cannot combine the selected region extrusions.");
+        operation.SimplifyResult();const auto result=operation.Shape();
+        requireSolids(result,"Selected extrusions did not produce valid solid bodies.");return result;
+    }catch(const Standard_Failure& e){fail(std::string("Cannot extrude selected regions: ")+e.GetMessageString());}
+}
+TopoDS_Shape makeCuts(const TopoDS_Shape& base,const Sketch& sketch,const RegionReferences& references,double depth,bool throughAll,Direction direction)
+{
+    try {
+        requireSolids(base,"Cut requires existing valid solids.");positiveLength(depth,"Cut depth");
+        const auto privateBase=BRepBuilderAPI_Copy(base,Standard_True,Standard_False).Shape();
+        const auto prisms=regionPrisms(sketch,references,throughAll?throughLength(privateBase,sketch,direction):depth,direction);
+        TopTools_ListOfShape arguments,tools;arguments.Append(privateBase);for(const auto& prism:prisms)tools.Append(prism);
+        BRepAlgoAPI_Cut operation;operation.SetArguments(arguments);operation.SetTools(tools);operation.SetNonDestructive(Standard_True);operation.Build();
+        if(!operation.IsDone() || operation.HasErrors())fail("Cannot cut the selected sketch regions.");
+        operation.SimplifyResult();const auto result=operation.Shape();requireSolids(result,"The cut must leave at least one valid solid body.");
+        if(volume(privateBase)-volume(result)<=std::max(volume(privateBase)*1e-10,1e-15))fail("Selected cuts do not remove material. Check depth, direction and sketch location.");
+        return result;
+    }catch(const Standard_Failure& e){fail(std::string("Cannot cut selected regions: ")+e.GetMessageString());}
 }
 
 Sketch selectContour(const Sketch& sketch, const std::vector<std::string>& entityIds)
@@ -726,9 +806,78 @@ std::vector<std::pair<SketchPointRef, Point2>> sketchPoints(const Sketch& sketch
     return points;
 }
 
+namespace {
+const SketchEntity& referencedEntity(const Sketch& sketch,const SketchPointRef& ref) {
+    const auto found=std::find_if(sketch.entities.begin(),sketch.entities.end(),[&](const auto& e){return e.id==ref.entityId;});
+    if(ref.entityId.empty() || found==sketch.entities.end())fail("Constraint refers to a missing entity.");return *found;
+}
+void validDimension(const Sketch& sketch,const SketchDimension& d) {
+    finiteCoordinate(d.value);finiteCoordinate(d.annotation.x);finiteCoordinate(d.annotation.y);
+    if(d.sense!=1 && d.sense!=-1)fail("Dimension direction must be +1 or -1.");
+    const auto a=sketchPointValue(sketch,d.first);(void)a;
+    if(d.kind==DimensionKind::CircleRadius || d.kind==DimensionKind::CircleDiameter) {
+        if(d.first.role!=PointRole::Center || referencedEntity(sketch,d.first).kind!=EntityKind::Circle || d.second.role!=PointRole::Origin || !d.second.entityId.empty())fail("Radius/diameter must reference one circle center.");
+        positiveLength(d.value,"Radius/diameter");
+    } else {
+        (void)sketchPointValue(sketch,d.second);
+        if(pointKey(d.first)==pointKey(d.second))fail("A distance needs two distinct point references.");
+        if(d.kind==DimensionKind::LineLength) {
+            if(d.first.entityId!=d.second.entityId || d.first.role!=PointRole::First || d.second.role!=PointRole::Second || referencedEntity(sketch,d.first).kind!=EntityKind::Line)fail("Line length must reference the endpoints of one line.");
+            positiveLength(d.value,"Line length");
+        } else if(d.kind==DimensionKind::HorizontalDistance || d.kind==DimensionKind::VerticalDistance) {
+            if(d.value<0)fail("Horizontal/vertical distances must be nonnegative.");
+        } else fail("Unsupported dimension type.");
+    }
+}
+}
+double dimensionMeasurement(const Sketch& sketch,const SketchDimension& d) {
+    if(d.kind==DimensionKind::CircleRadius || d.kind==DimensionKind::CircleDiameter) {
+        const auto& e=referencedEntity(sketch,d.first);return e.radius*(d.kind==DimensionKind::CircleDiameter?2:1);
+    }
+    const auto a=sketchPointValue(sketch,d.first),b=sketchPointValue(sketch,d.second);
+    if(d.kind==DimensionKind::HorizontalDistance)return std::abs(b.x-a.x);
+    if(d.kind==DimensionKind::VerticalDistance)return std::abs(b.y-a.y);
+    return std::hypot(b.x-a.x,b.y-a.y);
+}
+void validateSketchConstraintReferences(const Sketch& sketch)
+{
+    if(sketch.relations.size()>4000 || sketch.dimensions.size()>4000)fail("Sketch exceeds the prototype constraint limit.");
+    (void)sketchPoints(sketch);std::set<std::string> ids;
+    for(const auto& relation:sketch.relations) {
+        if(!stableIdentifier(relation.id) || !ids.insert(relation.id).second)fail("Constraint IDs must be valid and unique.");
+        (void)sketchPointValue(sketch,relation.first);(void)sketchPointValue(sketch,relation.second);
+        if(relation.kind==RelationKind::FixedPoint) {
+            if(relation.first.role==PointRole::Origin || relation.second.role!=PointRole::Origin || !relation.second.entityId.empty())fail("Fixed point must reference a sketch point and a stored anchor.");
+            finiteCoordinate(relation.fixedPosition.x);finiteCoordinate(relation.fixedPosition.y);continue;
+        }
+        if(pointKey(relation.first)==pointKey(relation.second))fail("A relation requires distinct references.");
+        if(relation.kind==RelationKind::Coincident)continue;
+        const auto& a=referencedEntity(sketch,relation.first);const auto& b=referencedEntity(sketch,relation.second);
+        if(relation.kind==RelationKind::Horizontal || relation.kind==RelationKind::Vertical) {
+            if(a.id!=b.id || a.kind!=EntityKind::Line || !((relation.first.role==PointRole::First&&relation.second.role==PointRole::Second)||(relation.first.role==PointRole::Second&&relation.second.role==PointRole::First)))fail("Horizontal/vertical relations require one line's two endpoints.");
+        } else if(relation.kind==RelationKind::Parallel || relation.kind==RelationKind::Perpendicular) {
+            if(a.kind!=EntityKind::Line || b.kind!=EntityKind::Line || a.id==b.id || relation.first.role!=PointRole::First || relation.second.role!=PointRole::First)fail("Parallel/perpendicular relations require two distinct line references.");
+        } else if(relation.kind==RelationKind::Tangent) {
+            if(a.id==b.id || (a.kind!=EntityKind::Line&&a.kind!=EntityKind::Circle) || (b.kind!=EntityKind::Line&&b.kind!=EntityKind::Circle) || (a.kind==EntityKind::Line&&b.kind==EntityKind::Line))fail("Tangent supports line-circle and external circle-circle relations.");
+        } else fail("Unsupported sketch relation type.");
+    }
+    for(const auto& d:sketch.dimensions){if(!stableIdentifier(d.id)||!ids.insert(d.id).second)fail("Dimension IDs must be valid and unique across all constraints.");validDimension(sketch,d);}
+}
+Sketch canonicalizeSketchEqualities(const Sketch& sketch,const std::vector<std::pair<SketchPointRef,Point2>>& extraAnchors)
+{
+    validateSketchConstraintReferences(sketch);EqualityGroups groups(sketch);
+    for(const auto& relation:sketch.relations)if(relation.kind==RelationKind::Coincident||relation.kind==RelationKind::Horizontal||relation.kind==RelationKind::Vertical)groups.join(relation);
+    auto result=sketch;std::map<std::size_t,double> x,y;
+    const auto anchor=[&](const SketchPointRef& ref,Point2 point){const auto index=groups.index(ref);x[EqualityGroups::root(groups.x,index)]=point.x;y[EqualityGroups::root(groups.y,index)]=point.y;};
+    anchor({},{});for(const auto& r:sketch.relations)if(r.kind==RelationKind::FixedPoint)anchor(r.first,r.fixedPosition);
+    for(const auto& a:extraAnchors)anchor(a.first,a.second);
+    for(std::size_t i=1;i<groups.points.size();++i){const auto px=EqualityGroups::root(groups.x,i),py=EqualityGroups::root(groups.y,i);const auto point=groups.points[i].second;if(!x.count(px))x[px]=point.x;if(!y.count(py))y[py]=point.y;}
+    for(std::size_t i=1;i<groups.points.size();++i)setPoint(result,groups.points[i].first,{x[EqualityGroups::root(groups.x,i)],y[EqualityGroups::root(groups.y,i)]});
+    return result;
+}
 void validateSketchRelations(const Sketch& sketch)
 {
-    if (sketch.relations.size() > 4000) fail("This prototype supports at most 4000 relations per sketch.");
+    validateSketchConstraintReferences(sketch);
     EqualityGroups groups(sketch);
     std::set<std::string> ids;
     std::set<std::tuple<int, PointKey, PointKey>> signatures;
@@ -742,6 +891,18 @@ void validateSketchRelations(const Sketch& sketch)
                 fail("Horizontal and vertical relations require the two endpoints of one line.");
             const auto entity = std::find_if(sketch.entities.begin(), sketch.entities.end(), [&](const SketchEntity& e) { return e.id == relation.first.entityId; });
             if (entity == sketch.entities.end() || entity->kind != EntityKind::Line) fail("Horizontal and vertical relations apply to line entities only.");
+        } else if(relation.kind==RelationKind::FixedPoint) {
+            if(first.x!=relation.fixedPosition.x || first.y!=relation.fixedPosition.y)fail("A fixed sketch point moved from its anchor.");continue;
+        } else if(relation.kind==RelationKind::Parallel || relation.kind==RelationKind::Perpendicular) {
+            const auto& a=referencedEntity(sketch,relation.first);const auto& b=referencedEntity(sketch,relation.second);
+            const Point2 u{a.second.x-a.first.x,a.second.y-a.first.y},v{b.second.x-b.first.x,b.second.y-b.first.y};
+            const double residual=relation.kind==RelationKind::Parallel?u.x*v.y-u.y*v.x:u.x*v.x+u.y*v.y;
+            if(std::abs(residual)>1e-7*std::max(1.0,std::hypot(u.x,u.y)*std::hypot(v.x,v.y)))fail("Line relation is not satisfied.");continue;
+        } else if(relation.kind==RelationKind::Tangent) {
+            const auto& a=referencedEntity(sketch,relation.first);const auto& b=referencedEntity(sketch,relation.second);double residual;
+            if(a.kind==EntityKind::Circle && b.kind==EntityKind::Circle)residual=distance(a.first,b.first)-a.radius-b.radius;
+            else {const auto& line=a.kind==EntityKind::Line?a:b;const auto& circle=a.kind==EntityKind::Circle?a:b;residual=std::abs(cross(line.first,line.second,circle.first))/distance(line.first,line.second)-circle.radius;}
+            if(!std::isfinite(residual)||std::abs(residual)>1e-6)fail("Tangent relation is not satisfied.");continue;
         } else if (relation.kind != RelationKind::Coincident) fail("Unsupported sketch relation type.");
         auto a = pointKey(relation.first), b = pointKey(relation.second);
         if (b < a) std::swap(a, b);
@@ -752,6 +913,13 @@ void validateSketchRelations(const Sketch& sketch)
         if ((relation.kind == RelationKind::Coincident || relation.kind == RelationKind::Horizontal) && first.y != second.y)
             fail("Sketch relation is not satisfied: connected Y coordinates must be identical.");
     }
+    for(const auto& d:sketch.dimensions)if(d.driving) {
+        double actual=dimensionMeasurement(sketch,d),expected=d.value;
+        if(d.kind==DimensionKind::HorizontalDistance || d.kind==DimensionKind::VerticalDistance) {
+            const auto a=sketchPointValue(sketch,d.first),b=sketchPointValue(sketch,d.second);actual=d.kind==DimensionKind::HorizontalDistance?b.x-a.x:b.y-a.y;expected*=d.sense;
+        }
+        if(!std::isfinite(actual)||std::abs(actual-expected)>1e-6)fail("Driving dimension is not satisfied: "+d.id);
+    }
 }
 
 Sketch editSketchEntity(const Sketch& sketch, const SketchEntity& replacement)
@@ -761,6 +929,15 @@ Sketch editSketchEntity(const Sketch& sketch, const SketchEntity& replacement)
     const auto old = std::find_if(sketch.entities.begin(), sketch.entities.end(), [&](const SketchEntity& entity) { return entity.id == replacement.id; });
     if (replacement.id.empty() || old == sketch.entities.end()) fail("Cannot edit a sketch entity without its existing stable ID.");
     if (old->kind != replacement.kind) fail("Editing cannot change a sketch entity type.");
+    const bool solverConstraints=!sketch.dimensions.empty() || std::any_of(sketch.relations.begin(),sketch.relations.end(),[](const auto& r){return int(r.kind)>=int(RelationKind::FixedPoint);});
+    if(solverConstraints) {
+        SolveOptions options;
+        const auto target=[&](PointRole role,Point2 before,Point2 after){if(before.x!=after.x || before.y!=after.y)options.pointTargets.push_back({{replacement.id,role},after,true});};
+        target(old->kind==EntityKind::Circle?PointRole::Center:PointRole::First,old->first,replacement.first);
+        if(old->kind==EntityKind::Circle){if(old->radius!=replacement.radius)options.radiusTargets.push_back({replacement.id,replacement.radius});}
+        else target(PointRole::Second,old->second,replacement.second);
+        return requireSolvedSketch(solvePlanarSketch(sketch,options));
+    }
     *std::find_if(candidate.entities.begin(), candidate.entities.end(), [&](const SketchEntity& entity) { return entity.id == replacement.id; }) = replacement;
     EqualityGroups groups(sketch);
     for (const auto& relation : sketch.relations) groups.join(relation);
@@ -820,6 +997,17 @@ Sketch moveSketchPoint(const Sketch& sketch, const SketchPointRef& reference, Po
     if(target) {
         if(pointKey(reference)==pointKey(*target)) fail("A point cannot be joined to itself.");
         position=sketchPointValue(sketch,*target);
+    }
+    const bool solverConstraints=!sketch.dimensions.empty() || std::any_of(sketch.relations.begin(),sketch.relations.end(),[](const auto& r){return int(r.kind)>=int(RelationKind::FixedPoint);});
+    if(solverConstraints) {
+        auto candidate=sketch;
+        if(target && !areSketchPointsCoincident(sketch,reference,*target)) {
+            std::set<std::string> ids;for(const auto& r:sketch.relations)ids.insert(r.id);for(const auto& d:sketch.dimensions)ids.insert(d.id);
+            int n=1;while(ids.count("connection-"+std::to_string(n)))++n;
+            candidate.relations.push_back({"connection-"+std::to_string(n),RelationKind::Coincident,reference,*target});
+        }
+        SolveOptions options;options.pointTargets.push_back({reference,position,false});
+        return requireSolvedSketch(solvePlanarSketch(candidate,options));
     }
     auto entity=*std::find_if(sketch.entities.begin(),sketch.entities.end(),[&](const SketchEntity& e){return e.id==reference.entityId;});
     if(reference.role==PointRole::Second) entity.second=position;

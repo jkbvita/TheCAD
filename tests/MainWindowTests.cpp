@@ -90,10 +90,10 @@ private slots:
         QVERIFY(tree->palette().color(QPalette::Base).lightness() > 200);
         auto* commands = window.findChild<QToolBar*>("modelingToolbar");
         QVERIFY(commands && !commands->isMovable() && !commands->isFloatable());
-        for (const auto* name : {"actionSmartDimension", "actionArc", "actionSpline",
+        for (const auto* name : {"actionArc", "actionSpline",
                 "actionCenterline", "actionConstructionLine", "actionTrimEntities", "actionConvertEntities", "actionOffsetEntities",
                 "actionMirrorEntities", "actionLinearSketchPattern", "actionMoveEntities",
-                "actionDisplayDeleteRelations", "actionRepairSketch", "actionShadedSketchContours",
+                "actionRepairSketch", "actionShadedSketchContours",
                 "actionMeasure", "actionMassProperties", "actionCheckGeometry"}) {
             auto* tool = window.findChild<QAction*>(name);
             QVERIFY2(tool, name);
@@ -367,7 +367,7 @@ private slots:
         window.trigger("actionCancelFeature");QVERIFY(window.findChild<QAction*>("actionFinishSketch")->isEnabled());
         QVERIFY(!window.isWindowModified());QCOMPARE(window.document().features().size(),std::size_t(1));
         window.trigger("actionExtrude");auto* panel=window.findChild<QWidget*>("operationPanel");
-        panel->findChild<QComboBox*>("operationContour")->setCurrentIndex(0);
+        panel->findChild<QListWidget*>("operationContour")->setCurrentRow(0,QItemSelectionModel::ClearAndSelect);
         panel->findChild<QDialogButtonBox*>("operationButtons")->button(QDialogButtonBox::Ok)->click();
         QCOMPARE(window.document().features().size(),std::size_t(2));QVERIFY(window.isWindowModified());
         QVERIFY(!window.findChild<QAction*>("actionFinishSketch")->isEnabled());QVERIFY(window.errors.isEmpty());
@@ -400,7 +400,7 @@ private slots:
         QVERIFY(!dialog->isWindow());
         QVERIFY(window.findChild<QDialog*>("operationDialog") == nullptr);
         auto* source = dialog->findChild<QComboBox*>("operationSketch");
-        auto* contours = dialog->findChild<QComboBox*>("operationContour");
+        auto* contours = dialog->findChild<QListWidget*>("operationContour");
         auto* buttons = dialog->findChild<QDialogButtonBox*>("operationButtons");
         auto* status = dialog->findChild<QLabel*>("operationStatus");
         QVERIFY(source && contours && buttons && status);
@@ -409,7 +409,7 @@ private slots:
         QVERIFY(!status->text().isEmpty());
         source->setCurrentIndex(0);
         QCOMPARE(contours->count(), 1);
-        QCOMPARE(contours->currentIndex(), -1);
+        QCOMPARE(contours->currentRow(), -1);
         QVERIFY(!buttons->button(QDialogButtonBox::Ok)->isEnabled());
         source->setCurrentIndex(1);
         QCOMPARE(contours->count(), 0);

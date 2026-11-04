@@ -23,12 +23,18 @@ approved scope do not need repeated approval.
 - [0003: Parametric workflow and revised native names](0003-parametric-sketch-features.md) — current `.thepart` family and modeling foundation.
 - [0004: Graphical origin-plane sketch creation](0004-graphical-origin-planes.md) — current sketch-creation workflow.
 
+- [0005: Foundational sketch relations](0005-sketch-relations.md).
+- [0006: Desktop layout](0006-sketch-desktop-layout.md).
+- [0007: Sketcher and feature workflow](0007-sketcher-feature-workflow.md).
+- [0008: Conservative planar-face attachment](0008-reference-face-attachments.md).
+- [0009: Provisional PlaneGCS, dimensions and future 3D seam](0009-planegcs-parametric-dimensions.md).
+- [0010: Multiple selected regions and solid bodies](0010-multiple-regions-and-bodies.md).
+
 ## Pending owner decisions
 
-- Arbitrary planar-face sketch attachment and persistent reference semantics.
-- Constraint solving, advanced relations, and later modeling workflows.
+- Resilient face references beyond the approved conservative planar-face strategy.
+- Permanent solver selection after PlaneGCS evaluation; 3D backend and later workflows.
 - Permanent engine/framework/architecture choices after prototype evaluation.
-- Target platforms beyond Windows, deployment packaging, and license confirmation.
+- Target platforms beyond Windows, public release packaging, and application license confirmation.
 
-The root LICENSE is unchanged. The immediate scope is to make graphical
-origin-plane selection reliable, preserving the working application.
+The root LICENSE is unchanged. Current scope includes the approved planar solver and Smart Dimension milestone.

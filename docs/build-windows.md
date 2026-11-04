@@ -31,6 +31,7 @@ tar -xjf (Join-Path $devRoot 'micromamba.tar.bz2') -C $devRoot Library/bin/micro
 $micromamba = Join-Path $devRoot 'Library\bin\micromamba.exe'
 $deps = Join-Path $devRoot 'prototype'
 & $micromamba create --yes --root-prefix (Join-Path $devRoot 'mamba') --prefix $deps --file environment-win-64.lock
+& $micromamba create --yes --root-prefix (Join-Path $devRoot 'mamba') --prefix (Join-Path $devRoot 'sketch-solver') --file environment-sketch-solver-win-64.lock
 ```
 
 Run the final command from the repository root. The explicit lock pins all
@@ -183,7 +184,22 @@ See the [current sketcher/feature workflow checks](verification/sketcher-feature
 In normal part mode, select a planar face and click Sketch, or click Sketch first
 and then select the face. Draw in its local frame and use Extrude/Cut as usual.
 Faces take picking priority over origin-plane graphics. Curved faces are rejected.
-Saving a face-supported part writes version 4. Changing its upstream support may
+Saving now writes version 5, including solver-independent sketch dimensions and metadata. Changing its upstream support may
 reject rather than reattach; see the documented conservative reference strategy.
 Valid closed line profiles can be selected even with attached dangling lines.
-General crossings, shared boundaries and nested regions remain unsupported.
+Multiple regions, strict nested loops/holes and disconnected bodies are supported. General crossings and touching/shared boundaries remain unsupported.
+
+## Smart Dimension and solver relations
+
+See [the current sketch interaction guide](requirements/parametric-constraints.md).
+Select a line/circle or start Smart Dimension first, place the label on empty
+viewport space and confirm the numeric mm value. Use the type selector and two
+point clicks for H/V distances. Reference dimensions measure without constraining.
+Double-click a label to edit; Cancel keeps the prior value. Display/Delete Relations
+opens the same manager for supported relation creation, inspection and deletion.
+
+Fully defined color is based on whole-sketch DOF=0, not per-entity inference.
+The adapter is Qt independent. Only the isolated PlaneGCS DLL compiles as C++20;
+other code stays C++17. Its Eigen/Boost header prefix defaults to
+%LOCALAPPDATA%/TheCAD/dev/sketch-solver; override with CMake
+-DTHECAD_SOLVER_DEPS_PREFIX=C:/path/to/headers. Qt/OCCT still use the original SDK.

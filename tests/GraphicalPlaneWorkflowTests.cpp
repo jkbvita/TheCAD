@@ -1,3 +1,4 @@
+#include <QListWidget>
 #include "ui/MainWindow.h"
 #include "ui/CadViewport.h"
 #include <Graphic3d_Camera.hxx>
@@ -114,7 +115,7 @@ private slots:
             command(window,"actionRectangle");
             QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,project(viewport,modeling::sketchPoint(support,{-4,-3})));
             QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,project(viewport,modeling::sketchPoint(support,{4,3})));
-            command(window,"actionExtrude");auto* contours=window.findChild<QComboBox*>("operationContour");QVERIFY(contours && contours->count()==1);contours->setCurrentIndex(0);
+            command(window,"actionExtrude");auto* contours=window.findChild<QListWidget*>("operationContour");QVERIFY(contours && contours->count()==1);contours->setCurrentRow(0,QItemSelectionModel::ClearAndSelect);
             auto* buttons=window.findChild<QDialogButtonBox*>("operationButtons");QVERIFY(buttons && buttons->button(QDialogButtonBox::Ok)->isEnabled());
             QTest::mouseClick(buttons->button(QDialogButtonBox::Ok),Qt::LeftButton);QCOMPARE(window.document().features().size(),std::size_t(4));
             QVERIFY(window.errors.isEmpty());window.setWindowModified(false);QVERIFY(window.close());

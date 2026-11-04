@@ -72,3 +72,13 @@ Exact package URLs and hashes are in [the lock file](../environment-win-64.lock)
 | vcomp14 | 14.51.36247 | habf1de7_42 | LicenseRef-MicrosoftVisualCpp2015-2022Runtime |
 | zlib | 1.3.2 | hfd05255_3 | Zlib |
 | zstd | 1.5.7 | h534d264_7 | BSD-3-Clause |
+
+## PlaneGCS prototype addition (2026-11-04)
+
+The isolated header environment is locked separately in
+[environment-sketch-solver-win-64.lock](../environment-sketch-solver-win-64.lock).
+Eigen 3.4.0 h5112557_2 declares MPL-2.0; libboost-headers 1.86.0 h57928b3_5
+BSL-1.0. The lock also records its conda VC/UCRT metadata dependencies. The header
+environment's runtime binaries are not copied into the app: the existing MSVC
+runtime supplies the newly built solver DLL. See the [PlaneGCS source audit](../third_party/planegcs/README.TheCAD.md)
+for LGPL-2.1-or-later provenance, modifications, notices and source distribution.

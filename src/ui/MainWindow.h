@@ -7,6 +7,9 @@
 #include <memory>
 
 class QLabel;
+class QComboBox;
+class QCheckBox;
+class QWidget;
 class QCloseEvent;
 class QTreeWidget;
 class QTreeWidgetItem;
@@ -42,6 +45,29 @@ protected:
     void closeEvent(QCloseEvent* event) override;
 
 private:
+    void startConstraints(const std::string& dimensionId = {});
+    void closeConstraints();
+    void constraintEntitySelected(const QString& id);
+    void constraintPointSelected(const modeling::SketchPointRef& point);
+    void updateConstraintDraft();
+    void applyDimension();
+    void applyRelation();
+    void acceptConstrainedSketch(const modeling::Sketch& candidate);
+    void constraintError(const QString& error);
+    struct ConstraintDraft {
+        QWidget* page = nullptr;
+        QComboBox *kind = nullptr, *relation = nullptr;
+        QDoubleSpinBox* value = nullptr;
+        QCheckBox* reference = nullptr;
+        QLabel *selection = nullptr, *error = nullptr;
+        QListWidget* constraints = nullptr;
+        std::vector<modeling::SketchPointRef> points;
+        std::vector<std::string> entities;
+        std::optional<modeling::Point2> annotation;
+        std::string editingId;
+    };
+    std::unique_ptr<ConstraintDraft> m_constraints;
+    std::optional<modeling::SketchPointRef> m_constraintPoint;
     bool maybeSave();
     void newDocument();
     void openDocument();

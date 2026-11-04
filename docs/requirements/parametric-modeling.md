@@ -1,5 +1,9 @@
 # Parametric sketch and feature milestone
 
+Current extension: [approved parametric constraints and multiple regions](parametric-constraints.md)
+supersede this milestone's earlier exclusions of dimensions, solver relations, nested
+regions and multiple bodies. Historical scope below is retained for context.
+
 - Status: Owner-approved scope and clarified workflow.
 - Approval: Project owner's request and subsequent clarification in this chat,
   2026-11-02.
