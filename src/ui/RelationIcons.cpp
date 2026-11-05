@@ -21,6 +21,7 @@ QImage relationArtwork(modeling::RelationKind kind,int pixels,bool symbol,bool h
     case K::Coincident:p.drawEllipse(QRectF(4,6,9,9));p.drawEllipse(QRectF(8,3,8,8));break;
     case K::PointOnLine:p.drawLine(3,15,17,4);p.setBrush(p.pen().color());p.drawEllipse(QPointF(10,9.5),2,2);break;
     case K::PointOnCircle:p.drawEllipse(QRectF(4,4,12,12));p.setBrush(p.pen().color());p.drawEllipse(QPointF(16,10),2,2);break;
+    case K::Midpoint:p.drawLine(3,15,17,15);p.drawLine(10,5,5,13);p.drawLine(5,13,15,13);p.drawLine(15,13,10,5);break;
     }
     return image;
 }

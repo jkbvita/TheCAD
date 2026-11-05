@@ -22,12 +22,12 @@ struct SketchEntity {
     std::string id;
     bool construction = false;
 };
-enum class PointRole { Origin, First, Second, Center };
+enum class PointRole { Origin, First, Second, Center, Midpoint }; // Midpoint is a derived snap target, never serialized as a point reference.
 struct SketchPointRef {
     std::string entityId;
     PointRole role = PointRole::Origin;
 };
-enum class RelationKind { Coincident, Horizontal, Vertical, FixedPoint, Parallel, Perpendicular, Tangent, PointOnLine, PointOnCircle, Collinear, Equal, Concentric, EqualCurveLength, FixedEntity };
+enum class RelationKind { Coincident, Horizontal, Vertical, FixedPoint, Parallel, Perpendicular, Tangent, PointOnLine, PointOnCircle, Collinear, Equal, Concentric, EqualCurveLength, FixedEntity, Midpoint };
 struct SketchRelation {
     std::string id;
     RelationKind kind = RelationKind::Coincident;

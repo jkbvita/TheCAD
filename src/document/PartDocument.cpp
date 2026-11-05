@@ -174,6 +174,7 @@ QJsonObject writeRelation(const modeling::SketchRelation& relation)
     case modeling::RelationKind::Perpendicular: type = "perpendicular"; break;
     case modeling::RelationKind::PointOnLine: type="point-on-line";break;
     case modeling::RelationKind::PointOnCircle:type="point-on-circle";break;
+    case modeling::RelationKind::Midpoint:type="midpoint";break;
     case modeling::RelationKind::Tangent: type = "tangent"; break;
     default: fail("Unsupported sketch relation type.");
     }
@@ -206,6 +207,7 @@ modeling::SketchRelation readRelation(const QJsonValue& value, int version)
     else if(version>=5 && type=="tangent")relation.kind=modeling::RelationKind::Tangent;
     else if(version>=8 && type=="point-on-line")relation.kind=modeling::RelationKind::PointOnLine;
     else if(version>=8 && type=="point-on-circle")relation.kind=modeling::RelationKind::PointOnCircle;
+    else if(version>=11 && type=="midpoint")relation.kind=modeling::RelationKind::Midpoint;
     else if(version>=9 && type=="collinear")relation.kind=modeling::RelationKind::Collinear;
     else if(version>=9 && type=="equal")relation.kind=modeling::RelationKind::Equal;
     else if(version>=9 && type=="concentric")relation.kind=modeling::RelationKind::Concentric;
@@ -533,7 +535,7 @@ PartDocument PartDocument::load(const QString& path)
     if (root.value("format") != QJsonValue("TheCAD.Part")) fail("Unsupported document format; expected TheCAD.Part.");
     if (root.value("units") != QJsonValue("mm")) fail("Unsupported units; this prototype supports millimeters only.");
     const auto versionValue = root.value("version");
-    if (!versionValue.isDouble() || (versionValue.toDouble() != 1 && versionValue.toDouble() != 2 && versionValue.toDouble() != 3 && versionValue.toDouble() != 4 && versionValue.toDouble() != 5 && versionValue.toDouble() != 6 && versionValue.toDouble() != 7 && versionValue.toDouble() != 8 && versionValue.toDouble() != 9 && versionValue.toDouble() != 10)) fail("Unsupported part document version; expected versions 1 through 10.");
+    if (!versionValue.isDouble() || (versionValue.toDouble() != 1 && versionValue.toDouble() != 2 && versionValue.toDouble() != 3 && versionValue.toDouble() != 4 && versionValue.toDouble() != 5 && versionValue.toDouble() != 6 && versionValue.toDouble() != 7 && versionValue.toDouble() != 8 && versionValue.toDouble() != 9 && versionValue.toDouble() != 10 && versionValue.toDouble() != 11)) fail("Unsupported part document version; expected versions 1 through 11.");
     const int version = versionValue.toInt();
     if (!root.value("features").isArray()) fail("Part features must be an ordered array.");
     const auto array = root.value("features").toArray();
@@ -680,7 +682,7 @@ void PartDocument::save(const QString& path) const
         if (feature.kind != FeatureKind::Sketch) resultId = feature.id;
         features.append(object);
     }
-    const QJsonObject root{{"format", "TheCAD.Part"}, {"version", 10}, {"units", "mm"}, {"features", features}, {"resultFeature", q(resultId)}};
+    const QJsonObject root{{"format", "TheCAD.Part"}, {"version", 11}, {"units", "mm"}, {"features", features}, {"resultFeature", q(resultId)}};
     const auto bytes = QJsonDocument(root).toJson(QJsonDocument::Indented);
     if (bytes.size() > maximumDocumentBytes) fail("Part document exceeds the 1 MiB prototype size limit.");
     QSaveFile file(path);

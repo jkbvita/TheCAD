@@ -1,10 +1,10 @@
 # Sketch relation checks
 
-The current implementation is isolated on `codex/circle-drag-equal-icons` and
+The current implementation is isolated on `codex/midpoint-snaps-rectangle-drag` and
 combines accepted relation commit `db4f515` with feature-tree/hexagon commit
 `bd71e05`. The original checkout/branch and `untitled.tcpart` are preserved.
 Use the repaired desktop TheCAD shortcut, or the isolated worktree's executable
-`build/package/TheCAD-Relations-Repair/TheCAD.exe`. The old package is retained
+`build/package/TheCAD-Midpoint-Rectangle/TheCAD.exe`. The old package is retained
 because it may still be running with an unsaved sketch. Save and close that window
 before opening the repaired desktop shortcut.
 
@@ -19,7 +19,7 @@ before opening the repaired desktop shortcut.
 | Two circles | External Tangent (in addition to the above) |
 | Line and circle | Tangent, Equal Curve Length |
 | Two or more standalone points | Coincident, Horizontal, Vertical |
-| Point and line | Point on Line |
+| Point and line | Point on Line, Midpoint |
 | Point and circle | Concentric, Point on Circle |
 | Any supported lines/circles/points | Fix |
 
@@ -61,7 +61,7 @@ tangency, symmetry and other unsupported commands are not offered.
    change once; its ID should remain stable when changing type.
 8. Save a sketch containing the new relations and construction geometry. Reopen,
    inspect symbols and constraints, drag again and regenerate an extrusion.
-   Repeat with an older supported document. New files use schema 10 and require
+   Repeat with an older supported document. New files use schema 11 and require
    this build; retain a copy when comparing with an older executable.
 
 ## Circle and Equal repair checks
@@ -84,9 +84,9 @@ tangency, symmetry and other unsupported commands are not offered.
 ## Automated validation
 
 Release build with MSVC 2022, Qt 6.8.4, OCCT 7.9.3 and the existing PlaneGCS.
-`ctest --test-dir build/windows -C Release --output-on-failure` runs 22 cases,
+`ctest --test-dir build/windows -C Release --output-on-failure` runs 23 cases,
 including solver.relations-system and normal/high-DPI modeling workflow tests.
-Final repair result: 22/22 passed, 0 failures (46.65 seconds). The standalone package was
+Final midpoint/rectangle result: 23/23 passed, 0 failures (48.81 seconds). The standalone package was
 also generated successfully with the existing runtime dependency/license scanner.
 The suite also covers existing dimensions/annotations, ten-action history,
 deletion, basic geometry tools, documents, feature regeneration and profiles.

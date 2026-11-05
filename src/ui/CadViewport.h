@@ -145,7 +145,7 @@ private:
     void updateSketchPresentation(const std::optional<modeling::SketchEntity>& preview = {});
     std::optional<modeling::Point2> sketchPosition(const QPointF& position);
     struct SnapHit { modeling::SketchPointRef reference; modeling::Point2 point; };
-    std::optional<SnapHit> pointAt(const QPointF& position) const;
+    std::optional<SnapHit> pointAt(const QPointF& position,bool includeMidpoints=false) const;
     std::optional<SnapHit> selectionPointAt(const QPointF& position) const;
     std::optional<std::string> entityAt(const QPointF& position) const;
     std::optional<std::string> dimensionAt(const QPointF& position) const;

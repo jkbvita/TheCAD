@@ -2,6 +2,7 @@
 #include "modeling/DimensionAnnotation.h"
 #include "modeling/DimensionInference.h"
 #include "modeling/ConstraintSolver.h"
+#include "modeling/RelationCommands.h"
 #include "ui/CadViewport.h"
 #include "modeling/Box.h"
 #include <Graphic3d_Camera.hxx>
@@ -46,12 +47,39 @@ private slots:
         QVERIFY(QTest::qWaitForWindowExposed(host.get())); QTRY_VERIFY(viewport->isReady());
     }
     void init() { viewport->beginSketch({}); QApplication::processEvents(); }
+    void midpointCuesCreationAndPersistentDragging() {
+        using namespace modeling;
+        for(const auto plane:{SketchPlane::XY,SketchPlane::XZ,SketchPlane::YZ}){
+            Sketch sketch;sketch.plane=plane;sketch.entities={{EntityKind::Line,{-40,20},{40,20},1,"guide"}};
+            viewport->beginSketch(sketch);viewport->selectSketchTool();hover({0,20});QCOMPARE(viewport->m_pointPresentations.size(),std::size_t(3));QVERIFY(!viewport->pointAt(pixel({0,20})));
+            viewport->setSketchTool(EntityKind::Point);hover({0,20},{2,1});QVERIFY(viewport->m_hoveredPoint);QCOMPARE(viewport->m_hoveredPoint->role,PointRole::Midpoint);QCOMPARE(viewport->m_pointPresentations.size(),std::size_t(4));
+            hover({-20,-20});QCOMPARE(viewport->m_pointPresentations.size(),std::size_t(3));click({0,20},{2,1});QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(2));QCOMPARE(viewport->m_sketch->relations[0].kind,RelationKind::Midpoint);QCOMPARE(viewport->m_sketch->entities[1].first.x,0.0);QCOMPARE(viewport->m_sketch->entities[1].first.y,20.0);
+            viewport->selectSketchTool();QCOMPARE(viewport->m_pointPresentations.size(),std::size_t(4));
+            viewport->beginSketch(sketch);viewport->setSketchTool(EntityKind::Line);hover({0,20},{1,-1});QCOMPARE(viewport->m_hoveredPoint->role,PointRole::Midpoint);click({0,20},{1,-1});QVERIFY(viewport->m_firstReference);QCOMPARE(viewport->m_firstReference->role,PointRole::Midpoint);click({25,45});QCOMPARE(viewport->m_sketch->relations[0].kind,RelationKind::Midpoint);QCOMPARE(viewport->m_sketch->entities[1].first.x,0.0);QCOMPARE(viewport->m_sketch->entities[1].first.y,20.0);
+            auto guide=viewport->m_sketch->entities[0];guide.second={60,40};auto resized=editSketchEntity(*viewport->m_sketch,guide);viewport->setSketch(resized);const auto midpoint=sketchPointValue(*viewport->m_sketch,{"guide",PointRole::Midpoint});QVERIFY(std::abs(viewport->m_sketch->entities[1].first.x-midpoint.x)<1e-6);QVERIFY(std::abs(viewport->m_sketch->entities[1].first.y-midpoint.y)<1e-6);QVERIFY(std::abs(midpoint.x)>1);validateSketchRelations(*viewport->m_sketch);
+            viewport->beginSketch(sketch);viewport->setSketchTool(EntityKind::Line,true);click({0,20});click({-20,40});QVERIFY(viewport->m_sketch->entities[1].construction);QCOMPARE(viewport->m_sketch->relations[0].kind,RelationKind::Midpoint);
+            viewport->beginSketch(sketch);viewport->setSketchTool(EntityKind::Circle);hover({0,20});QVERIFY(!viewport->m_hoveredPoint);QCOMPARE(viewport->m_pointPresentations.size(),std::size_t(3));
+        }
+        Sketch drag;drag.entities={{EntityKind::Line,{-40,20},{40,20},1,"guide"},{EntityKind::Point,{-25,-20},{},1,"point"}};drag=modeling::addSelectionRelations(drag,RelationKind::FixedEntity,{"guide"},"fix");viewport->beginSketch(drag);viewport->selectSketchTool();
+        QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,pixel({-25,-20}));const auto end=pixel({0,20})+QPoint(2,1);QMouseEvent move(QEvent::MouseMove,end,viewport->mapToGlobal(end),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);QApplication::sendEvent(viewport,&move);QVERIFY(viewport->m_pointDrag && viewport->m_pointDrag->target);QCOMPARE(viewport->m_pointDrag->target->role,PointRole::Midpoint);QVERIFY(viewport->m_pointDrag->candidate);QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,end);QCOMPARE(viewport->m_sketch->relations.back().kind,RelationKind::Midpoint);QVERIFY(std::abs(viewport->m_sketch->entities[1].first.y-20)<1e-6);
+    }
+    void allFreeRectangleCornersResizeFromOriginAnchor() {
+        using namespace modeling;
+        for(const auto plane:{SketchPlane::XY,SketchPlane::XZ,SketchPlane::YZ})for(int corner=0;corner<3;++corner){
+            Sketch empty;empty.plane=plane;viewport->beginSketch(empty);viewport->setSketchTool(EntityKind::Rectangle);click({0,0});click({-40,30});viewport->selectSketchTool();const auto original=*viewport->m_sketch;
+            const Point2 start=corner==0?Point2{-40,0}:corner==1?Point2{0,30}:Point2{-40,30};const Point2 finish=corner==0?Point2{-55,9}:corner==1?Point2{9,45}:Point2{-55,45};
+            QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,pixel(start));QVERIFY(viewport->m_pointDrag);const auto target=pixel(finish);QMouseEvent move(QEvent::MouseMove,target,viewport->mapToGlobal(target),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);QApplication::sendEvent(viewport,&move);QVERIFY(viewport->m_pointDrag->candidate);validateSketchRelations(*viewport->m_sketch);QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,target);
+            const auto& s=*viewport->m_sketch;QCOMPARE(s.entities[0].first.x,0.0);QCOMPARE(s.entities[0].first.y,0.0);QCOMPARE(s.relations.size(),original.relations.size());
+            QVERIFY(std::abs(s.entities[0].second.x-(corner==1?-40:-55))<0.5);QVERIFY(std::abs(s.entities[2].second.y-(corner==0?30:45))<0.5);
+            QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,pixel({0,0}));QVERIFY(!viewport->m_pointDrag);QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,pixel({0,0}));
+        }
+    }
     void pointToolSnapsSelectsDragsAndPersistsRelations() {
         using namespace modeling;Sketch sketch;sketch.entities={{EntityKind::Line,{-40,20},{40,20},1,"line"},{EntityKind::Circle,{30,-25},{},8,"circle"}};
         viewport->beginSketch(sketch);viewport->setSketchTool(EntityKind::Point);click({0,0},{3,2});click({0,20},{0,4});click({38,-25},{3,0});click({-30,-20});
         QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(6));QCOMPARE(viewport->m_sketch->entities[2].kind,EntityKind::Point);
         QCOMPARE(viewport->m_sketch->entities[2].first.x,0.0);QCOMPARE(viewport->m_sketch->entities[2].first.y,0.0);
-        QCOMPARE(viewport->m_sketch->relations[0].kind,RelationKind::Coincident);QCOMPARE(viewport->m_sketch->relations[1].kind,RelationKind::PointOnLine);QCOMPARE(viewport->m_sketch->relations[2].kind,RelationKind::PointOnCircle);
+        QCOMPARE(viewport->m_sketch->relations[0].kind,RelationKind::Coincident);QCOMPARE(viewport->m_sketch->relations[1].kind,RelationKind::Midpoint);QCOMPARE(viewport->m_sketch->relations[2].kind,RelationKind::PointOnCircle);
         QVERIFY(closedContours(*viewport->m_sketch).size()==1); // Only the existing circle is a profile.
         viewport->selectSketchTool();click({0,0});QVERIFY(viewport->m_selectedPoint);QCOMPARE(viewport->m_selectedPoint->entityId,viewport->m_sketch->entities[2].id);
         const auto id=viewport->m_sketch->entities.back().id;QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,pixel({-30,-20}));
@@ -226,9 +254,9 @@ private slots:
         const auto original=*viewport->m_sketch; const auto corner=original.entities[0].second;changes.clear();
         QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,pixel(corner));
         p=pixel({40,10});QMouseEvent bad(QEvent::MouseMove,p,viewport->mapToGlobal(p),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);
-        QApplication::sendEvent(viewport,&bad); QVERIFY(viewport->m_pointDrag); QVERIFY(!viewport->m_pointDrag->candidate);
-        QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,p);QCOMPARE(changes.count(),0);
-        QCOMPARE(viewport->m_sketch->entities[0].second.x,corner.x);QCOMPARE(viewport->m_sketch->entities[0].second.y,corner.y);
+        QApplication::sendEvent(viewport,&bad); QVERIFY(viewport->m_pointDrag); QVERIFY(viewport->m_pointDrag->candidate);
+        QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,p);QCOMPARE(changes.count(),1);
+        QVERIFY(std::abs(viewport->m_sketch->entities[0].second.x-40)<0.5);QCOMPARE(viewport->m_sketch->entities[0].second.y,corner.y);
         QCOMPARE(viewport->m_sketch->relations.size(),original.relations.size());
     }
     void axialInferenceAllPlanesAndDirections() {

@@ -836,6 +836,7 @@ Point2 sketchPointValue(const Sketch& sketch, const SketchPointRef& reference)
     const auto found = std::find_if(sketch.entities.begin(), sketch.entities.end(), [&](const SketchEntity& entity) { return entity.id == reference.entityId; });
     if (found == sketch.entities.end()) fail("Sketch point refers to a missing entity.");
     if (reference.role == PointRole::Center && found->kind == EntityKind::Circle) return found->first;
+    if (reference.role == PointRole::Midpoint && found->kind == EntityKind::Line)return {(found->first.x+found->second.x)/2,(found->first.y+found->second.y)/2};
     if(found->kind==EntityKind::Point && reference.role==PointRole::First)return found->first;
     if (found->kind == EntityKind::Line || found->kind == EntityKind::Rectangle) {
         if (reference.role == PointRole::First) return found->first;
@@ -915,6 +916,7 @@ void validateSketchConstraintReferences(const Sketch& sketch)
     if(sketch.relations.size()>4000 || sketch.dimensions.size()>4000)fail("Sketch exceeds the prototype constraint limit.");
     (void)sketchPoints(sketch);validatePolygons(sketch,false);std::set<std::string> ids;
     for(const auto& relation:sketch.relations) {
+        if(relation.first.role==PointRole::Midpoint || relation.second.role==PointRole::Midpoint)fail("Midpoint snaps must use a Midpoint relation with real point references.");
         if(!stableIdentifier(relation.id) || !ids.insert(relation.id).second)fail("Constraint IDs must be valid and unique.");
         (void)sketchPointValue(sketch,relation.first);(void)sketchPointValue(sketch,relation.second);
         if(isNewRelation(relation.kind)){validateNewRelation(sketch,relation,false);continue;}
@@ -935,7 +937,7 @@ void validateSketchConstraintReferences(const Sketch& sketch)
             if(a.id==b.id || (a.kind!=EntityKind::Line&&a.kind!=EntityKind::Circle) || (b.kind!=EntityKind::Line&&b.kind!=EntityKind::Circle) || (a.kind==EntityKind::Line&&b.kind==EntityKind::Line))fail("Tangent supports line-circle and external circle-circle relations.");
         } else fail("Unsupported sketch relation type.");
     }
-    for(const auto& d:sketch.dimensions){if(!stableIdentifier(d.id)||!ids.insert(d.id).second)fail("Dimension IDs must be valid and unique across all constraints.");validDimension(sketch,d);}
+    for(const auto& d:sketch.dimensions){if(!stableIdentifier(d.id)||!ids.insert(d.id).second)fail("Dimension IDs must be valid and unique across all constraints.");if(d.first.role==PointRole::Midpoint || d.second.role==PointRole::Midpoint)fail("Dimensions require an actual sketch point; place a point at the midpoint first.");validDimension(sketch,d);}
 }
 Sketch canonicalizeSketchEqualities(const Sketch& sketch,const std::vector<std::pair<SketchPointRef,Point2>>& extraAnchors)
 {
@@ -1089,12 +1091,16 @@ Sketch moveSketchPoint(const Sketch& sketch, const SketchPointRef& reference, Po
         position=sketchPointValue(sketch,*target);
     }
     const bool solverConstraints=!sketch.polygons.empty() || !sketch.dimensions.empty() || std::any_of(sketch.relations.begin(),sketch.relations.end(),[](const auto& r){return int(r.kind)>=int(RelationKind::FixedPoint);});
-    if(solverConstraints || preserveCircleRadius) {
+    const bool midpointTarget=target && target->role==PointRole::Midpoint;
+    if(reference.role==PointRole::Midpoint)fail("Drag an endpoint or attached point to change a line midpoint.");
+    if(solverConstraints || preserveCircleRadius || midpointTarget) {
         auto candidate=sketch;
-        if(target && !areSketchPointsCoincident(sketch,reference,*target)) {
+        const bool existingMidpoint=midpointTarget && std::any_of(sketch.relations.begin(),sketch.relations.end(),[&](const auto& r){return r.kind==RelationKind::Midpoint && r.second.entityId==target->entityId && areSketchPointsCoincident(sketch,reference,r.first);});
+        if(target && (midpointTarget?!existingMidpoint:!areSketchPointsCoincident(sketch,reference,*target))) {
             std::set<std::string> ids;for(const auto& r:sketch.relations)ids.insert(r.id);for(const auto& d:sketch.dimensions)ids.insert(d.id);
             int n=1;while(ids.count("connection-"+std::to_string(n)))++n;
-            candidate.relations.push_back({"connection-"+std::to_string(n),RelationKind::Coincident,reference,*target});
+            const SketchPointRef destination=midpointTarget?SketchPointRef{target->entityId,PointRole::First}:*target;
+            candidate.relations.push_back({"connection-"+std::to_string(n),midpointTarget?RelationKind::Midpoint:RelationKind::Coincident,reference,destination});
         }
         SolveOptions options;options.pointTargets.push_back({reference,position,false});
         const auto& entity=referencedEntity(sketch,reference);
@@ -1115,6 +1121,15 @@ Sketch moveSketchPoint(const Sketch& sketch, const SketchPointRef& reference, Po
         return requireSolvedSketch(solvePlanarSketch(candidate,options));
     }
     auto entity=*std::find_if(sketch.entities.begin(),sketch.entities.end(),[&](const SketchEntity& e){return e.id==reference.entityId;});
+    // Mouse motion is a request along the remaining degrees of freedom. A
+    // rectangle corner sharing the origin's X or Y must still resize the free
+    // coordinate, even when the cursor leaves that axis by a few pixels.
+    EqualityGroups groups(sketch);for(const auto& relation:sketch.relations)groups.join(relation);
+    const auto index=groups.index(reference);
+    const bool fixedX=EqualityGroups::root(groups.x,index)==EqualityGroups::root(groups.x,0);
+    const bool fixedY=EqualityGroups::root(groups.y,index)==EqualityGroups::root(groups.y,0);
+    if(fixedX && fixedY)fail("This sketch point is fixed to the origin.");
+    if(fixedX)position.x=0;if(fixedY)position.y=0;
     if(reference.role==PointRole::Second) entity.second=position;
     else entity.first=position;
     auto candidate=editSketchEntity(sketch,entity);

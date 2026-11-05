@@ -17,6 +17,7 @@ const char* relationName(RelationKind k){switch(k){
 case RelationKind::Coincident:return "Coincident";case RelationKind::Horizontal:return "Horizontal";case RelationKind::Vertical:return "Vertical";
 case RelationKind::FixedPoint:return "Fix Point";case RelationKind::Parallel:return "Parallel";case RelationKind::Perpendicular:return "Perpendicular";case RelationKind::Tangent:return "Tangent";
 case RelationKind::PointOnLine:return "Point on Line";case RelationKind::PointOnCircle:return "Point on Circle";
+case RelationKind::Midpoint:return "Midpoint";
 case RelationKind::Collinear:return "Collinear";case RelationKind::Equal:return "Equal";case RelationKind::Concentric:return "Concentric";case RelationKind::EqualCurveLength:return "Equal Curve Length";case RelationKind::FixedEntity:return "Fix";
 }return "Unsupported relation";}
 std::vector<RelationKind> availableRelations(const Sketch& s,const std::vector<std::string>& ids){
@@ -33,7 +34,7 @@ std::vector<RelationKind> availableRelations(const Sketch& s,const std::vector<s
         if((a==EntityKind::Line && b==EntityKind::Circle)||(b==EntityKind::Line && a==EntityKind::Circle)){result.push_back(RelationKind::Tangent);result.push_back(RelationKind::EqualCurveLength);}
         if(circles)result.push_back(RelationKind::Tangent);
         if((a==EntityKind::Point && b==EntityKind::Circle)||(b==EntityKind::Point && a==EntityKind::Circle)){result.push_back(RelationKind::Concentric);result.push_back(RelationKind::PointOnCircle);}
-        if((a==EntityKind::Point && b==EntityKind::Line)||(b==EntityKind::Point && a==EntityKind::Line))result.push_back(RelationKind::PointOnLine);
+        if((a==EntityKind::Point && b==EntityKind::Line)||(b==EntityKind::Point && a==EntityKind::Line)){result.push_back(RelationKind::PointOnLine);result.push_back(RelationKind::Midpoint);}
     }
     if(lines || circles || points || std::all_of(selected.begin(),selected.end(),[](const auto* e){return e->kind==EntityKind::Line || e->kind==EntityKind::Circle || e->kind==EntityKind::Point;}))result.push_back(RelationKind::FixedEntity);
     return result;
@@ -64,7 +65,7 @@ Sketch addSelectionRelations(const Sketch& s,RelationKind kind,const std::vector
     const auto add=[&](SketchPointRef a,SketchPointRef b,const SketchEntity* frozen=nullptr){SketchRelation r;r.id=prefix+"-"+std::to_string(++n);r.kind=kind;r.first=a;r.second=b;if(frozen){r.fixedPosition=frozen->first;r.fixedSecond=frozen->second;r.fixedRadius=frozen->radius;}candidate.relations.push_back(r);};
     if(kind==RelationKind::FixedEntity){for(const auto& id:ids){const auto& e=entity(s,id);add(ref(e),{},&e);}}
     else if((kind==RelationKind::Horizontal || kind==RelationKind::Vertical) && entity(s,ids.front()).kind==EntityKind::Line){for(const auto& id:ids)add({id,PointRole::First},{id,PointRole::Second});}
-    else if(kind==RelationKind::PointOnLine || kind==RelationKind::PointOnCircle){const auto& a=entity(s,ids[0]);const auto& b=entity(s,ids[1]);add(ref(a.kind==EntityKind::Point?a:b),ref(a.kind==EntityKind::Point?b:a));}
+    else if(kind==RelationKind::PointOnLine || kind==RelationKind::PointOnCircle || kind==RelationKind::Midpoint){const auto& a=entity(s,ids[0]);const auto& b=entity(s,ids[1]);add(ref(a.kind==EntityKind::Point?a:b),ref(a.kind==EntityKind::Point?b:a));}
     else for(std::size_t i=1;i<ids.size();++i)add(ref(entity(s,ids[0])),ref(entity(s,ids[i])));
     if(kind==RelationKind::Equal || kind==RelationKind::EqualCurveLength)for(std::size_t i=s.relations.size();i<candidate.relations.size();++i)candidate.relations[i].groupId=prefix;
     return requireSolvedSketch(solvePlanarSketch(candidate));
@@ -72,6 +73,11 @@ Sketch addSelectionRelations(const Sketch& s,RelationKind kind,const std::vector
 bool isNewRelation(RelationKind kind){return int(kind)>=int(RelationKind::Collinear);}
 void validateNewRelation(const Sketch& s,const SketchRelation& r,bool geometry){
     const auto& a=entity(s,r.first.entityId);
+    if(r.kind==RelationKind::Midpoint){
+        const auto& b=entity(s,r.second.entityId);
+        require(a.id!=b.id && b.kind==EntityKind::Line && r.second.role==PointRole::First && r.first.role!=PointRole::Origin && r.first.role!=PointRole::Midpoint,"Midpoint requires a point on a different line.");
+        const auto p=sketchPointValue(s,r.first);if(geometry)require(std::hypot(p.x-(b.first.x+b.second.x)/2,p.y-(b.first.y+b.second.y)/2)<1e-6,"Midpoint relation is not satisfied.");return;
+    }
     if(r.kind==RelationKind::FixedEntity){
         require(a.kind==EntityKind::Line || a.kind==EntityKind::Circle || a.kind==EntityKind::Point,"Fix supports lines, circles and points.");
         require(r.first.role==ref(a).role && r.second.role==PointRole::Origin && r.second.entityId.empty(),"Invalid fixed-entity references.");

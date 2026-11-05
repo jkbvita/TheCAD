@@ -628,8 +628,12 @@ void CadViewport::updateSketchHover(const QPointF& position) {
         updatePointPresentation();updateRelationSymbols();update();return;
     }
     if(!previous.empty())QToolTip::hideText();
-    const auto hit=m_sketchTool?pointAt(position):selectionPointAt(position);
+    const auto oldPoint=m_hoveredPoint;
+    const bool midpointTool=m_sketchTool==modeling::EntityKind::Line || m_sketchTool==modeling::EntityKind::Point;
+    const auto hit=m_sketchTool?pointAt(position,midpointTool):selectionPointAt(position);
     m_hoveredPoint=hit?std::optional<modeling::SketchPointRef>(hit->reference):std::nullopt;
+    if(m_hoveredPoint && m_hoveredPoint->role==modeling::PointRole::Midpoint){if(!oldPoint || oldPoint->entityId!=m_hoveredPoint->entityId || oldPoint->role!=m_hoveredPoint->role)QToolTip::showText(mapToGlobal(position.toPoint()),"Midpoint",this);}
+    else if(oldPoint && oldPoint->role==modeling::PointRole::Midpoint)QToolTip::hideText();
     m_hoveredDimension=(!hit && !m_sketchTool)?dimensionAt(position).value_or(""):"";
     m_hoveredEntity=(!hit && m_hoveredDimension.empty())?entityAt(position).value_or(""):"";
     updatePointPresentation();updateConstraintPresentation();update();
@@ -707,6 +711,7 @@ void CadViewport::setSketchTool(modeling::EntityKind kind,bool construction)
     m_smartDimensionPicking=false;m_constraintPicking=false;
     m_firstPoint.reset();
     m_firstReference.reset();
+    m_hoveredPoint.reset();QToolTip::hideText();
     if (m_sketchEditing) { setCursor(Qt::CrossCursor); }
     emit sketchToolChanged();
     updateSketchPresentation();
@@ -717,7 +722,7 @@ void CadViewport::placeSketchPoint(const QPointF& position) {
     std::optional<modeling::SketchPointRef> reference;auto point=drawingPoint(position,reference);auto candidate=*m_sketch;
     modeling::SketchEntity entity{modeling::EntityKind::Point,point,{},1,QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString()};
     const auto relationId=QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
-    if(reference)candidate.relations.push_back({relationId,modeling::RelationKind::Coincident,{entity.id,modeling::PointRole::First},*reference});
+    if(reference){const bool midpoint=reference->role==modeling::PointRole::Midpoint;candidate.relations.push_back({relationId,midpoint?modeling::RelationKind::Midpoint:modeling::RelationKind::Coincident,{entity.id,modeling::PointRole::First},midpoint?modeling::SketchPointRef{reference->entityId,modeling::PointRole::First}:*reference});}
     else if(const auto id=entityAt(position)) {
         const auto e=std::find_if(candidate.entities.begin(),candidate.entities.end(),[&](const auto& v){return v.id==*id;});
         if(e!=candidate.entities.end() && e->kind==modeling::EntityKind::Line){
@@ -737,6 +742,7 @@ void CadViewport::selectSketchTool()
 {
     cancelDimensionDrag();cancelPointDrag(); resetSketchInference();
     m_sketchTool.reset(); m_firstPoint.reset(); m_firstReference.reset();m_constructionTool=false;m_drawingPreview.reset();
+    m_hoveredPoint.reset();QToolTip::hideText();
     m_smartDimensionPicking=false;m_constraintPicking=false;
     unsetCursor(); updateSketchPresentation();emit sketchToolChanged();
 }
@@ -776,6 +782,7 @@ void CadViewport::setSketch(const modeling::Sketch& sketch)
         catch(const std::exception&) { reference.reset(); }
     };
     validReference(m_hoveredPoint); validReference(m_selectedPoint);
+    validReference(m_inference.target);validReference(m_inference.alignX);validReference(m_inference.alignY);
     if(std::none_of(sketch.entities.begin(),sketch.entities.end(),[&](const auto& entity){return entity.id==m_selectedEntity;}))
         m_selectedEntity.clear();
     m_selectedEntities.erase(std::remove_if(m_selectedEntities.begin(),m_selectedEntities.end(),[&](const auto& id){
@@ -878,7 +885,7 @@ QPointF CadViewport::screenPoint(modeling::Point2 point) const
     return {x / devicePixelRatioF(), y / devicePixelRatioF()};
 }
 
-std::optional<CadViewport::SnapHit> CadViewport::pointAt(const QPointF& position) const
+std::optional<CadViewport::SnapHit> CadViewport::pointAt(const QPointF& position,bool includeMidpoints) const
 {
     if (!isReady() || !m_sketch) return {};
     std::vector<modeling::ProjectedSketchPoint> projected;
@@ -886,6 +893,10 @@ std::optional<CadViewport::SnapHit> CadViewport::pointAt(const QPointF& position
     for (const auto& entry : modeling::sketchPoints(*m_sketch)) {
         const auto pixel = screenPoint(entry.second);
         projected.push_back({entry.first, entry.second, pixel.x()*dpr, pixel.y()*dpr});
+    }
+    if(includeMidpoints)for(const auto& e:m_sketch->entities)if(e.kind==modeling::EntityKind::Line){
+        const modeling::SketchPointRef ref{e.id,modeling::PointRole::Midpoint};const auto point=modeling::sketchPointValue(*m_sketch,ref);const auto pixel=screenPoint(point);
+        projected.push_back({ref,point,pixel.x()*dpr,pixel.y()*dpr});
     }
     // Logical pixels become native pixels exactly once, like mouse input.
     const auto hit = modeling::nearestSketchPoint(projected, position.x()*dpr, position.y()*dpr, m_pickingTolerance*dpr);
@@ -948,7 +959,8 @@ modeling::Point2 CadViewport::drawingPoint(const QPointF& position, std::optiona
     reference.reset();
     const auto previous=m_inference;
     m_inference={};
-    auto hit=pointAt(position);
+    const bool midpointTool=m_sketchTool==modeling::EntityKind::Line || m_sketchTool==modeling::EntityKind::Point;
+    auto hit=pointAt(position,midpointTool);
     if(previous.target && !(hit && hit->reference.role==modeling::PointRole::Origin)) {
         const auto value=modeling::sketchPointValue(*m_sketch,*previous.target);
         if(QLineF(position,screenPoint(value)).length()<=12.0) hit=SnapHit{*previous.target,value};
@@ -1038,6 +1050,11 @@ void CadViewport::updatePointPresentation()
             m_context->SetDisplayPriority(marker,Graphic3d_DisplayPriority_Topmost);
             m_pointPresentations.push_back(marker);
         }
+        if(m_hoveredPoint && m_hoveredPoint->role==modeling::PointRole::Midpoint && (m_pointDrag || m_sketchTool==modeling::EntityKind::Line || m_sketchTool==modeling::EntityKind::Point)){
+            Handle(AIS_Point) marker=new AIS_Point(new Geom_CartesianPoint(modeling::sketchPoint(*m_sketch,modeling::sketchPointValue(*m_sketch,*m_hoveredPoint))));
+            marker->Attributes()->SetPointAspect(filledPoint(Quantity_NOC_ORANGE,9*devicePixelRatioF()));marker->SetZLayer(Graphic3d_ZLayerId_Topmost);marker->SetInfiniteState(Standard_True);
+            m_context->Display(marker,0,-1,Standard_False);m_context->SetDisplayPriority(marker,Graphic3d_DisplayPriority_Topmost);m_pointPresentations.push_back(marker);
+        }
         modeling::Sketch only;only.plane=m_sketch->plane;only.attachment=m_sketch->attachment;
         for(const auto& entity:m_sketch->entities)if(entity.id==m_selectedEntity || std::find(m_selectedEntities.begin(),m_selectedEntities.end(),entity.id)!=m_selectedEntities.end() || std::find(m_dimensionEntities.begin(),m_dimensionEntities.end(),entity.id)!=m_dimensionEntities.end())only.entities.push_back(entity);
         if(!only.entities.empty()) {
@@ -1079,7 +1096,7 @@ void CadViewport::updateInteractionPresentation()
     if(m_pointDrag && m_pointDrag->moved) {
         point=modeling::sketchPointValue(*m_sketch,m_pointDrag->reference);
         if(!m_pointDrag->error.isEmpty()) {text="Cannot move";invalid=true;}
-        else if(m_pointDrag->target) {text="Coincident";point=modeling::sketchPointValue(*m_sketch,*m_pointDrag->target);}
+        else if(m_pointDrag->target) {text=m_pointDrag->target->role==modeling::PointRole::Midpoint?"Midpoint":"Coincident";point=modeling::sketchPointValue(*m_sketch,*m_pointDrag->target);}
     } else if(m_sketchEditing && m_sketchTool && m_firstPoint) {
         for(const auto& line:m_inference.guides) {
             Handle(AIS_Shape) guide=new AIS_Shape(BRepBuilderAPI_MakeEdge(modeling::sketchPoint(*m_sketch,line.first),modeling::sketchPoint(*m_sketch,line.second)).Shape());
@@ -1089,7 +1106,7 @@ void CadViewport::updateInteractionPresentation()
             guide->SetZLayer(Graphic3d_ZLayerId_Topmost);guide->SetInfiniteState(Standard_True);
             m_context->Display(guide,AIS_WireFrame,-1,Standard_False);m_inferenceGuides.push_back(guide);
         }
-        if(m_inference.target) text="Coincident";
+        if(m_inference.target) text=m_inference.target->role==modeling::PointRole::Midpoint?"Midpoint":"Coincident";
         else if(m_inference.axis==modeling::RelationKind::Horizontal) text="H";
         else if(m_inference.axis==modeling::RelationKind::Vertical) text="V";
     }
@@ -1168,7 +1185,7 @@ void CadViewport::commitDrawing(modeling::Point2 point, const std::optional<mode
         candidate.relations.push_back({sketchId(),kind,a,b});
     };
     const auto attach=[&](modeling::SketchPointRef a,const std::optional<modeling::SketchPointRef>& b) {
-        if(b) relation(modeling::RelationKind::Coincident,a,*b);
+        if(b){const bool midpoint=b->role==modeling::PointRole::Midpoint;relation(midpoint?modeling::RelationKind::Midpoint:modeling::RelationKind::Coincident,a,midpoint?modeling::SketchPointRef{b->entityId,modeling::PointRole::First}:*b);}
     };
     modeling::SketchEntity entity; entity.id=sketchId(); entity.kind=*m_sketchTool;
     entity.first=first; entity.second=point;entity.construction=m_constructionTool; entity.radius=std::hypot(point.x-first.x,point.y-first.y);
@@ -1347,6 +1364,9 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
                     for(const auto& ref:modeling::coincidentSketchPoints(*m_sketch,*dragRef)) excluded.insert({ref.entityId,int(ref.role)});
                     for(const auto& entry:modeling::sketchPoints(*m_sketch))
                         if(!excluded.count({entry.first.entityId,int(entry.first.role)})) m_pointDrag->targets.push_back(entry);
+                    if(!m_pointDrag->circleBody)for(const auto& e:m_sketch->entities)if(e.kind==modeling::EntityKind::Line && !excluded.count({e.id,int(modeling::PointRole::First)}) && !excluded.count({e.id,int(modeling::PointRole::Second)})){
+                        const modeling::SketchPointRef ref{e.id,modeling::PointRole::Midpoint};m_pointDrag->targets.push_back({ref,modeling::sketchPointValue(*m_sketch,ref)});
+                    }
                     grabMouse();
                 }
             }

@@ -25,7 +25,7 @@ modeling::Point2 anchor(const modeling::Sketch& sketch,const modeling::SketchRel
     const auto e=std::find_if(sketch.entities.begin(),sketch.entities.end(),[&](const auto& e){return e.id==r.first.entityId;});
     if(e!=sketch.entities.end()){
         if(e->kind==modeling::EntityKind::Circle)return {e->first.x+0.7071067811865475*e->radius,e->first.y+0.7071067811865475*e->radius};
-        if(e->kind==modeling::EntityKind::Line && r.kind!=modeling::RelationKind::Coincident && r.kind!=modeling::RelationKind::PointOnLine)return {(e->first.x+e->second.x)/2,(e->first.y+e->second.y)/2};
+        if(e->kind==modeling::EntityKind::Line && r.kind!=modeling::RelationKind::Coincident && r.kind!=modeling::RelationKind::PointOnLine && r.kind!=modeling::RelationKind::Midpoint)return {(e->first.x+e->second.x)/2,(e->first.y+e->second.y)/2};
     }
     if(r.kind==modeling::RelationKind::Horizontal || r.kind==modeling::RelationKind::Vertical){const auto second=modeling::sketchPointValue(sketch,r.second);return {(first.x+second.x)/2,(first.y+second.y)/2};}
     return first;

@@ -6,12 +6,12 @@ inputs: conversion saves to a separate .thepart path, retaining the original fil
 No assembly/drawing reader or placeholder is implemented. Internal serialization
 is provisional and versioned; filename conventions are permanent.
 
-## Version 10 part structure
+## Version 11 part structure
 
-The UTF-8 JSON root contains exactly format: "TheCAD.Part", version: 10, units:
+The UTF-8 JSON root contains exactly format: "TheCAD.Part", version: 11, units:
 "mm", features (ordered array) and resultFeature (last solid feature ID, or empty
-for empty/sketch-only documents). Writers always emit version 10. Readers accept
-versions 1–10 and reject unknown versions, fields, units and unsupported features.
+for empty/sketch-only documents). Writers always emit version 11. Readers accept
+versions 1–11 and reject unknown versions, fields, units and unsupported features.
 
 Every feature has stable id, printable name, type and explicit dependencies.
 Types and additional fields:
@@ -77,6 +77,12 @@ Each distinct member shows one icon for that group; deletion releases the whole
 group. Independent commands retain independent group IDs. Readers migrate the
 schema-9 UI's generated UUID-number batch IDs; arbitrary legacy pair IDs stay
 independent. Missing group metadata means an ordinary binary relation.
+
+Schema 11 adds `midpoint`: first references an actual sketch point or endpoint,
+second references the First point of a different Line entity. Its equations bind
+the first point to the average of the line's current endpoints. A derived midpoint
+snap is never serialized as a point role; dimensions to midpoints use a real Point
+with this relation. Stable geometry and relation IDs survive later solving.
 
 A fixed-entity stores position, secondPosition and radius, with second the origin
 placeholder. Only fields relevant to the entity drive it: both endpoints for a
@@ -154,11 +160,12 @@ permanent topology naming. See decision 0008.
 Version 1 is exactly one legacy box with no feature name. Version 2 adds named
 parametric history/entities but no relations. Version 3 adds Coincident/H/V;
 version 4 adds face attachments. These are read without inventing constraints or
-features. Saving intentionally writes version 10 .thepart to the selected path.
+features. Saving intentionally writes version 11 .thepart to the selected path.
 Version 5 adds dimensions and multiple region selections. Version 7 adds relative
 annotation placement; version 8 adds points, construction flags, on-geometry
 relations and regular polygon groups. Version 9 adds contextual relation types and
-full-entity Fix snapshots. Older applications
+full-entity Fix snapshots. Version 10 adds equality-group IDs; version 11 adds
+persistent Midpoint relations. Older applications
 reject newer unsupported versions safely; readers retain all supported older records.
 
 Only a fully successful candidate history replaces the document and precise OCCT

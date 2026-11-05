@@ -63,10 +63,16 @@ With dependencies installed, run from the repository root:
 
 ## Launch from Windows Explorer
 
-For the combined circle/Equal repair build, use the updated desktop **TheCAD**
-shortcut or `build/package/TheCAD-Relations-Repair/TheCAD.exe` in the isolated
+For the current midpoint/rectangle build, use the updated desktop **TheCAD**
+shortcut or `build/package/TheCAD-Midpoint-Rectangle/TheCAD.exe` in the isolated
 worktree. The older package is retained to protect an open sketch; see the
 [repair checks](docs/verification/sketch-relations-system.md).
+
+Point, Line and Centerline can acquire line midpoints with a temporary hover cue.
+Clicking creates a persistent Midpoint relation, so the attachment follows later
+geometry changes. All three free corners of an origin-anchored rectangle can be
+dragged to resize its undimensioned coordinates. See the
+[midpoint and rectangle checks](docs/verification/midpoint-rectangle.md).
 
 For a standard checkout, double-click **Launch TheCAD.cmd** in the repository root. To create an independent
 Release folder after building, run `.\scripts\package-windows.ps1`, then double-click
@@ -147,7 +153,7 @@ Dimensions follow current geometry throughout endpoint dragging and numeric edit
 In Select mode or idle Smart Dimension, drag text or dimension lines to reposition
 the annotation without changing its value. Circle dimensions use diametric/radial
 lines and circumference arrows; dragging rotates their placement. Placements survive
-save/reopen in `.thepart` schema 10; earlier supported files remain readable.
+save/reopen in `.thepart` schema 11; earlier supported files remain readable.
 Smart Dimension and drawing buttons stay visibly pressed while active; Esc exits.
 Geometry highlights on hover. Picking defaults to 8 logical pixels, adjustable for
 the session under **Tools > Sketch Picking Tolerance**.

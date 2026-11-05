@@ -143,6 +143,15 @@ private:
         QVERIFY(window.errors.isEmpty());
     }
 private slots:
+    void midpointAndRectangleEditsUndoAsSingleActions() {
+        using namespace modeling;WorkflowWindow window;window.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&window));auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
+        command(window,"actionRectangle");QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{0,0}));QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{-40,30}));command(window,"actionSelectSketchEntity");const auto before=*viewport->m_sketch;
+        QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{0,30}));const auto target=point(viewport,{8,45});QMouseEvent move(QEvent::MouseMove,target,viewport->mapToGlobal(target),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);QApplication::sendEvent(viewport,&move);QVERIFY(viewport->m_pointDrag && viewport->m_pointDrag->candidate);QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,target);const auto height=viewport->m_sketch->entities[2].second.y;QVERIFY(height>40);
+        QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);QCOMPARE(viewport->m_sketch->entities[2].second.y,before.entities[2].second.y);QTest::keyClick(viewport,Qt::Key_Y,Qt::ControlModifier);QCOMPARE(viewport->m_sketch->entities[2].second.y,height);
+        command(window,"actionPoint");QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{-20,0}));QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(5));QCOMPARE(viewport->m_sketch->relations.back().kind,RelationKind::Midpoint);const auto relationId=viewport->m_sketch->relations.back().id;
+        QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(4));QTest::keyClick(viewport,Qt::Key_Y,Qt::ControlModifier);QCOMPARE(viewport->m_sketch->relations.back().id,relationId);
+        QTemporaryDir directory;command(window,"actionFinishSketch");window.path=directory.filePath("midpoint-rectangle.thepart");command(window,"actionSaveAs");command(window,"actionNew");command(window,"actionOpen");QCOMPARE(window.document().features()[0].sketch.relations.back().kind,RelationKind::Midpoint);QVERIFY(window.errors.isEmpty());window.close();
+    }
     void circleCentersAndOutlineDragging() {
         using namespace modeling;WorkflowWindow window;window.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&window));auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
         Sketch sketch;sketch.entities={{EntityKind::Circle,{-25,-15},{},8,"circle"}};auto diameter=inferDimension(sketch,{}, {"circle"},{-15,-5});diameter.id="diameter";sketch=setSketchDimension(sketch,diameter);viewport->sketchChanged(sketch);command(window,"actionSelectSketchEntity");

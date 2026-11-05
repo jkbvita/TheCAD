@@ -138,7 +138,8 @@ int main()
         rejected([&]{moveSketchPoint(pinned,{"drag-a",PointRole::Second},{1,2});});
         rejected([&]{moveSketchPoint(pinned,{}, {1,2});});
         rejected([&]{moveSketchPoint(separate,{"missing",PointRole::Second},{1,2});});
-        rejected([&]{moveSketchPoint(constrainedRectangle(),{"a",PointRole::Second},{45,10});});
+        const auto resizedCorner=moveSketchPoint(constrainedRectangle(),{"a",PointRole::Second},{45,10});
+        require(resizedCorner.entities[0].second.x==45 && resizedCorner.entities[0].second.y==0,"Adjacent corner dragging projects onto its free coordinate");
         require(separate.entities[0].second.x==-20 && separate.relations.empty(),"Failed and successful point moves never mutate the source");
         // Exact persistent point equalities survive edits without a general solver.
         auto constrained = constrainedRectangle();

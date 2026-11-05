@@ -116,6 +116,13 @@ public:
                     system.addConstraintP2PDistance(line.p1,line.p2,circumference,id);
                 }break;
             case RelationKind::PointOnLine:system.addConstraintPointOnLine(a,lines.at(relation.second.entityId),id);break;
+            case RelationKind::Midpoint:{
+                auto& line=lines.at(relation.second.entityId);GCS::Line first,second;
+                first.p1=line.p1;first.p2=a;second.p1=a;second.p2=line.p2;
+                const bool onLine=std::any_of(sketch.relations.begin(),sketch.relations.end(),[&](const auto& existing){return existing.kind==RelationKind::PointOnLine && existing.second.entityId==relation.second.entityId && areSketchPointsCoincident(sketch,existing.first,relation.first);});
+                if(!onLine)system.addConstraintPointOnLine(a,line,id);
+                system.addConstraintEqualLength(first,second,id);break;
+            }
             case RelationKind::PointOnCircle:system.addConstraintPointOnCircle(a,circles.at(relation.second.entityId),id);break;
             case RelationKind::Coincident:system.addConstraintP2PCoincident(a,b,id);break;
             case RelationKind::Horizontal:system.addConstraintHorizontal(a,b,id);break;
