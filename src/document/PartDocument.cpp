@@ -6,6 +6,7 @@
 #include <QCryptographicHash>
 #include <sstream>
 #include "document/PartDocument.h"
+#include "document/ReferenceGeometryData.h"
 #include "modeling/Box.h"
 #include "modeling/ConstraintSolver.h"
 #include "modeling/PlanarRegions.h"
@@ -64,6 +65,7 @@ const char* typeName(FeatureKind kind)
     case FeatureKind::Sketch: return "sketch";
     case FeatureKind::Extrude: return "extrude";
     case FeatureKind::Cut: return "cut";
+    case FeatureKind::ReferenceGeometry:return "reference";
     }
     fail("Unsupported feature kind.");
 }
@@ -270,8 +272,7 @@ BoxParameters readBox(const QJsonValue& value)
             number(object.value("height"), "Box height")};
 }
 std::string bodySignature(const TopoDS_Shape& body) {
-    std::ostringstream stream;BRepTools::Write(body,stream,Standard_False,Standard_False,TopTools_FormatVersion_CURRENT);
-    return QCryptographicHash::hash(QByteArray::fromStdString(stream.str()),QCryptographicHash::Sha256).toHex().toStdString();
+    return referenceBodySignature(body);
 }
 gp_Ax3 faceFrame(const TopoDS_Shape& body,int index) {
     TopTools_IndexedMapOfShape faces;TopExp::MapShapes(body,TopAbs_FACE,faces);
@@ -321,6 +322,7 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
     std::string bodyId;
     std::map<std::string, modeling::Sketch> sketches;
     std::map<std::string,TopoDS_Shape> bodies;
+    std::map<std::string,modeling::DatumGeometry> datums;
     std::set<std::string> ids;
     try {
         for (auto& feature : features) {
@@ -338,6 +340,10 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
                 if (!BRepCheck_Analyzer(body).IsValid()) fail("Box parameters do not generate a valid solid.");
                 bodyId = feature.id;
                 boxParameters = feature.box;
+            } else if(feature.kind==FeatureKind::ReferenceGeometry){
+                std::vector<modeling::DatumGeometry> references;
+                for(const auto& ref:feature.reference.references){references.push_back(resolveGeometryReference(ref,datums,sketches,bodies));if(!ref.featureId.empty()&&std::find(expected.begin(),expected.end(),ref.featureId)==expected.end())expected.push_back(ref.featureId);}
+                feature.datum=modeling::evaluateDatum(feature.reference,references);datums.emplace(feature.id,feature.datum);
             } else if (feature.kind == FeatureKind::Sketch) {
                 std::set<std::string> entityIds;
                 for (const auto& entity : feature.sketch.entities) {
@@ -367,6 +373,12 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
                         entityIds.insert(candidate);
                         reservedIds.insert(candidate);
                     }
+                }
+                if(!feature.sketch.referencePlaneId.empty()){
+                    if(feature.sketch.attachment)fail("A sketch cannot have both a face and reference-plane support.");
+                    const auto support=datums.find(feature.sketch.referencePlaneId);
+                    if(support==datums.end()||support->second.kind!=modeling::DatumKind::Plane)fail("Sketch must reference an earlier reference plane.");
+                    feature.sketch.referencePlaneFrame=support->second.frame;expected.push_back(feature.sketch.referencePlaneId);
                 }
                 if(feature.sketch.attachment) {
                     const auto& attachment=*feature.sketch.attachment;
@@ -413,7 +425,7 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
             if (validateDependencies && feature.dependencies != expected)
                 fail("Invalid dependencies or feature order for " + q(feature.id));
             feature.dependencies = std::move(expected);
-            if(feature.kind!=FeatureKind::Sketch) bodies[feature.id]=body;
+            if(isSolidFeature(feature.kind)) bodies[feature.id]=body;
         }
     } catch (const Standard_Failure& error) {
         fail("Cannot regenerate part geometry: " + QString::fromUtf8(error.GetMessageString()));
@@ -423,6 +435,7 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
     m_features = std::move(features);
     m_shape = body;
     m_parameters = boxParameters;
+    m_bodies=std::move(bodies);
 }
 
 std::string PartDocument::nextId(FeatureKind kind) const
@@ -438,7 +451,7 @@ std::string PartDocument::nextId(FeatureKind kind) const
 modeling::Sketch PartDocument::sketchOnFace(int index) const {
     if(m_shape.IsNull()) fail("A planar face sketch requires an existing solid.");
     modeling::Sketch sketch;modeling::FaceAttachment attachment;
-    for(const auto& feature:m_features) if(feature.kind!=FeatureKind::Sketch) attachment.sourceFeature=feature.id;
+    for(const auto& feature:m_features) if(isSolidFeature(feature.kind)) attachment.sourceFeature=feature.id;
     attachment.faceIndex=index;attachment.sourceSignature=bodySignature(m_shape);attachment.frame=faceFrame(m_shape,index);
     sketch.attachment=attachment;return sketch;
 }
@@ -536,7 +549,7 @@ PartDocument PartDocument::load(const QString& path)
     if (root.value("format") != QJsonValue("TheCAD.Part")) fail("Unsupported document format; expected TheCAD.Part.");
     if (root.value("units") != QJsonValue("mm")) fail("Unsupported units; this prototype supports millimeters only.");
     const auto versionValue = root.value("version");
-    if (!versionValue.isDouble() || (versionValue.toDouble() != 1 && versionValue.toDouble() != 2 && versionValue.toDouble() != 3 && versionValue.toDouble() != 4 && versionValue.toDouble() != 5 && versionValue.toDouble() != 6 && versionValue.toDouble() != 7 && versionValue.toDouble() != 8 && versionValue.toDouble() != 9 && versionValue.toDouble() != 10 && versionValue.toDouble() != 11 && versionValue.toDouble() != 12)) fail("Unsupported part document version; expected versions 1 through 12.");
+    if (!versionValue.isDouble() || versionValue.toDouble()<1 || versionValue.toDouble()>13 || versionValue.toDouble()!=std::floor(versionValue.toDouble())) fail("Unsupported part document version; expected versions 1 through 13.");
     const int version = versionValue.toInt();
     if (!root.value("features").isArray()) fail("Part features must be an ordered array.");
     const auto array = root.value("features").toArray();
@@ -560,6 +573,10 @@ PartDocument PartDocument::load(const QString& path)
                 fields(object, {"id", "name", "type", "parameters", "dependencies"}, "Box feature");
                 feature.kind = FeatureKind::Box;
                 feature.box = readBox(object.value("parameters"));
+            } else if(type=="reference" && version>=13){
+                fields(object,{"id","name","type","definition","dependencies"},"Reference geometry feature");
+                if(!object.value("definition").isObject())fail("Invalid reference geometry definition.");
+                feature.kind=FeatureKind::ReferenceGeometry;feature.reference=readDatumDefinition(object.value("definition").toObject());
             } else if (type == "sketch") {
                 QSet<QString> expected{"id", "name", "type", "plane", "entities", "dependencies"};
                 if (version >= 3) expected.insert("relations");
@@ -567,9 +584,11 @@ PartDocument PartDocument::load(const QString& path)
                 if(version>=6){expected.insert("space");expected.insert("dimensions");}
                 else if(version>=5)for(const auto* key:{"space","dimensions"})if(object.contains(key))expected.insert(key);
                 if(version>=4 && object.contains("attachment")) expected.insert("attachment");
+                if(version>=13 && object.contains("referencePlane"))expected.insert("referencePlane");
                 fields(object, expected, "Sketch feature");
                 feature.kind = FeatureKind::Sketch;
                 feature.sketch.plane = readPlane(object.value("plane"));
+                if(object.contains("referencePlane")){feature.sketch.referencePlaneId=stringValue(object.value("referencePlane"),"Reference plane support").toStdString();validId(feature.sketch.referencePlaneId);}
                 if(object.contains("space") && object.value("space")!=QJsonValue("planar2d"))fail("Spatial or unsupported sketch space requires a future TheCAD version.");
                 if(object.contains("dimensions")){
                     if(!object.value("dimensions").isArray() || object.value("dimensions").toArray().size()>4000)fail("Invalid dimension array (maximum 4000).");
@@ -637,7 +656,7 @@ PartDocument PartDocument::load(const QString& path)
     auto result = createEmpty();
     result.apply(std::move(features), true);
     std::string resultId;
-    for (const auto& feature : result.features()) if (feature.kind != FeatureKind::Sketch) resultId = feature.id;
+    for (const auto& feature : result.features()) if (isSolidFeature(feature.kind)) resultId = feature.id;
     if (root.value("resultFeature") != QJsonValue(q(resultId))) fail("resultFeature must identify the final solid-producing feature, or be empty for an empty/sketch-only part.");
     return result;
 }
@@ -654,9 +673,12 @@ void PartDocument::save(const QString& path) const
         QJsonObject object{{"id", q(feature.id)}, {"name", q(feature.name)}, {"type", typeName(feature.kind)}, {"dependencies", dependencies}};
         if (feature.kind == FeatureKind::Box) {
             object["parameters"] = writeBox(feature.box);
+        } else if(feature.kind==FeatureKind::ReferenceGeometry){
+            object["definition"]=writeDatumDefinition(feature.reference);
         } else if (feature.kind == FeatureKind::Sketch) {
             object["plane"] = planeName(feature.sketch.plane);
             object["space"]="planar2d";
+            if(!feature.sketch.referencePlaneId.empty())object["referencePlane"]=q(feature.sketch.referencePlaneId);
             QJsonArray polygons;for(const auto& g:feature.sketch.polygons){QJsonArray edges;for(const auto& id:g.edges)edges.append(q(id));polygons.append(QJsonObject{{"id",q(g.id)},{"center",q(g.centerId)},{"edges",edges}});}object["polygons"]=polygons;
             QJsonArray dimensions;for(const auto& d:feature.sketch.dimensions)dimensions.append(writeDimension(feature.sketch,d));object["dimensions"]=dimensions;
             if(feature.sketch.attachment) {
@@ -680,10 +702,10 @@ void PartDocument::save(const QString& path) const
             object["direction"] = directionName(feature.direction);
             if (feature.kind == FeatureKind::Cut) object["throughAll"] = feature.throughAll;
         }
-        if (feature.kind != FeatureKind::Sketch) resultId = feature.id;
+        if (isSolidFeature(feature.kind)) resultId = feature.id;
         features.append(object);
     }
-    const QJsonObject root{{"format", "TheCAD.Part"}, {"version", 12}, {"units", "mm"}, {"features", features}, {"resultFeature", q(resultId)}};
+    const QJsonObject root{{"format", "TheCAD.Part"}, {"version", 13}, {"units", "mm"}, {"features", features}, {"resultFeature", q(resultId)}};
     const auto bytes = QJsonDocument(root).toJson(QJsonDocument::Indented);
     if (bytes.size() > maximumDocumentBytes) fail("Part document exceeds the 1 MiB prototype size limit.");
     QSaveFile file(path);

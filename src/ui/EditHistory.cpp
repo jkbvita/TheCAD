@@ -14,6 +14,7 @@ QByteArray sketchKey(const modeling::Sketch& sketch) {
     const auto point=[&](modeling::Point2 p){out<<p.x<<p.y;};
     const auto ref=[&](const modeling::SketchPointRef& r){out<<QString::fromStdString(r.entityId)<<int(r.role);};
     out<<int(sketch.plane)<<int(sketch.space)<<bool(sketch.attachment);
+    out<<QString::fromStdString(sketch.referencePlaneId);
     if(sketch.attachment){const auto& a=*sketch.attachment;out<<QString::fromStdString(a.sourceFeature)<<a.faceIndex<<QString::fromStdString(a.sourceSignature);
         const auto& f=a.frame;out<<f.Location().X()<<f.Location().Y()<<f.Location().Z()<<f.XDirection().X()<<f.XDirection().Y()<<f.XDirection().Z()<<f.Direction().X()<<f.Direction().Y()<<f.Direction().Z();}
     out<<quint64(sketch.entities.size());for(const auto& e:sketch.entities){out<<QString::fromStdString(e.id)<<int(e.kind)<<e.construction;point(e.first);point(e.second);out<<e.radius;}
@@ -34,7 +35,7 @@ void MainWindow::rememberSketchChange(EditState previous) {
 }
 void MainWindow::updateHistoryActions() {
     if(!m_undo || !m_redo)return;
-    const bool ready=!m_operation && !m_selectingPlane && !(m_smartDimension && m_smartDimension->editor);
+    const bool ready=!m_operation && !m_referenceDraft && !m_selectingPlane && !(m_smartDimension && m_smartDimension->editor);
     m_undo->setEnabled(ready && m_editHistory.canUndo());m_redo->setEnabled(ready && m_editHistory.canRedo());
 }
 void MainWindow::traverseHistory(bool redo) {

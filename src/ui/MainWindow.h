@@ -149,6 +149,17 @@ private:
     void focusOperationDepth();
     bool operationKeyEvent(QObject* watched,QEvent* event);
     struct OperationDraft;
+    void startReferenceGeometry(modeling::DatumKind kind,const document::Feature* editing=nullptr);
+    void updateReferenceGeometryForm();
+    void updateReferenceGeometryPreview();
+    void activateReferenceGeometryPick(int field);
+    void referenceGeometryPicked(int option);
+    void finishReferenceGeometry(bool accepted);
+    void refreshReferenceGeometry();
+    void createSketchOnReferencePlane(const std::string& id);
+    bool referenceGeometryEvent(QObject*,QEvent*);
+    struct ReferenceDraft;
+    std::unique_ptr<ReferenceDraft> m_referenceDraft;
 
     enum class WorkspaceMode { Part, SelectingPlane, EditingSketch, FeatureDraft };
     WorkspaceMode m_mode = WorkspaceMode::Part;
@@ -165,6 +176,7 @@ private:
     QAction* m_finishSketch = nullptr;
     QAction* m_extrude = nullptr;
     QAction* m_cut = nullptr;
+    QAction *m_referencePoint=nullptr,*m_referenceAxis=nullptr,*m_referencePlane=nullptr;
     QAction* m_editFeature = nullptr;
     QAction* m_editEntity = nullptr;
     QAction* m_deleteEntity = nullptr;

@@ -4,6 +4,7 @@
 #include "ui/MainWindow.h"
 #include "ui/CadViewport.h"
 #include "ui/PropertyManagerPage.h"
+#include "ui/ReferenceGeometryUi.h"
 #include "modeling/Sketch.h"
 #include "modeling/ConstraintSolver.h"
 #include "modeling/ReferencePlanes.h"
@@ -94,6 +95,8 @@ QIcon commandIcon(const QString& name)
         painter.setPen(QPen(QColor("#b83b42"), 1.6));
         painter.drawLine(5, 25, 27, 25); painter.drawLine(8, 28, 8, 4);
         painter.setBrush(QColor("#b83b42")); painter.drawEllipse(QPointF(8, 25), 2.5, 2.5);
+    } else if(name.contains("Axis")){
+        painter.setPen(QPen(QColor("#276a91"),1.6,Qt::DashDotLine));painter.drawLine(5,27,26,5);painter.setPen(QPen(QColor("#276a91"),1.6));painter.drawLine(26,5,25,13);painter.drawLine(26,5,18,6);
     } else if (name.contains("Plane")) {
         painter.drawPolygon(QPolygonF{QPointF(4, 11), QPointF(23, 5), QPointF(28, 23), QPointF(9, 28)});
     } else if (name.contains("Extrude") || name.contains("Part")) {
@@ -327,6 +330,11 @@ MainWindow::MainWindow(QWidget* parent)
     m_cut = action("Extruded Cut", "actionExtrudedCut", [this] { extrude(true); });
     commandButton(m_extrude, featureGrid, 0, 0, true);
     commandButton(m_cut, featureGrid, 0, 1, true);
+    QGridLayout* referenceGrid=nullptr;commandGroup(featureButtons,"Reference Geometry",referenceGrid);
+    m_referencePlane=action("Reference Plane","actionReferencePlane",[this]{startReferenceGeometry(modeling::DatumKind::Plane);});
+    m_referenceAxis=action("Reference Axis","actionReferenceAxis",[this]{startReferenceGeometry(modeling::DatumKind::Axis);});
+    m_referencePoint=action("Reference Point","actionReferencePoint",[this]{startReferenceGeometry(modeling::DatumKind::Point);});
+    commandButton(m_referencePlane,referenceGrid,0,0);commandButton(m_referenceAxis,referenceGrid,1,0);commandButton(m_referencePoint,referenceGrid,2,0);
     featureButtons->addStretch();
 
     QGridLayout *sketchGrid = nullptr, *drawGrid = nullptr, *modifyGrid = nullptr, *relationGrid = nullptr;
@@ -393,6 +401,7 @@ MainWindow::MainWindow(QWidget* parent)
     insertMenu->addAction(m_createSketch);
     insertMenu->addAction(m_extrude);
     insertMenu->addAction(m_cut);
+    auto* referenceMenu=insertMenu->addMenu("Reference Geometry");referenceMenu->addActions({m_referencePlane,m_referenceAxis,m_referencePoint});
     toolsMenu->addAction(m_selectEntity);
     auto* tolerance=toolsMenu->addAction("Sketch Picking Tolerance...");
     tolerance->setObjectName("actionSketchPickingTolerance");
@@ -565,7 +574,7 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_viewport, &CadViewport::sketchRegionClicked, this, [this](modeling::Point2 point) { operationRegionClicked(point); });
     connect(m_viewport, &CadViewport::referencePlaneSelected, this, [this](modeling::SketchPlane plane) { referencePlaneSelected(plane); });
     connect(m_viewport,&CadViewport::solidFaceSelected,this,[this](int index){
-        if(m_editSketch || m_operation)return;
+        if(m_editSketch || m_operation || m_referenceDraft)return;
         m_selectedFace=0;m_selectedPlane.reset();m_selectedId.clear();
         {const QSignalBlocker blocker(m_tree);m_tree->clearSelection();}
         m_viewport->setSelectedReferencePlane({});updateActions();
@@ -577,10 +586,17 @@ MainWindow::MainWindow(QWidget* parent)
         else statusBar()->showMessage("Planar face selected. Click Sketch to create an attached sketch.");
     });
     connect(m_viewport, &CadViewport::planeSelectionCanceled, this, [this] { planeSelectionCanceled(); });
+    connect(m_viewport,&CadViewport::referenceGeometryPicked,this,&MainWindow::referenceGeometryPicked);
+    connect(m_viewport,&CadViewport::datumSelected,this,[this](const QString& id){
+        if(m_referenceDraft||m_editSketch||m_operation)return;
+        if(id.isEmpty()){m_selectedId.clear();{const QSignalBlocker blocker(m_tree);m_tree->clearSelection();m_tree->setCurrentItem(nullptr);}updateActions();return;}
+        if(m_selectingPlane){createSketchOnReferencePlane(id.toStdString());return;}
+        selectFeature(id.toStdString());
+    });
 
     auto* cancelFeature = new QAction("Cancel feature", this);
     cancelFeature->setObjectName("actionCancelFeature");cancelFeature->setShortcut(QKeySequence(Qt::Key_Escape));
-    addAction(cancelFeature);connect(cancelFeature,&QAction::triggered,this,[this]{finishOperation(false);});
+    addAction(cancelFeature);connect(cancelFeature,&QAction::triggered,this,[this]{if(m_referenceDraft)finishReferenceGeometry(false);else finishOperation(false);});
     statusBar()->showMessage("Orbit: left drag | Pan: middle / right drag | Zoom: wheel | Fit: F");
     m_dimensions = new QLabel(this);
     statusBar()->addPermanentWidget(m_dimensions);
@@ -596,6 +612,7 @@ MainWindow::~MainWindow()
 {
     qApp->removeEventFilter(this);
     closeSmartDimension();
+    if(m_referenceDraft){auto* page=m_referenceDraft->page;m_referenceDraft.reset();delete page;}
     if (m_operation) {
         auto* panel = m_operation->panel;
         m_operation.reset();
@@ -831,6 +848,7 @@ void MainWindow::selectionChanged()
 {
     m_selectedFace=0;
     m_viewport->setSelectedSolidFace(0);
+    m_viewport->setSelectedDatum({});
     const auto* item = m_tree->currentItem();
     const QString selection = item ? item->data(0, Qt::UserRole).toString() : QString{};
     if (!m_editSketch && !m_operation && selection.startsWith("origin:")) {
@@ -854,6 +872,7 @@ void MainWindow::selectionChanged()
             m_viewport->endSketch();
             m_viewport->showReferencePlanes(false);
             if (feature && feature->kind == document::FeatureKind::Sketch) m_viewport->setSketch(feature->sketch);
+            if(feature&&feature->kind==document::FeatureKind::ReferenceGeometry)m_viewport->setSelectedDatum(feature->id);
         }
     }
     updateEntityList();
@@ -861,6 +880,7 @@ void MainWindow::selectionChanged()
 }
 void MainWindow::updateDocumentUi()
 {
+    refreshReferenceGeometry();
     const QString name = m_path.isEmpty() ? "Untitled.thepart" : QFileInfo(m_path).fileName();
     setWindowTitle(name + "[*] - TheCAD");
     setWindowFilePath(m_path);
@@ -906,7 +926,7 @@ void MainWindow::updateDocumentUi()
             auto* item = new QTreeWidgetItem(parent, {QString::fromStdString(feature.name)});
             item->setData(0, Qt::UserRole, QString::fromStdString(feature.id));
             item->setToolTip(0, QString::fromStdString(feature.name));
-            item->setIcon(0, commandIcon(feature.kind == document::FeatureKind::Sketch ? "Sketch"
+            item->setIcon(0, commandIcon(feature.kind==document::FeatureKind::ReferenceGeometry?(feature.datum.kind==modeling::DatumKind::Point?"Reference Point":feature.datum.kind==modeling::DatumKind::Axis?"Reference Axis":"Reference Plane"):feature.kind == document::FeatureKind::Sketch ? "Sketch"
                 : feature.kind == document::FeatureKind::Cut ? "Extruded Cut" : "Extrude"));
             if (feature.id == m_selectedId && (!selectedItem ||
                 (currentId == QString::fromStdString(feature.id) && parentId == parent->data(0, Qt::UserRole).toString())))
@@ -964,11 +984,12 @@ void MainWindow::updateSketchToolActions()
 void MainWindow::updateActions()
 {
     updateSketchToolActions();updateHistoryActions();
-    const bool operation = bool(m_operation);
+    const bool operation = bool(m_operation)||bool(m_referenceDraft);
     const bool editing = m_mode == WorkspaceMode::EditingSketch && !m_constraints;
     findChild<QAction*>("actionSmartDimension")->setEnabled(editing && !operation);
     findChild<QAction*>("actionDisplayDeleteRelations")->setEnabled(editing && !operation);
     const bool selecting = m_selectingPlane;
+    for(auto* reference:{m_referencePoint,m_referenceAxis,m_referencePlane})reference->setEnabled(!operation&&!m_editSketch&&!selecting);
     m_tabs->setEnabled(!operation);
     findChild<QAction*>("actionCancelFeature")->setEnabled(operation);
     m_tree->setEnabled(!operation && !editing && !selecting);
@@ -1006,7 +1027,8 @@ void MainWindow::updateActions()
 }
 void MainWindow::createSketch()
 {
-    if (m_editSketch || m_operation || m_selectingPlane) return;
+    if (m_editSketch || m_operation || m_referenceDraft || m_selectingPlane) return;
+    if(const auto* feature=selectedFeature();feature&&feature->kind==document::FeatureKind::ReferenceGeometry&&feature->datum.kind==modeling::DatumKind::Plane){createSketchOnReferencePlane(feature->id);return;}
     if(m_selectedFace) {createSketchOnFace(m_selectedFace);return;}
     if (m_selectedPlane) {
         createSketchOnPlane(*m_selectedPlane);
@@ -1203,6 +1225,7 @@ void MainWindow::editSelectedFeature()
     const auto* selected = selectedFeature();
     if (!selected || m_editSketch) return;
     if (selected->kind == document::FeatureKind::Sketch) { startSketchEditing(*selected); return; }
+    if(selected->kind==document::FeatureKind::ReferenceGeometry){startReferenceGeometry(selected->datum.kind,selected);return;}
     auto feature = *selected;
     if (feature.kind == document::FeatureKind::Extrude || feature.kind == document::FeatureKind::Cut) {
         startOperation(feature, true);
@@ -1500,7 +1523,7 @@ bool MainWindow::operationKeyEvent(QObject* watched,QEvent* event){
 }
 void MainWindow::closeEvent(QCloseEvent* event)
 {
-    if (m_operation) {
+    if (m_operation || m_referenceDraft) {
         reportError("Confirm or cancel the feature preview before closing this part.");
         event->ignore();
         return;

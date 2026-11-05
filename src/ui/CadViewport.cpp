@@ -178,8 +178,9 @@ void CadViewport::initialize()
         }
         updateSketchPresentation();
         updateReferencePlanes();
+        setDatums(m_datums);
         if (m_sketchEditing) { orientSketch(); updateSketchAxes(); }
-        else if (m_planesVisible) { resetView(); }
+        else if (m_planesVisible || !m_datums.empty()) { resetView(); }
     } catch (const Standard_Failure& failure) {
         m_error = QString::fromUtf8(failure.GetMessageString());
         if (m_error.isEmpty()) {
@@ -206,6 +207,7 @@ void CadViewport::releaseViewer()
     m_sketchOrigin.Nullify();
     for(auto& axis:m_globalAxes) axis.Nullify();
     m_pointPresentations.clear();
+    m_datumPresentations.clear();m_referenceCandidatePresentations.clear();m_referenceHover.Nullify();
     m_constraintLabels.clear();m_dimensionGuides.clear();m_relationMarkers.clear();m_relationHits.clear();
     m_interactionLabel.Nullify();
     m_inferenceGuides.clear();
@@ -539,6 +541,7 @@ void CadViewport::beginSketch(const modeling::Sketch& sketch)
     clearPreview();
     m_regionSelecting = false;
     m_sketchEditing = true;
+    if(isReady())for(auto& datum:m_datumPresentations)m_context->Erase(datum,Standard_False);
     m_shiftSelectionChanged=false;
     m_sketchTool.reset();m_constructionTool=false;m_drawingPreview.reset();
     m_firstPoint.reset();
@@ -559,6 +562,7 @@ void CadViewport::endSketch()
     cancelSketchMultiSelection();
     cancelDimensionDrag();cancelPointDrag(); resetSketchInference();
     m_sketchEditing = false;
+    setDatums(m_datums);
     updateSketchAxes();
     m_sketchTool.reset();
     m_firstPoint.reset();
@@ -1100,7 +1104,7 @@ void CadViewport::updatePointPresentation()
             marker->Attributes()->SetPointAspect(filledPoint(Quantity_NOC_ORANGE,9*devicePixelRatioF()));marker->SetZLayer(Graphic3d_ZLayerId_Topmost);marker->SetInfiniteState(Standard_True);
             m_context->Display(marker,0,-1,Standard_False);m_context->SetDisplayPriority(marker,Graphic3d_DisplayPriority_Topmost);m_pointPresentations.push_back(marker);
         }
-        modeling::Sketch only;only.plane=m_sketch->plane;only.attachment=m_sketch->attachment;
+        modeling::Sketch only;only.plane=m_sketch->plane;only.attachment=m_sketch->attachment;only.referencePlaneId=m_sketch->referencePlaneId;only.referencePlaneFrame=m_sketch->referencePlaneFrame;
         for(const auto& entity:m_sketch->entities)if(entity.id==m_selectedEntity || std::find(m_selectedEntities.begin(),m_selectedEntities.end(),entity.id)!=m_selectedEntities.end() || std::find(m_dimensionEntities.begin(),m_dimensionEntities.end(),entity.id)!=m_dimensionEntities.end())only.entities.push_back(entity);
         if(!only.entities.empty()) {
             m_selectedEntityPresentation=new AIS_Shape(modeling::sketchShape(only));
@@ -1451,6 +1455,7 @@ void CadViewport::mouseMoveEvent(QMouseEvent* event)
     }
     if(m_pointDrag) { updatePointDrag(event->position()); event->accept(); return; }
     if(!m_sketchEditing && !m_regionSelecting && m_navigation==Navigation::None) {
+        updateReferenceHover(event->position());
         const int face=faceAt(event->position());
         const auto hit = face ? std::optional<modeling::ReferencePlaneHit>{} : planeAt(event->position());
         const std::optional<modeling::SketchPlane> hovered = hit ? std::optional<modeling::SketchPlane>(hit->plane) : std::nullopt;
@@ -1516,7 +1521,12 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* event)
         if(regionClick && m_regionSelecting) {
             const auto point=sketchPosition(event->position());if(point) emit sketchRegionClicked(*point);
         } else if (click) {
+            if(m_referenceCandidateKind){const int index=referenceCandidateAt(event->position());if(index>=0)emit referenceGeometryPicked(index);event->accept();return;}
+            const auto datum=datumAt(event->position(),m_selectingPlane?std::optional<modeling::DatumKind>(modeling::DatumKind::Plane):std::nullopt);
             const int face=faceAt(event->position());
+            const auto datumItem=std::find_if(m_datums.begin(),m_datums.end(),[&](const auto& d){return d.id==datum;});
+            if(!datum.empty()&&(!face||m_selectingPlane||datumItem->geometry.kind!=modeling::DatumKind::Plane)){setSelectedSolidFace(0);setSelectedDatum(datum);emit datumSelected(QString::fromStdString(datum));event->accept();return;}
+            setSelectedDatum({});
             if(face) {setSelectedSolidFace(face);emit solidFaceSelected(face);update();event->accept();return;}
             setSelectedSolidFace(0);
             emit solidFaceSelected(0);
@@ -1532,6 +1542,10 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* event)
 
 bool CadViewport::event(QEvent* event)
 {
+    if(event->type()==QEvent::Leave&&isReady()){
+        m_hoveredDatum.clear();updateDatumStyles();
+        if(!m_referenceHover.IsNull()){m_context->Remove(m_referenceHover,Standard_False);m_referenceHover.Nullify();update();}
+    }
     if(event->type()==QEvent::FocusOut)m_deleteSequence.invalidate();
     if(event->type()==QEvent::Leave){m_hoveredRelation.clear();m_deleteSequence.invalidate();m_hoveredEntity.clear();m_hoveredDimension.clear();updatePointPresentation();updateConstraintPresentation();}
     if(event->type()==QEvent::Leave && !m_pointDrag) resetSketchInference();
@@ -1571,6 +1585,7 @@ void CadViewport::wheelEvent(QWheelEvent* event)
 
 void CadViewport::keyPressEvent(QKeyEvent* event)
 {
+    if(event->key()==Qt::Key_Escape&&!m_sketchEditing&&!m_selectingPlane&&!m_selectedDatum.empty()){setSelectedDatum({});emit datumSelected({});event->accept();return;}
     if(event->key()==Qt::Key_Escape && !m_sketchEditing && !m_selectingPlane && m_selectedSolidFace){setSelectedSolidFace(0);emit solidFaceSelected(0);event->accept();return;}
     if(event->key()==Qt::Key_Delete && !m_selectedRelation.empty()){emit sketchRelationDeleteRequested(QString::fromStdString(m_selectedRelation));event->accept();return;}
     const bool selected=!m_selectedEntities.empty() || !m_selectedDimensions.empty();

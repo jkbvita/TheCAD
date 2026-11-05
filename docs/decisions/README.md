@@ -43,6 +43,7 @@ approved scope do not need repeated approval.
 - [0019: Independent sketch definition colors and planar face selection](0019-definition-colors-face-selection.md).
 - [0020: Feature PropertyManager, immediate depth entry and material previews](0020-feature-property-manager.md).
 - [0021: Reliable Shift-release sketch relations overlay](0021-sketch-relations-popup.md).
+- [0022: Parametric 3D reference geometry and reference-plane sketch supports](0022-reference-geometry.md).
 
 ## Pending owner decisions
 

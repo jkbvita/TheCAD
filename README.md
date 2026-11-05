@@ -63,8 +63,8 @@ With dependencies installed, run from the repository root:
 
 ## Launch from Windows Explorer
 
-For the current sketch-relation popup build, use the updated desktop **TheCAD**
-shortcut or `build/package/TheCAD-Relations-Popup/TheCAD.exe` in the isolated
+For the current 3D reference-geometry build, use the updated desktop **TheCAD**
+shortcut or `build/package/TheCAD-Reference-Geometry/TheCAD.exe` in the isolated
 worktree. The older package is retained to protect an open sketch; see the
 [repair checks](docs/verification/sketch-relations-system.md).
 
@@ -168,7 +168,7 @@ Dimensions follow current geometry throughout endpoint dragging and numeric edit
 In Select mode or idle Smart Dimension, drag text or dimension lines to reposition
 the annotation without changing its value. Circle dimensions use diametric/radial
 lines and circumference arrows; dragging rotates their placement. Placements survive
-save/reopen in `.thepart` schema 12; earlier supported files remain readable.
+save/reopen in `.thepart` schema 13; earlier supported files remain readable.
 Smart Dimension and drawing buttons stay visibly pressed while active; Esc exits.
 Geometry highlights on hover. Picking defaults to 8 logical pixels, adjustable for
 the session under **Tools > Sketch Picking Tolerance**.
@@ -188,6 +188,28 @@ per entity: constrained line direction and circle size render black independentl
 of positional freedom. Fixed points render black; movable points remain blue.
 Selected planar body faces fill light blue; click empty space to clear selection.
 See [definition and selection checks](docs/verification/definition-colors-face-selection.md).
+
+## Reference geometry in 3D
+
+Use **Features → Reference Geometry** or **Insert → Reference Geometry** to create
+a Point, Axis or Plane. Each command uses the left PropertyManager, with live
+reference preview, Confirm/Cancel and editable feature history. Both explicit XYZ
+position/direction and construction from existing references are supported.
+
+- Points: XYZ, an existing point/vertex, axis–plane or two-axis intersection, and
+  normal projection onto a plane.
+- Axes: XYZ/direction, a line/edge/axis or cylindrical/conical face, two points,
+  two planes, and a point with a plane normal.
+- Planes: XYZ/normal, signed offset, three points, rotation about an axis, and a
+  parallel plane through a point. A selected plane/planar face preselects Offset.
+
+Pick references in the viewport or choose them from filtered lists. New datums
+are selectable and named in the feature tree. Select a reference plane and click
+Sketch to draw/extrude/cut in its local frame. Editing defining geometry regenerates
+dependents. Undo/Redo and `.thepart` save/reopen preserve definitions and stable IDs.
+Solid topology references keep the existing conservative signature validation.
+These are datum features; spatial sketch constraint solving remains future scope.
+See [supported workflows and manual checks](docs/verification/reference-geometry.md).
 
 ## Source layout
 

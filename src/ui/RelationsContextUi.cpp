@@ -40,6 +40,7 @@ void MainWindow::showRelationsContext(QPoint position){
     m_relationsToolbar->move(location);m_relationsToolbar->show();m_relationsToolbar->raise();
 }
 bool MainWindow::eventFilter(QObject* watched,QEvent* event){
+    if(referenceGeometryEvent(watched,event))return true;
     if(operationKeyEvent(watched,event))return true;
     const auto* widget=qobject_cast<QWidget*>(watched);
     const bool ourWindow=widget && (widget==this || widget->window()==this);

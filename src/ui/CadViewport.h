@@ -4,6 +4,7 @@
 #include "modeling/ConstraintSolver.h"
 #include "modeling/FeaturePreview.h"
 #include "modeling/ReferencePlanes.h"
+#include "modeling/ReferenceGeometry.h"
 #include <array>
 #include <AIS_TextLabel.hxx>
 #include <AIS_Point.hxx>
@@ -23,6 +24,8 @@
 #include <V3d_Viewer.hxx>
 
 namespace thecad::ui {
+struct DatumVisual {std::string id,name;modeling::DatumGeometry geometry;};
+struct ReferencePickItem {modeling::GeometryReference reference;modeling::DatumGeometry geometry;TopoDS_Shape shape;};
 
 class CadViewportTest;
 
@@ -77,8 +80,15 @@ public:
     bool smartDimensionActive() const { return m_smartDimensionPicking; }
     void fitAll();
     void resetView();
+    void setDatums(const std::vector<DatumVisual>& datums);
+    void setSelectedDatum(const std::string& id);
+    std::string datumAt(const QPointF& position,std::optional<modeling::DatumKind> kind={});
+    void setReferenceCandidates(const std::vector<ReferencePickItem>& candidates,std::optional<modeling::DatumKind> kind);
+    int referenceCandidateAt(const QPointF& position);
 
 signals:
+    void datumSelected(const QString& id);
+    void referenceGeometryPicked(int option);
     void relationsContextRequested(QPoint position);
     void sketchRelationSelected(const QString& id);
     void sketchRelationDeleteRequested(const QString& id);
@@ -194,6 +204,14 @@ private:
     std::vector<Handle(AIS_Shape)> m_sketchBatches;
     int m_selectedSolidFace=0;
     std::optional<modeling::Sketch> m_sketch;
+    std::vector<DatumVisual> m_datums;
+    std::vector<Handle(AIS_InteractiveObject)> m_datumPresentations,m_referenceCandidatePresentations;
+    std::vector<ReferencePickItem> m_referenceCandidates;
+    std::optional<modeling::DatumKind> m_referenceCandidateKind;
+    std::string m_selectedDatum,m_hoveredDatum;
+    Handle(AIS_Shape) m_referenceHover;
+    void updateDatumStyles();
+    void updateReferenceHover(const QPointF& position);
     std::optional<modeling::EntityKind> m_sketchTool;
     bool m_constructionTool=false;
     std::optional<modeling::SketchEntity> m_drawingPreview;

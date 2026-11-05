@@ -6,12 +6,12 @@ inputs: conversion saves to a separate .thepart path, retaining the original fil
 No assembly/drawing reader or placeholder is implemented. Internal serialization
 is provisional and versioned; filename conventions are permanent.
 
-## Version 12 part structure
+## Version 13 part structure
 
-The UTF-8 JSON root contains exactly format: "TheCAD.Part", version: 12, units:
+The UTF-8 JSON root contains exactly format: "TheCAD.Part", version: 13, units:
 "mm", features (ordered array) and resultFeature (last solid feature ID, or empty
-for empty/sketch-only documents). Writers always emit version 12. Readers accept
-versions 1–12 and reject unknown versions, fields, units and unsupported features.
+for empty/sketch/reference-only documents). Writers always emit version 13. Readers accept
+versions 1–13 and reject unknown versions, fields, units and unsupported features.
 
 Every feature has stable id, printable name, type and explicit dependencies.
 Types and additional fields:
@@ -19,7 +19,8 @@ Types and additional fields:
 | Type | Fields |
 | --- | --- |
 | box | parameters: width/depth/height; legacy editable box |
-| sketch | plane: XY/XZ/YZ, space: planar2d, entities, relations, dimensions, polygons; optional attachment |
+| sketch | plane: XY/XZ/YZ, space: planar2d, entities, relations, dimensions, polygons; optional attachment OR referencePlane |
+| reference | definition: method, references, position, direction, value |
 | extrude | sketch ID, contour OR contours, length, direction: positive/negative |
 | cut | Extrude fields plus Boolean throughAll; specified length retained |
 
@@ -27,6 +28,34 @@ An initial sketch can be empty. A solid operation references an earlier sketch a
 the previous solid result, in that order. Face-attached sketches depend on their
 supporting feature. resultFeature identifies the final solid-producing feature.
 The reader validates backward references and exact dependency order.
+
+## Reference geometry (version 13)
+
+A reference feature stores its construction definition, not evaluated geometry or
+solver handles. `method` is one of the stable string keys `point-xyz`,
+`point-on-reference`, `point-axis-plane`, `point-two-axes`, `point-projection`,
+`axis-xyz`, `axis-on-reference`, `axis-two-points`, `axis-two-planes`,
+`axis-normal-to-plane`, `plane-xyz`, `plane-offset`, `plane-three-points`,
+`plane-at-angle`, or `plane-through-point`. Position/direction are three finite
+numbers; value is a signed offset in mm or angle in degrees. Direction is normalized
+for evaluation. Zero direction, missing/wrong-type references, degeneracies and
+forward/cyclic dependencies reject transactionally.
+
+Each reference contains exactly source, feature, entity, role, index and signature.
+Source numbers are fixed: 0 origin, 1 base plane, 2 base axis, 3 earlier datum,
+4 sketch point, 5 sketch line, 6 solid vertex, 7 solid straight edge, 8 solid face.
+Unused strings are empty; unused index is zero and unused role is First (1).
+Base indices are 0/1/2 for Front/Top/Right or X/Y/Z. Sketch references use stable
+feature/entity IDs and point roles (including a derived midpoint); body references
+use one-based topology indices and a SHA-256 signature of the source BRep. A changed
+body requires explicit support reselection. Dependencies are unique source feature
+IDs in first-use order. Datums never replace resultFeature or form solid boundaries.
+
+A sketch can store `referencePlane`, the stable ID of an earlier plane datum.
+Its frame is regenerated from that feature, never serialized as another independent
+pose. This is mutually exclusive with face attachment. Sketch coordinates and
+PlaneGCS constraints stay planar in the resolved local frame. Derived contour and
+annotation geometry retain that frame during extrusion, cutting and editing.
 
 ## Sketch geometry and stable references
 
@@ -164,12 +193,13 @@ permanent topology naming. See decision 0008.
 Version 1 is exactly one legacy box with no feature name. Version 2 adds named
 parametric history/entities but no relations. Version 3 adds Coincident/H/V;
 version 4 adds face attachments. These are read without inventing constraints or
-features. Saving intentionally writes version 12 .thepart to the selected path.
+features. Saving intentionally writes version 13 .thepart to the selected path.
 Version 5 adds dimensions and multiple region selections. Version 7 adds relative
 annotation placement; version 8 adds points, construction flags, on-geometry
 relations and regular polygon groups. Version 9 adds contextual relation types and
 full-entity Fix snapshots. Version 10 adds equality-group IDs; version 11 adds
 persistent Midpoint relations. Version 12 adds intersection-boundary references.
+Version 13 adds parametric reference geometry and reference-plane sketch supports.
 Older applications
 reject newer unsupported versions safely; readers retain all supported older records.
 

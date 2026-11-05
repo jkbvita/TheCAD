@@ -61,6 +61,8 @@ struct Sketch {
     std::vector<SketchEntity> entities;
     std::vector<SketchRelation> relations;
     std::optional<FaceAttachment> attachment;
+    std::string referencePlaneId;
+    gp_Ax3 referencePlaneFrame; // Regenerated from referencePlaneId; never serialized.
     std::vector<SketchDimension> dimensions;
     SketchSpace space = SketchSpace::Planar2D;
     struct RegularPolygon { std::string id,centerId; std::vector<std::string> edges; };

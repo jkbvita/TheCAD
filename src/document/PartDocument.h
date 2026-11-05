@@ -1,15 +1,18 @@
 #pragma once
 
 #include "modeling/Sketch.h"
+#include "modeling/ReferenceGeometry.h"
 #include <QString>
 #include <TopoDS_Shape.hxx>
 #include <string>
 #include <vector>
+#include <map>
 
 namespace thecad::document {
 
 struct BoxParameters { double width = 100.0, depth = 70.0, height = 40.0; };
-enum class FeatureKind { Box, Sketch, Extrude, Cut };
+enum class FeatureKind { Box, Sketch, Extrude, Cut, ReferenceGeometry };
+inline bool isSolidFeature(FeatureKind kind){return kind==FeatureKind::Box||kind==FeatureKind::Extrude||kind==FeatureKind::Cut;}
 struct Feature {
     std::string id;
     std::string name;
@@ -23,7 +26,10 @@ struct Feature {
     modeling::Direction direction = modeling::Direction::Positive;
     bool throughAll = false;
     std::vector<std::string> dependencies;
+    modeling::DatumDefinition reference;
+    modeling::DatumGeometry datum; // Derived by regeneration, not persisted.
 };
+struct ReferenceOption {std::string label;modeling::GeometryReference reference;modeling::DatumGeometry geometry;TopoDS_Shape selectionShape;};
 
 // Sequential prototype feature history. No UI widgets or permanent topology naming.
 // Every edit regenerates a candidate history before changing this document.
@@ -38,6 +44,11 @@ public:
     const TopoDS_Shape& shape() const { return m_shape; }
     const std::vector<Feature>& features() const { return m_features; }
     modeling::Sketch sketchOnFace(int faceIndex) const;
+    modeling::Sketch sketchOnReferencePlane(const std::string& id) const;
+    std::string addReferenceGeometry(const modeling::DatumDefinition& definition);
+    modeling::DatumGeometry resolveReference(const modeling::GeometryReference& reference) const;
+    std::vector<ReferenceOption> referenceOptions() const;
+    PartDocument beforeFeature(const std::string& id) const;
     std::string addSketch(const modeling::Sketch& sketch);
     std::string addExtrude(const std::string& sketchId, const std::vector<std::string>& contour, double length, modeling::Direction direction);
     std::string addCut(const std::string& sketchId, const std::vector<std::string>& contour, double depth, bool throughAll, modeling::Direction direction);
@@ -51,6 +62,7 @@ private:
     BoxParameters m_parameters;
     TopoDS_Shape m_shape;
     std::vector<Feature> m_features;
+    std::map<std::string,TopoDS_Shape> m_bodies;
 };
 
 } // namespace thecad::document

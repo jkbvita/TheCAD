@@ -23,16 +23,20 @@ target_include_directories(thecad_occt SYSTEM INTERFACE "${OpenCASCADE_INCLUDE_D
 add_library(thecad_modeling STATIC src/modeling/Box.cpp src/modeling/Sketch.cpp src/modeling/PlanarRegions.cpp src/modeling/ReferencePlanes.cpp src/modeling/ConstraintSolver.cpp src/modeling/DimensionInference.cpp src/modeling/DimensionAnnotation.cpp src/modeling/SketchTools.cpp src/modeling/RelationCommands.cpp)
 set_target_properties(thecad_modeling PROPERTIES AUTOMOC OFF)
 target_sources(thecad_modeling PRIVATE src/modeling/FeaturePreview.cpp)
+target_sources(thecad_modeling PRIVATE src/modeling/ReferenceGeometry.cpp)
 target_include_directories(thecad_modeling PUBLIC src)
 target_link_libraries(thecad_modeling PRIVATE thecad_planegcs PUBLIC thecad_occt TKPrim TKTopAlgo TKBRep TKBO TKBool TKShHealing)
 
 add_library(thecad_document STATIC src/document/PartDocument.cpp)
+target_sources(thecad_document PRIVATE src/document/ReferenceGeometryData.cpp)
 set_target_properties(thecad_document PROPERTIES AUTOMOC OFF)
 target_include_directories(thecad_document PUBLIC src)
 target_link_libraries(thecad_document PUBLIC thecad_modeling Qt6::Core)
 
 add_library(thecad_ui STATIC
     src/ui/PropertyManagerPage.cpp
+    src/ui/ReferenceGeometryViewport.cpp
+    src/ui/ReferenceGeometryUi.cpp
     src/ui/CadViewport.cpp src/ui/CadViewport.h
     src/ui/MainWindow.cpp src/ui/MainWindow.h src/ui/SketchConstraintsUi.cpp src/ui/SmartDimensionUi.cpp src/ui/EditHistory.cpp src/ui/SketchToolsUi.cpp src/ui/RelationIcons.cpp src/ui/RelationsContextUi.cpp src/ui/RelationSymbols.cpp)
 target_include_directories(thecad_ui PUBLIC src)
@@ -51,6 +55,10 @@ endforeach()
 include(CTest)
 option(THECAD_GUI_TESTS "Run viewport tests (requires a desktop and OpenGL)" OFF)
 if(BUILD_TESTING)
+    add_executable(thecad_reference_geometry_tests tests/ReferenceGeometryTests.cpp)
+    set_target_properties(thecad_reference_geometry_tests PROPERTIES AUTOMOC OFF)
+    target_link_libraries(thecad_reference_geometry_tests PRIVATE thecad_document)
+    add_test(NAME document.reference-geometry COMMAND thecad_reference_geometry_tests)
     add_executable(thecad_feature_preview_tests tests/FeaturePreviewTests.cpp)
     set_target_properties(thecad_feature_preview_tests PROPERTIES AUTOMOC OFF)
     target_link_libraries(thecad_feature_preview_tests PRIVATE thecad_modeling)

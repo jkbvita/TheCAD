@@ -375,7 +375,7 @@ gp_Ax3 sketchAxes(SketchPlane plane)
     fail("Unsupported sketch plane.");
 }
 
-gp_Ax3 sketchAxes(const Sketch& sketch) { return sketch.attachment ? sketch.attachment->frame : sketchAxes(sketch.plane); }
+gp_Ax3 sketchAxes(const Sketch& sketch) { return !sketch.referencePlaneId.empty()?sketch.referencePlaneFrame:sketch.attachment ? sketch.attachment->frame : sketchAxes(sketch.plane); }
 gp_Pnt sketchPoint(const Sketch& sketch, Point2 point) {
     const auto axes=sketchAxes(sketch);
     return axes.Location().Translated(gp_Vec(axes.XDirection())*point.x+gp_Vec(axes.YDirection())*point.y);
@@ -523,7 +523,7 @@ std::vector<Contour> closedContours(const Sketch& sketch)
         for(std::size_t i=0;i<nodes.size();++i)if(discovered[i]<0)visit(int(i),-1);
         std::vector<Contour> result;
         const auto append=[&](const std::vector<std::size_t>& entities) {
-            Sketch candidate;candidate.plane=sketch.plane;candidate.attachment=sketch.attachment;Contour contour;
+            Sketch candidate;candidate.plane=sketch.plane;candidate.attachment=sketch.attachment;candidate.referencePlaneId=sketch.referencePlaneId;candidate.referencePlaneFrame=sketch.referencePlaneFrame;Contour contour;
             for(auto i:entities){candidate.entities.push_back(sketch.entities[i]);contour.entityIds.push_back(identifiers[i]);}
             contour.face=simpleProfileFace(candidate);result.push_back(std::move(contour));
         };
@@ -603,7 +603,7 @@ std::vector<Contour> closedContours(const Sketch& sketch)
             std::map<int,std::map<std::string,int>> boundaries;
             for(std::size_t n=0;n<children.size();++n)for(const auto& id:simple[children[n]].entityIds)++boundaries[root(int(n))][id];
             for(const auto& group:boundaries) {
-                Sketch boundary;boundary.plane=sketch.plane;boundary.attachment=sketch.attachment;
+                Sketch boundary;boundary.plane=sketch.plane;boundary.attachment=sketch.attachment;boundary.referencePlaneId=sketch.referencePlaneId;boundary.referencePlaneFrame=sketch.referencePlaneFrame;
                 for(std::size_t index=0;index<identifiers.size();++index){const auto found=group.second.find(identifiers[index]);if(found!=group.second.end() && found->second==1){boundary.entities.push_back(sketch.entities[index]);result[i].entityIds.push_back(identifiers[index]);}}
                 const auto hole=simpleProfileFace(boundary);builder.Add(TopoDS::Wire(BRepTools::OuterWire(hole).Reversed()));
             }
@@ -689,6 +689,7 @@ Sketch selectContour(const Sketch& sketch, const std::vector<std::string>& entit
         Sketch result;
         result.plane = sketch.plane;
         result.attachment = sketch.attachment;
+        result.referencePlaneId=sketch.referencePlaneId;result.referencePlaneFrame=sketch.referencePlaneFrame;
         for (std::size_t index = 0; index < sketch.entities.size(); ++index) {
             const auto& entity = sketch.entities[index];
             const auto id = entity.id.empty() ? "entity-" + std::to_string(index + 1) : entity.id;
