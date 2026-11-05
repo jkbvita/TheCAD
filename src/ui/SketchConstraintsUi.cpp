@@ -55,9 +55,12 @@ void MainWindow::startConstraints() {
         const auto key=m_constraints->constraints->currentItem()->data(Qt::UserRole).toString();if(!key.startsWith("r:"))return;
         const auto id=key.mid(2).toStdString();const auto found=std::find_if(m_editSketch->relations.begin(),m_editSketch->relations.end(),[&](const auto& r){return r.id==id;});if(found==m_editSketch->relations.end())return;
         auto relation=*found;if(relation.kind==modeling::RelationKind::FixedPoint || relation.kind==modeling::RelationKind::FixedEntity){constraintError("Delete Fix to release the geometry before choosing another relation.");return;}std::vector<std::string> selected{relation.first.entityId};if(!relation.second.entityId.empty() && relation.second.entityId!=relation.first.entityId)selected.push_back(relation.second.entityId);
+        const auto groups=modeling::relationGroups(*m_editSketch);const auto group=std::find_if(groups.begin(),groups.end(),[&](const auto& g){return std::find(g.relationIds.begin(),g.relationIds.end(),id)!=g.relationIds.end();});
+        const bool equalityBatch=group!=groups.end() && group->relationIds.size()>1;
+        if(equalityBatch)selected=group->entityIds;
         const bool multipleLines=selected.size()>1 && std::find_if(m_editSketch->entities.begin(),m_editSketch->entities.end(),[&](const auto& e){return e.id==selected[0];})->kind==modeling::EntityKind::Line;
         auto choices=modeling::availableRelations(*m_editSketch,selected);choices.erase(std::remove_if(choices.begin(),choices.end(),[&](auto kind){
-            return kind==modeling::RelationKind::FixedEntity || (multipleLines && (kind==modeling::RelationKind::Horizontal || kind==modeling::RelationKind::Vertical)) || kind==modeling::RelationKind::PointOnLine || kind==modeling::RelationKind::PointOnCircle;
+            return (equalityBatch && kind!=modeling::RelationKind::Equal && kind!=modeling::RelationKind::EqualCurveLength) || kind==modeling::RelationKind::FixedEntity || (multipleLines && (kind==modeling::RelationKind::Horizontal || kind==modeling::RelationKind::Vertical)) || kind==modeling::RelationKind::PointOnLine || kind==modeling::RelationKind::PointOnCircle;
         }),choices.end());
         if(choices.empty()){constraintError("Delete this relation to release its geometry, or use an applicable relation on the current selection.");return;}
         QStringList names;for(auto kind:choices)names<<modeling::relationName(kind);bool accepted=false;
@@ -94,7 +97,7 @@ void MainWindow::updateConstraintDraft() {
     const auto ids=m_viewport->selectedSketchEntities();
     const auto associated=[&](const auto& r){return ids.empty() || std::find(ids.begin(),ids.end(),r.first.entityId)!=ids.end() || std::find(ids.begin(),ids.end(),r.second.entityId)!=ids.end();};
     for(const auto& dim:m_editSketch->dimensions)if(associated(dim))add(QString("%1: %2 = %3%4").arg(QString::fromStdString(dim.id),dimensionTitle(dim.kind)).arg(dim.value).arg(dim.driving?"":" (reference)"),"d:"+QString::fromStdString(dim.id));
-    for(const auto& rel:m_editSketch->relations)if(associated(rel))add(QString::fromStdString(rel.id)+": "+QString::fromUtf8(modeling::relationName(rel.kind)),"r:"+QString::fromStdString(rel.id));
+    for(const auto& group:modeling::relationGroups(*m_editSketch))if(ids.empty() || std::any_of(group.entityIds.begin(),group.entityIds.end(),[&](const auto& id){return std::find(ids.begin(),ids.end(),id)!=ids.end();}))add(QString::fromStdString(group.id)+": "+QString::fromUtf8(modeling::relationName(group.kind)),"r:"+QString::fromStdString(group.id));
     d.constraints->setCurrentRow(current);
     const auto selectedKey=m_viewport->selectedSketchRelation().empty()?currentKey:QString("r:")+QString::fromStdString(m_viewport->selectedSketchRelation());
     for(int i=0;i<d.constraints->count();++i)if(d.constraints->item(i)->data(Qt::UserRole).toString()==selectedKey)d.constraints->setCurrentRow(i);

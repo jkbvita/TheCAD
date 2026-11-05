@@ -6,12 +6,12 @@ inputs: conversion saves to a separate .thepart path, retaining the original fil
 No assembly/drawing reader or placeholder is implemented. Internal serialization
 is provisional and versioned; filename conventions are permanent.
 
-## Version 9 part structure
+## Version 10 part structure
 
-The UTF-8 JSON root contains exactly format: "TheCAD.Part", version: 9, units:
+The UTF-8 JSON root contains exactly format: "TheCAD.Part", version: 10, units:
 "mm", features (ordered array) and resultFeature (last solid feature ID, or empty
-for empty/sketch-only documents). Writers always emit version 9. Readers accept
-versions 1–9 and reject unknown versions, fields, units and unsupported features.
+for empty/sketch-only documents). Writers always emit version 10. Readers accept
+versions 1–10 and reject unknown versions, fields, units and unsupported features.
 
 Every feature has stable id, printable name, type and explicit dependencies.
 Types and additional fields:
@@ -70,6 +70,13 @@ lines (length) or circles (radius). Concentric references circle centers or a
 standalone point and circle center. Equal Curve Length uses geometric length:
 line length or full circle circumference. Line/line commands use First references;
 circles use Center and standalone points use First.
+
+Schema 10 adds an optional group ID to Equal and Equal Curve Length relations.
+One multi-selection command shares that ID across its pairwise solver equations.
+Each distinct member shows one icon for that group; deletion releases the whole
+group. Independent commands retain independent group IDs. Readers migrate the
+schema-9 UI's generated UUID-number batch IDs; arbitrary legacy pair IDs stay
+independent. Missing group metadata means an ordinary binary relation.
 
 A fixed-entity stores position, secondPosition and radius, with second the origin
 placeholder. Only fields relevant to the entity drive it: both endpoints for a
@@ -147,7 +154,7 @@ permanent topology naming. See decision 0008.
 Version 1 is exactly one legacy box with no feature name. Version 2 adds named
 parametric history/entities but no relations. Version 3 adds Coincident/H/V;
 version 4 adds face attachments. These are read without inventing constraints or
-features. Saving intentionally writes version 9 .thepart to the selected path.
+features. Saving intentionally writes version 10 .thepart to the selected path.
 Version 5 adds dimensions and multiple region selections. Version 7 adds relative
 annotation placement; version 8 adds points, construction flags, on-geometry
 relations and regular polygon groups. Version 9 adds contextual relation types and

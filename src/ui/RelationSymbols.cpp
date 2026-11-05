@@ -35,7 +35,12 @@ void CadViewport::updateRelationSymbols(){
     if(!isReady())return;for(auto& marker:m_relationMarkers)m_context->Remove(marker,Standard_False);m_relationMarkers.clear();m_relationHits.clear();
     if(!m_showRelations || !m_sketchEditing || !m_sketch)return;
     const int pixels=std::max(1,qRound(18*devicePixelRatioF()));std::vector<QRectF> placed;
-    for(const auto& r:m_sketch->relations){
+    for(const auto& group:modeling::relationGroups(*m_sketch)){
+        const auto& relation=*std::find_if(m_sketch->relations.begin(),m_sketch->relations.end(),[&](const auto& r){return r.id==group.id;});
+        const bool perEntity=group.kind==modeling::RelationKind::Equal || group.kind==modeling::RelationKind::EqualCurveLength;
+        const auto entities=perEntity?group.entityIds:std::vector<std::string>{relation.first.entityId};
+        for(const auto& entityId:entities){
+        auto r=relation;if(perEntity){const auto e=std::find_if(m_sketch->entities.begin(),m_sketch->entities.end(),[&](const auto& e){return e.id==entityId;});r.first={entityId,e->kind==modeling::EntityKind::Circle?modeling::PointRole::Center:modeling::PointRole::First};}
         const auto origin=screenPoint(anchor(*m_sketch,r));if(!rect().adjusted(-20,-20,20,20).contains(origin.toPoint()))continue;
         QRectF area;bool found=false;
         for(int attempt=0;attempt<120;++attempt){
@@ -48,7 +53,8 @@ void CadViewport::updateRelationSymbols(){
         if(!found)continue;const auto model=sketchPosition(area.center());if(!model)continue;
         Handle(AIS_Point) marker=new AIS_Point(new Geom_CartesianPoint(modeling::sketchPoint(*m_sketch,*model)));
         marker->Attributes()->SetPointAspect(sprite(r.kind,pixels,r.id==m_hoveredRelation,r.id==m_selectedRelation));marker->SetZLayer(Graphic3d_ZLayerId_Topmost);marker->SetInfiniteState(Standard_True);
-        m_context->Display(marker,0,-1,Standard_False);m_context->SetDisplayPriority(marker,Graphic3d_DisplayPriority_Topmost);m_relationMarkers.push_back(marker);m_relationHits.push_back({r.id,area});placed.push_back(area);
+        m_context->Display(marker,0,-1,Standard_False);m_context->SetDisplayPriority(marker,Graphic3d_DisplayPriority_Topmost);m_relationMarkers.push_back(marker);m_relationHits.push_back({group.id,area,entityId});placed.push_back(area);
+        }
     }
 }
 std::optional<std::string> CadViewport::relationAt(const QPointF& position) const {
@@ -57,8 +63,8 @@ std::optional<std::string> CadViewport::relationAt(const QPointF& position) cons
 void CadViewport::showSketchRelations(bool visible){m_showRelations=visible;m_hoveredRelation.clear();if(!visible)m_selectedRelation.clear();updateRelationSymbols();update();}
 void CadViewport::selectSketchRelation(const std::string& id){
     if(!m_sketch)return;const auto r=std::find_if(m_sketch->relations.begin(),m_sketch->relations.end(),[&](const auto& r){return r.id==id;});if(r==m_sketch->relations.end())return;
-    m_selectedRelation=id;m_selectedEntities.clear();m_selectedDimensions.clear();m_selectedPoint.reset();
-    for(const auto& ref:{r->first,r->second})if(!ref.entityId.empty() && std::find(m_selectedEntities.begin(),m_selectedEntities.end(),ref.entityId)==m_selectedEntities.end())m_selectedEntities.push_back(ref.entityId);
-    m_selectedEntity=m_selectedEntities.empty()?"":m_selectedEntities.front();emit sketchEntitySelected(QString::fromStdString(m_selectedEntity));emit sketchRelationSelected(QString::fromStdString(id));emit sketchSelectionChanged();updatePointPresentation();updateConstraintPresentation();update();
+    const auto groups=modeling::relationGroups(*m_sketch);const auto group=std::find_if(groups.begin(),groups.end(),[&](const auto& g){return std::find(g.relationIds.begin(),g.relationIds.end(),id)!=g.relationIds.end();});
+    m_selectedRelation=group->id;m_selectedEntities=group->entityIds;m_selectedDimensions.clear();m_selectedPoint.reset();
+    m_selectedEntity=m_selectedEntities.empty()?"":m_selectedEntities.front();emit sketchEntitySelected(QString::fromStdString(m_selectedEntity));emit sketchRelationSelected(QString::fromStdString(m_selectedRelation));emit sketchSelectionChanged();updatePointPresentation();updateConstraintPresentation();update();
 }
 }

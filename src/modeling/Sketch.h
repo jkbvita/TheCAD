@@ -36,6 +36,7 @@ struct SketchRelation {
     Point2 fixedPosition; // Used only by FixedPoint; independent of solver storage.
     Point2 fixedSecond; // FixedEntity captures line endpoints or circle center/radius.
     double fixedRadius=1;
+    std::string groupId; // One Equal command may own several pairwise solver equations.
 };
 enum class SketchSpace { Planar2D, Spatial3D }; // Spatial3D is reserved, not implemented.
 enum class DimensionKind { LineLength, HorizontalDistance, VerticalDistance, CircleRadius, CircleDiameter, PointDistance, LineDistance, LineAngle };
@@ -80,7 +81,7 @@ bool areSketchPointsCoincident(const Sketch& sketch, const SketchPointRef& first
 // Move one point through the constraint system; optionally join a stable
 // target reference. Returns a validated candidate and never mutates the source.
 Sketch moveSketchPoint(const Sketch& sketch, const SketchPointRef& reference, Point2 position,
-                      const std::optional<SketchPointRef>& target = {});
+                      const std::optional<SketchPointRef>& target = {}, bool preserveCircleRadius = false);
 Sketch removeSketchEntity(const Sketch& sketch, const std::string& entityId);
 
 enum class Direction { Positive, Negative };

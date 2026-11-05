@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <set>
+#include <map>
+#include <cctype>
 #include <stdexcept>
 namespace thecad::modeling {
 namespace {
@@ -36,6 +38,26 @@ std::vector<RelationKind> availableRelations(const Sketch& s,const std::vector<s
     if(lines || circles || points || std::all_of(selected.begin(),selected.end(),[](const auto* e){return e->kind==EntityKind::Line || e->kind==EntityKind::Circle || e->kind==EntityKind::Point;}))result.push_back(RelationKind::FixedEntity);
     return result;
 }
+std::vector<RelationGroup> relationGroups(const Sketch& sketch){
+    std::vector<RelationGroup> groups;std::map<std::string,std::size_t> indices;
+    for(const auto& r:sketch.relations){
+        const auto key=r.groupId.empty()?"relation:"+r.id:"group:"+r.groupId;
+        auto [found,inserted]=indices.emplace(key,groups.size());
+        if(inserted)groups.push_back({r.id,r.kind,{},{}});
+        auto& group=groups[found->second];group.relationIds.push_back(r.id);
+        for(const auto& ref:{r.first,r.second})if(!ref.entityId.empty() && std::find(group.entityIds.begin(),group.entityIds.end(),ref.entityId)==group.entityIds.end())group.entityIds.push_back(ref.entityId);
+    }
+    return groups;
+}
+void validateRelationGroups(const Sketch& sketch){
+    std::map<std::string,const SketchRelation*> first;
+    for(const auto& r:sketch.relations)if(!r.groupId.empty()){
+        require(r.kind==RelationKind::Equal || r.kind==RelationKind::EqualCurveLength,"Only Equal relations can share an equality group.");
+        require(r.groupId.size()<=128 && std::all_of(r.groupId.begin(),r.groupId.end(),[](unsigned char c){return std::isalnum(c) || c=='-' || c=='_';}),"Invalid equality group ID.");
+        auto [found,inserted]=first.emplace(r.groupId,&r);
+        if(!inserted)require(found->second->kind==r.kind && found->second->first.entityId==r.first.entityId,"An equality group must have one kind and shared reference entity.");
+    }
+}
 Sketch addSelectionRelations(const Sketch& s,RelationKind kind,const std::vector<std::string>& ids,const std::string& prefix){
     const auto allowed=availableRelations(s,ids);require(std::find(allowed.begin(),allowed.end(),kind)!=allowed.end(),"This relation does not apply to the current selection.");
     auto candidate=s;int n=0;
@@ -44,6 +66,7 @@ Sketch addSelectionRelations(const Sketch& s,RelationKind kind,const std::vector
     else if((kind==RelationKind::Horizontal || kind==RelationKind::Vertical) && entity(s,ids.front()).kind==EntityKind::Line){for(const auto& id:ids)add({id,PointRole::First},{id,PointRole::Second});}
     else if(kind==RelationKind::PointOnLine || kind==RelationKind::PointOnCircle){const auto& a=entity(s,ids[0]);const auto& b=entity(s,ids[1]);add(ref(a.kind==EntityKind::Point?a:b),ref(a.kind==EntityKind::Point?b:a));}
     else for(std::size_t i=1;i<ids.size();++i)add(ref(entity(s,ids[0])),ref(entity(s,ids[i])));
+    if(kind==RelationKind::Equal || kind==RelationKind::EqualCurveLength)for(std::size_t i=s.relations.size();i<candidate.relations.size();++i)candidate.relations[i].groupId=prefix;
     return requireSolvedSketch(solvePlanarSketch(candidate));
 }
 bool isNewRelation(RelationKind kind){return int(kind)>=int(RelationKind::Collinear);}

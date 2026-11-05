@@ -273,12 +273,21 @@ Sketch removeSketchDimension(const Sketch& sketch,const std::string& id) {
 }
 Sketch setSketchRelation(const Sketch& sketch,const SketchRelation& relation) {
     auto candidate=sketch;auto found=std::find_if(candidate.relations.begin(),candidate.relations.end(),[&](const auto& r){return r.id==relation.id;});
-    if(found==candidate.relations.end())candidate.relations.push_back(relation);else *found=relation;
+    if(found==candidate.relations.end())candidate.relations.push_back(relation);else {
+        const auto group=found->groupId;
+        if(!group.empty() && std::count_if(candidate.relations.begin(),candidate.relations.end(),[&](const auto& r){return r.groupId==group;})>1){
+            if(relation.kind!=RelationKind::Equal && relation.kind!=RelationKind::EqualCurveLength)throw std::runtime_error("Delete the equality group before applying a different relation to its members.");
+            for(auto& r:candidate.relations)if(r.groupId==group)r.kind=relation.kind;
+        }else {*found=relation;if(relation.kind!=RelationKind::Equal && relation.kind!=RelationKind::EqualCurveLength)found->groupId.clear();}
+    }
     return requireSolvedSketch(solvePlanarSketch(candidate));
 }
 Sketch removeSketchRelation(const Sketch& sketch,const std::string& id) {
     auto candidate=sketch;const auto found=std::find_if(candidate.relations.begin(),candidate.relations.end(),[&](const auto& r){return r.id==id;});
-    if(found==candidate.relations.end())throw std::runtime_error("Unknown relation.");candidate.relations.erase(found);
+    if(found==candidate.relations.end())throw std::runtime_error("Unknown relation.");
+    const auto group=found->groupId;
+    if(group.empty())candidate.relations.erase(found);
+    else candidate.relations.erase(std::remove_if(candidate.relations.begin(),candidate.relations.end(),[&](const auto& r){return r.groupId==group;}),candidate.relations.end());
     return requireSolvedSketch(solvePlanarSketch(candidate));
 }
 }

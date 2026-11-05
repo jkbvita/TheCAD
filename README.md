@@ -63,7 +63,12 @@ With dependencies installed, run from the repository root:
 
 ## Launch from Windows Explorer
 
-Double-click **Launch TheCAD.cmd** in the repository root. To create an independent
+For the combined circle/Equal repair build, use the updated desktop **TheCAD**
+shortcut or `build/package/TheCAD-Relations-Repair/TheCAD.exe` in the isolated
+worktree. The older package is retained to protect an open sketch; see the
+[repair checks](docs/verification/sketch-relations-system.md).
+
+For a standard checkout, double-click **Launch TheCAD.cmd** in the repository root. To create an independent
 Release folder after building, run `.\scripts\package-windows.ps1`, then double-click
 `build/package/TheCAD/TheCAD.exe`. On this computer the executable is
 `C:\Users\jakub\projects\TheCAD\build\package\TheCAD\TheCAD.exe`.
@@ -117,6 +122,10 @@ a command, clear selection, press Esc or move sufficiently far away; it has no t
 Use its **For Construction / Normal Geometry** command to convert selected entities.
 The dedicated Centerline tool remains on the Sketch ribbon.
 
+Circle centers remain visible during sketch editing. In Select mode, drag a
+circle outline to move its center without changing its radius. Equal commands
+show one green symbol per member, including multi-selection equality groups.
+
 Green relation symbols support hover tooltips, selection and Delete without
 removing geometry. **View > Hide/Show > Sketch Relations** controls their visibility.
 **Display/Delete Relations** lists constraints associated with selected geometry
@@ -138,7 +147,7 @@ Dimensions follow current geometry throughout endpoint dragging and numeric edit
 In Select mode or idle Smart Dimension, drag text or dimension lines to reposition
 the annotation without changing its value. Circle dimensions use diametric/radial
 lines and circumference arrows; dragging rotates their placement. Placements survive
-save/reopen in `.thepart` schema 9; earlier supported files remain readable.
+save/reopen in `.thepart` schema 10; earlier supported files remain readable.
 Smart Dimension and drawing buttons stay visibly pressed while active; Esc exits.
 Geometry highlights on hover. Picking defaults to 8 logical pixels, adjustable for
 the session under **Tools > Sketch Picking Tolerance**.

@@ -37,6 +37,7 @@ approved scope do not need repeated approval.
 - [0013: Edit history and sketch deletion](0013-edit-history-sketch-deletion.md).
 - [0014: Point, Centerline and regular Polygon](0014-basic-sketch-tools.md).
 - [0015: Contextual sketch relations and graphical callouts](0015-contextual-sketch-relations.md).
+- [0016: Circle dragging, Equal callouts and local build reconciliation](0016-circle-drag-equality-groups.md).
 
 ## Pending owner decisions
 

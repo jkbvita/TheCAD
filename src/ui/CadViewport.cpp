@@ -1026,7 +1026,8 @@ void CadViewport::updatePointPresentation()
                 return entity.id==entry.first.entityId && entity.kind==modeling::EntityKind::Line;
             });
             const bool standalone=std::any_of(m_sketch->entities.begin(),m_sketch->entities.end(),[&](const auto& e){return e.id==entry.first.entityId && e.kind==modeling::EntityKind::Point;});
-            if(!origin && !hovered && !selected && !lineEndpoint && !standalone && entry.first.entityId!=m_selectedEntity) continue;
+            const bool circleCenter=entry.first.role==modeling::PointRole::Center;
+            if(!origin && !hovered && !selected && !lineEndpoint && !standalone && !circleCenter && entry.first.entityId!=m_selectedEntity) continue;
             Handle(AIS_Point) marker=new AIS_Point(new Geom_CartesianPoint(modeling::sketchPoint(*m_sketch,entry.second)));
             Quantity_Color color(hovered ? Quantity_NOC_ORANGE : origin ? Quantity_NOC_RED3 : m_sketchFullyDefined ? Quantity_NOC_BLACK : Quantity_NOC_BLUE);
             if(selected && !origin)color=Quantity_Color(0.25,0.72,1.0,Quantity_TOC_RGB);
@@ -1125,12 +1126,14 @@ void CadViewport::updatePointDrag(const QPointF& position)
         const auto pixel=screenPoint(entry.second);
         targets.push_back({entry.first,entry.second,pixel.x()*dpr,pixel.y()*dpr});
     }
-    const auto target=modeling::nearestSketchPoint(targets,position.x()*dpr,position.y()*dpr,m_pickingTolerance*dpr);
+    const modeling::Point2 destination{raw->x+drag.grabOffset.x,raw->y+drag.grabOffset.y};
+    const auto targetPixel=screenPoint(destination);
+    const auto target=modeling::nearestSketchPoint(targets,targetPixel.x()*dpr,targetPixel.y()*dpr,m_pickingTolerance*dpr);
     drag.target=target ? std::optional<modeling::SketchPointRef>(target->reference) : std::nullopt;
     m_hoveredPoint=drag.target; drag.error.clear();
     try {
         auto warm=drag.original;if(drag.candidate)warm.entities=drag.candidate->entities;
-        drag.candidate=modeling::moveSketchPoint(warm,drag.reference,*raw,drag.target);
+        drag.candidate=modeling::moveSketchPoint(warm,drag.reference,destination,drag.target,drag.circleBody);
         m_sketch=*drag.candidate;
     } catch(const std::exception& error) {
         drag.error=QString::fromUtf8(error.what()); drag.candidate.reset(); m_sketch=drag.original;
@@ -1333,12 +1336,15 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
             m_selectedPoint = hit ? std::optional<modeling::SketchPointRef>(hit->reference) : std::nullopt;
             if (hit) { emit sketchPointSelected(QString::fromStdString(hit->reference.entityId), int(hit->reference.role)); }
             emit sketchSelectionChanged();
-            if(hit && !toggle && hit->reference.role!=modeling::PointRole::Origin) {
-                const auto entity=std::find_if(m_sketch->entities.begin(),m_sketch->entities.end(),[&](const auto& e){return e.id==hit->reference.entityId;});
+            std::optional<modeling::SketchPointRef> dragRef=hit?std::optional<modeling::SketchPointRef>(hit->reference):std::nullopt;
+            if(!hit && body && raw){const auto e=std::find_if(m_sketch->entities.begin(),m_sketch->entities.end(),[&](const auto& e){return e.id==*body;});if(e!=m_sketch->entities.end() && e->kind==modeling::EntityKind::Circle)dragRef=modeling::SketchPointRef{e->id,modeling::PointRole::Center};}
+            if(dragRef && !toggle && dragRef->role!=modeling::PointRole::Origin) {
+                const auto entity=std::find_if(m_sketch->entities.begin(),m_sketch->entities.end(),[&](const auto& e){return e.id==dragRef->entityId;});
                 if(entity!=m_sketch->entities.end() && (entity->kind==modeling::EntityKind::Line || entity->kind==modeling::EntityKind::Circle || entity->kind==modeling::EntityKind::Point)) {
-                    m_pointDrag=PointDrag{*m_sketch,hit->reference,event->position(),false,*m_sketch,{},{}};
+                    m_pointDrag=PointDrag{*m_sketch,*dragRef,event->position(),false,*m_sketch,{},{}};
+                    if(!hit && raw){m_pointDrag->circleBody=true;m_pointDrag->grabOffset={entity->first.x-raw->x,entity->first.y-raw->y};}
                     std::set<std::pair<std::string,int>> excluded;
-                    for(const auto& ref:modeling::coincidentSketchPoints(*m_sketch,hit->reference)) excluded.insert({ref.entityId,int(ref.role)});
+                    for(const auto& ref:modeling::coincidentSketchPoints(*m_sketch,*dragRef)) excluded.insert({ref.entityId,int(ref.role)});
                     for(const auto& entry:modeling::sketchPoints(*m_sketch))
                         if(!excluded.count({entry.first.entityId,int(entry.first.role)})) m_pointDrag->targets.push_back(entry);
                     grabMouse();

@@ -1,9 +1,12 @@
 # Sketch relation checks
 
-The implementation is isolated on `codex/sketch-relations-context`, based on local
-accepted commit `fd1447a`. The original checkout/branch and `untitled.tcpart` are
-preserved. Run the isolated worktree's `Launch TheCAD.cmd`; its generated package
-is separate from the original application package.
+The current implementation is isolated on `codex/circle-drag-equal-icons` and
+combines accepted relation commit `db4f515` with feature-tree/hexagon commit
+`bd71e05`. The original checkout/branch and `untitled.tcpart` are preserved.
+Use the repaired desktop TheCAD shortcut, or the isolated worktree's executable
+`build/package/TheCAD-Relations-Repair/TheCAD.exe`. The old package is retained
+because it may still be running with an unsaved sketch. Save and close that window
+before opening the repaired desktop shortcut.
 
 ## Supported commands
 
@@ -58,15 +61,32 @@ tangency, symmetry and other unsupported commands are not offered.
    change once; its ID should remain stable when changing type.
 8. Save a sketch containing the new relations and construction geometry. Reopen,
    inspect symbols and constraints, drag again and regenerate an extrusion.
-   Repeat with an older supported document. New files use schema 9 and require
+   Repeat with an older supported document. New files use schema 10 and require
    this build; retain a copy when comparing with an older executable.
+
+## Circle and Equal repair checks
+
+- Create a circle away from the origin, move the pointer away and clear selection:
+  the center point should remain visible. Drag either its center or its outline.
+  An outline drag should move the circle smoothly from the grabbed position and
+  retain its radius, including with driving dimensions and tangent relations.
+  Test the live preview, repeated drags, Escape cancellation and undo/redo.
+- Apply Equal to two entities: each should have one green icon. Apply Equal to
+  three or more together: every member should have exactly one icon for that
+  group, including the shared reference member. Click any icon to highlight all
+  members; Delete releases the group while retaining geometry. Undo once restores
+  the whole group. Independently created equality groups remain independent.
+- Hide symbols and select a nonreference member. Display/Delete Relations should
+  list the group once. Save/reopen, then repeat group selection and deletion.
+- Start from the desktop shortcut and verify that both the cleaned feature tree
+  and contextual relation toolbar are present in the same application.
 
 ## Automated validation
 
 Release build with MSVC 2022, Qt 6.8.4, OCCT 7.9.3 and the existing PlaneGCS.
 `ctest --test-dir build/windows -C Release --output-on-failure` runs 22 cases,
 including solver.relations-system and normal/high-DPI modeling workflow tests.
-Final result: 22/22 passed, 0 failures (45.28 seconds). The standalone package was
+Final repair result: 22/22 passed, 0 failures (46.65 seconds). The standalone package was
 also generated successfully with the existing runtime dependency/license scanner.
 The suite also covers existing dimensions/annotations, ten-action history,
 deletion, basic geometry tools, documents, feature regeneration and profiles.

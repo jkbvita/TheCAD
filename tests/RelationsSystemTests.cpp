@@ -39,10 +39,29 @@ int main(){try{
     auto replacement=freeze.entities[1];replacement.radius=12;bool rejected=false;try{editSketchEntity(freeze,replacement);}catch(const std::exception&){rejected=true;}require(rejected,"Fix rejects resizing without changing old geometry");near(freeze.entities[1].radius,3);
     Sketch points;points.entities={{EntityKind::Point,{0,0},{},1,"a"},{EntityKind::Point,{15,20},{},1,"b"}};auto aligned=addSelectionRelations(points,RelationKind::Horizontal,{"a","b"},"align");near(aligned.entities[0].first.y,aligned.entities[1].first.y);
     QTemporaryDir directory;
+    const auto equalityGroups=relationGroups(equal);require(equalityGroups.size()==1 && equalityGroups[0].entityIds.size()==3 && equalityGroups[0].relationIds.size()==2,"One Equal command owns all three members");
+    require(equal.relations[0].groupId=="equal" && equal.relations[1].groupId=="equal","Stable Equal group ID");
+    require(removeSketchRelation(equal,equal.relations[1].id).relations.empty(),"Deleting any group member releases the complete equality group");
+    auto resizedGroup=radii.relations[0];resizedGroup.kind=RelationKind::EqualCurveLength;auto changedGroup=setSketchRelation(radii,resizedGroup);require(changedGroup.relations[0].groupId==radii.relations[0].groupId,"Changing a compatible equality preserves its group");
+    auto translated=moveSketchPoint(circles,{"a",PointRole::Center},{12,22},{},true);near(translated.entities[0].first.x,12);near(translated.entities[0].first.y,22);near(translated.entities[0].radius,5);
+    auto dimensionedMove=moveSketchPoint(radii,{"a",PointRole::Center},{12,22},{},true);near(dimensionedMove.entities[0].radius,10);near(dimensionedMove.entities[1].radius,10);
+    auto fixedMove=moveSketchPoint(freeze,{"circle",PointRole::Center},{15,18},{},true);near(fixedMove.entities[1].first.x,30);near(fixedMove.entities[1].radius,3);
+    Sketch tangent;tangent.entities={{EntityKind::Line,{-20,0},{20,0},1,"line"},{EntityKind::Circle,{2,3},{},3,"circle"}};tangent=addSelectionRelations(tangent,RelationKind::FixedEntity,{"line"},"fixed-line");tangent=addSelectionRelations(tangent,RelationKind::Tangent,{"line","circle"},"tangent");auto sliding=moveSketchPoint(tangent,{"circle",PointRole::Center},{12,10},{},true);near(sliding.entities[1].first.x,12);near(sliding.entities[1].first.y,3);near(sliding.entities[1].radius,3);
     for(const auto& specimen:{equal,collinear,concentric,radii,curves,freeze,aligned}){
         auto document=thecad::document::PartDocument::createEmpty();document.addSketch(specimen);const auto path=directory.filePath("relations.thepart");document.save(path);
         auto restored=thecad::document::PartDocument::load(path).features()[0].sketch;require(restored.relations.size()==specimen.relations.size(),"Persist every relation");validateSketchRelations(restored);
-        for(std::size_t i=0;i<restored.relations.size();++i){require(restored.relations[i].id==specimen.relations[i].id && restored.relations[i].kind==specimen.relations[i].kind,"Stable relation IDs/types");}
+        for(std::size_t i=0;i<restored.relations.size();++i){require(restored.relations[i].id==specimen.relations[i].id && restored.relations[i].kind==specimen.relations[i].kind && restored.relations[i].groupId==specimen.relations[i].groupId,"Stable relation IDs/types/groups");}
+    }
+    {
+        const std::string batch="01234567-89ab-cdef-0123-456789abcdef";
+        auto specimen=addSelectionRelations(s,RelationKind::Equal,{"a","b","c"},batch);auto doc=thecad::document::PartDocument::createEmpty();doc.addSketch(specimen);const auto legacyPath=directory.filePath("legacy-equal.thepart");doc.save(legacyPath);
+        QFile legacyFile(legacyPath);require(legacyFile.open(QIODevice::ReadOnly),"Read grouped fixture");auto root=QJsonDocument::fromJson(legacyFile.readAll()).object();legacyFile.close();auto history=root["features"].toArray();auto feature=history[0].toObject();auto relations=feature["relations"].toArray();
+        for(int i=0;i<relations.size();++i){auto r=relations[i].toObject();r.remove("group");relations[i]=r;}feature["relations"]=relations;history[0]=feature;root["features"]=history;root["version"]=9;
+        require(legacyFile.open(QIODevice::WriteOnly|QIODevice::Truncate),"Write legacy grouped fixture");legacyFile.write(QJsonDocument(root).toJson());legacyFile.close();auto restored=thecad::document::PartDocument::load(legacyPath).features()[0].sketch;
+        require(relationGroups(restored).size()==1 && restored.relations[0].groupId==batch,"Migrate schema-9 generated batches without losing their identity");
+        for(int mutation=0;mutation<3;++mutation){auto bad=root;bad["version"]=10;auto h=history;auto f=feature;auto rs=relations;for(int i=0;i<rs.size();++i){auto r=rs[i].toObject();r["group"]=QString::fromStdString(batch);rs[i]=r;}auto r=rs[1].toObject();if(mutation==0)r["group"]="bad!";if(mutation==1)r["first"]=QJsonObject{{"entity","b"},{"point","first"}};if(mutation==2)r["group"]=2;rs[1]=r;f["relations"]=rs;h[0]=f;bad["features"]=h;
+            require(legacyFile.open(QIODevice::WriteOnly|QIODevice::Truncate),"Write invalid group");legacyFile.write(QJsonDocument(bad).toJson());legacyFile.close();bool failed=false;try{thecad::document::PartDocument::load(legacyPath);}catch(const std::exception&){failed=true;}require(failed,"Reject invalid or inconsistent equality groups");
+        }
     }
     auto document=thecad::document::PartDocument::createEmpty();document.addSketch(freeze);const auto path=directory.filePath("schema.thepart");document.save(path);
     QFile file(path);require(file.open(QIODevice::ReadOnly),"Read relation fixture");const auto good=QJsonDocument::fromJson(file.readAll()).object();file.close();

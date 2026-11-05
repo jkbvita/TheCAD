@@ -124,7 +124,7 @@ private:
     void updateConstraintPresentation();
     void updateRelationSymbols();
     std::optional<std::string> relationAt(const QPointF& position) const;
-    struct RelationHit {std::string id;QRectF bounds;};
+    struct RelationHit {std::string id;QRectF bounds;std::string entityId;};
     std::vector<RelationHit> m_relationHits;
     std::vector<Handle(AIS_Point)> m_relationMarkers;
     bool m_showRelations=true;
@@ -207,6 +207,8 @@ private:
         std::optional<modeling::SketchPointRef> target;
         QString error;
         std::vector<std::pair<modeling::SketchPointRef,modeling::Point2>> targets;
+        modeling::Point2 grabOffset;
+        bool circleBody=false;
     };
     std::optional<PointDrag> m_pointDrag;
     Handle(AIS_TextLabel) m_interactionLabel;

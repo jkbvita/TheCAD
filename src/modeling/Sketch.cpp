@@ -911,6 +911,7 @@ double dimensionMeasurement(const Sketch& sketch,const SketchDimension& d) {
 }
 void validateSketchConstraintReferences(const Sketch& sketch)
 {
+    validateRelationGroups(sketch);
     if(sketch.relations.size()>4000 || sketch.dimensions.size()>4000)fail("Sketch exceeds the prototype constraint limit.");
     (void)sketchPoints(sketch);validatePolygons(sketch,false);std::set<std::string> ids;
     for(const auto& relation:sketch.relations) {
@@ -1078,7 +1079,7 @@ bool areSketchPointsCoincident(const Sketch& sketch, const SketchPointRef& first
 }
 
 Sketch moveSketchPoint(const Sketch& sketch, const SketchPointRef& reference, Point2 position,
-                      const std::optional<SketchPointRef>& target)
+                      const std::optional<SketchPointRef>& target, bool preserveCircleRadius)
 {
     validate(sketch);
     if(reference.role==PointRole::Origin) fail("The sketch origin is fixed and cannot be dragged.");
@@ -1088,7 +1089,7 @@ Sketch moveSketchPoint(const Sketch& sketch, const SketchPointRef& reference, Po
         position=sketchPointValue(sketch,*target);
     }
     const bool solverConstraints=!sketch.polygons.empty() || !sketch.dimensions.empty() || std::any_of(sketch.relations.begin(),sketch.relations.end(),[](const auto& r){return int(r.kind)>=int(RelationKind::FixedPoint);});
-    if(solverConstraints) {
+    if(solverConstraints || preserveCircleRadius) {
         auto candidate=sketch;
         if(target && !areSketchPointsCoincident(sketch,reference,*target)) {
             std::set<std::string> ids;for(const auto& r:sketch.relations)ids.insert(r.id);for(const auto& d:sketch.dimensions)ids.insert(d.id);
@@ -1096,6 +1097,21 @@ Sketch moveSketchPoint(const Sketch& sketch, const SketchPointRef& reference, Po
             candidate.relations.push_back({"connection-"+std::to_string(n),RelationKind::Coincident,reference,*target});
         }
         SolveOptions options;options.pointTargets.push_back({reference,position,false});
+        const auto& entity=referencedEntity(sketch,reference);
+        if(preserveCircleRadius && entity.kind==EntityKind::Circle){
+            const bool driven=std::any_of(candidate.dimensions.begin(),candidate.dimensions.end(),[&](const auto& d){return d.driving && d.first.entityId==entity.id && (d.kind==DimensionKind::CircleRadius || d.kind==DimensionKind::CircleDiameter);}) || std::any_of(candidate.relations.begin(),candidate.relations.end(),[&](const auto& r){return r.kind==RelationKind::FixedEntity && r.first.entityId==entity.id;});
+            if(!driven)options.radiusTargets.push_back({entity.id,entity.radius});
+            auto result=solvePlanarSketch(candidate,options);
+            // Indirect dimensional relations can already determine the radius.
+            // Retry without only our temporary anchor, then verify size exactly;
+            // no persisted relation or driving dimension is removed.
+            if(!result.success && !options.radiusTargets.empty()){
+                options.radiusTargets.clear();result=solvePlanarSketch(candidate,options);
+            }
+            auto moved=requireSolvedSketch(result);
+            if(std::abs(referencedEntity(moved,reference).radius-entity.radius)>1e-7)fail("Moving the circle conflicts with preserving its radius.");
+            return moved;
+        }
         return requireSolvedSketch(solvePlanarSketch(candidate,options));
     }
     auto entity=*std::find_if(sketch.entities.begin(),sketch.entities.end(),[&](const SketchEntity& e){return e.id==reference.entityId;});
