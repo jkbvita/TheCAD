@@ -39,6 +39,7 @@ approved scope do not need repeated approval.
 - [0015: Contextual sketch relations and graphical callouts](0015-contextual-sketch-relations.md).
 - [0016: Circle dragging, Equal callouts and local build reconciliation](0016-circle-drag-equality-groups.md).
 - [0017: Midpoint snapping and free rectangle corner dragging](0017-midpoint-snaps-rectangle-drag.md).
+- [0018: Intersection-aware sketch regions for Extrude and Cut](0018-intersecting-sketch-regions.md).
 
 ## Pending owner decisions
 

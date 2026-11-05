@@ -184,10 +184,14 @@ See the [current sketcher/feature workflow checks](verification/sketcher-feature
 In normal part mode, select a planar face and click Sketch, or click Sketch first
 and then select the face. Draw in its local frame and use Extrude/Cut as usual.
 Faces take picking priority over origin-plane graphics. Curved faces are rejected.
-Saving now writes version 6, including solver-independent sketch dimensions and metadata. Changing its upstream support may
+Saving writes the current schema, including solver-independent sketch dimensions,
+relations and region references. Changing its upstream support may
 reject rather than reattach; see the documented conservative reference strategy.
 Valid closed line profiles can be selected even with attached dangling lines.
-Multiple regions, strict nested loops/holes and disconnected bodies are supported. Adjacent line-bounded cells may share existing complete edges/vertices; unsplit crossings and overlapping segments remain unsupported.
+Multiple regions, nested loops/holes and disconnected bodies are supported.
+Crossed lines, T-junctions and intersections with circles/rectangles create
+selectable cells without changing sketch entities. Duplicate/coincident overlaps
+and invalid zero-width profiles require cleanup; see the intersection-region checks.
 
 ## Smart Dimension and solver relations
 

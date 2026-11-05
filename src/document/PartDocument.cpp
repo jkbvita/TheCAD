@@ -8,6 +8,7 @@
 #include "document/PartDocument.h"
 #include "modeling/Box.h"
 #include "modeling/ConstraintSolver.h"
+#include "modeling/PlanarRegions.h"
 
 #include <BRepCheck_Analyzer.hxx>
 #include <Standard_Failure.hxx>
@@ -535,7 +536,7 @@ PartDocument PartDocument::load(const QString& path)
     if (root.value("format") != QJsonValue("TheCAD.Part")) fail("Unsupported document format; expected TheCAD.Part.");
     if (root.value("units") != QJsonValue("mm")) fail("Unsupported units; this prototype supports millimeters only.");
     const auto versionValue = root.value("version");
-    if (!versionValue.isDouble() || (versionValue.toDouble() != 1 && versionValue.toDouble() != 2 && versionValue.toDouble() != 3 && versionValue.toDouble() != 4 && versionValue.toDouble() != 5 && versionValue.toDouble() != 6 && versionValue.toDouble() != 7 && versionValue.toDouble() != 8 && versionValue.toDouble() != 9 && versionValue.toDouble() != 10 && versionValue.toDouble() != 11)) fail("Unsupported part document version; expected versions 1 through 11.");
+    if (!versionValue.isDouble() || (versionValue.toDouble() != 1 && versionValue.toDouble() != 2 && versionValue.toDouble() != 3 && versionValue.toDouble() != 4 && versionValue.toDouble() != 5 && versionValue.toDouble() != 6 && versionValue.toDouble() != 7 && versionValue.toDouble() != 8 && versionValue.toDouble() != 9 && versionValue.toDouble() != 10 && versionValue.toDouble() != 11 && versionValue.toDouble() != 12)) fail("Unsupported part document version; expected versions 1 through 12.");
     const int version = versionValue.toInt();
     if (!root.value("features").isArray()) fail("Part features must be an ordered array.");
     const auto array = root.value("features").toArray();
@@ -614,11 +615,11 @@ PartDocument PartDocument::load(const QString& path)
                     if(!object.value("contours").isArray() || object.value("contours").toArray().isEmpty() || object.value("contours").toArray().size()>1000)fail("Feature contours must contain 1 to 1000 explicit region reference arrays.");
                     for(const auto& region:object.value("contours").toArray()) {
                         if(!region.isArray() || region.toArray().isEmpty() || region.toArray().size()>1000)fail("Invalid selected region reference array.");
-                        std::vector<std::string> ids;for(const auto& id:region.toArray())ids.push_back(stringValue(id,"Region entity ID").toStdString());feature.contours.push_back(std::move(ids));
+                        std::vector<std::string> ids;for(const auto& id:region.toArray()){const auto reference=stringValue(id,"Region boundary reference").toStdString();if(version<12 && modeling::isFragmentReference(reference))fail("Intersection region references require schema 12.");ids.push_back(reference);}feature.contours.push_back(std::move(ids));
                     }
                 } else {
                     if (!object.value("contour").isArray()) fail("Feature contour must be an explicit array of sketch entity IDs.");
-                    for (const auto& entityId : object.value("contour").toArray()) feature.contour.push_back(stringValue(entityId, "Contour entity ID").toStdString());
+                    for (const auto& entityId : object.value("contour").toArray()){const auto reference=stringValue(entityId,"Contour boundary reference").toStdString();if(version<12 && modeling::isFragmentReference(reference))fail("Intersection region references require schema 12.");feature.contour.push_back(reference);}
                 }
                 feature.length = number(object.value("length"), "Extrusion length");
                 feature.direction = readDirection(object.value("direction"));
@@ -682,7 +683,7 @@ void PartDocument::save(const QString& path) const
         if (feature.kind != FeatureKind::Sketch) resultId = feature.id;
         features.append(object);
     }
-    const QJsonObject root{{"format", "TheCAD.Part"}, {"version", 11}, {"units", "mm"}, {"features", features}, {"resultFeature", q(resultId)}};
+    const QJsonObject root{{"format", "TheCAD.Part"}, {"version", 12}, {"units", "mm"}, {"features", features}, {"resultFeature", q(resultId)}};
     const auto bytes = QJsonDocument(root).toJson(QJsonDocument::Indented);
     if (bytes.size() > maximumDocumentBytes) fail("Part document exceeds the 1 MiB prototype size limit.");
     QSaveFile file(path);

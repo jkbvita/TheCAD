@@ -6,12 +6,12 @@ inputs: conversion saves to a separate .thepart path, retaining the original fil
 No assembly/drawing reader or placeholder is implemented. Internal serialization
 is provisional and versioned; filename conventions are permanent.
 
-## Version 11 part structure
+## Version 12 part structure
 
-The UTF-8 JSON root contains exactly format: "TheCAD.Part", version: 11, units:
+The UTF-8 JSON root contains exactly format: "TheCAD.Part", version: 12, units:
 "mm", features (ordered array) and resultFeature (last solid feature ID, or empty
-for empty/sketch-only documents). Writers always emit version 11. Readers accept
-versions 1–11 and reject unknown versions, fields, units and unsupported features.
+for empty/sketch-only documents). Writers always emit version 12. Readers accept
+versions 1–12 and reject unknown versions, fields, units and unsupported features.
 
 Every feature has stable id, printable name, type and explicit dependencies.
 Types and additional fields:
@@ -125,7 +125,7 @@ geometry reject the transaction; constraints are never silently disabled.
 
 ## Selected planar regions and multiple bodies
 
-One selected region uses contour: [boundary entity IDs]. Several use contours:
+One selected region uses contour: [boundary references]. Several use contours:
 [[region boundary IDs], ...], never both fields. Regions are actual planar faces.
 Each loop excludes its immediate nested children as holes; those child interiors
 can also be selected independently. A region's reference set includes outer and
@@ -134,11 +134,15 @@ Unrelated open branches remain sketch data and do not become feature boundaries.
 
 Selections are explicit and exact. Missing/changing boundaries, including a new
 hole that changes an existing selected region, fail instead of silently selecting
-a different profile. Independent and strictly nested closed loops work; unsplit overlaps and crossings
-remain unsupported. Adjacent line-bounded cells sharing
-complete existing edges/vertices are supported; shared internal edges are omitted
-when their union forms an enclosing hole boundary. Invalid/open selected
-geometry never produces a stored solid.
+a different profile. Independent/nested loops, shared edges, unsplit crossings,
+T-junctions and intersections with circles/rectangles form selectable cells.
+Schema 12 permits versioned `@region-edge-v1:` fragment references alongside whole
+entity IDs. Fragment references encode source/side identity, intersection branch,
+endpoint identity and boundary orientation using length-prefixed components.
+They contain no rounded coordinates or kernel traversal index. The sketch itself
+is not subdivided or rewritten. Artificial circle seams are excluded from naming.
+Malformed/missing references and new tokens in older schemas reject. Coincident
+overlaps and invalid zero-width geometry remain unsupported.
 
 Extrude fuses selected prisms and the existing result. A result may contain several
 valid positive-volume solids. Cuts affect intersected solids in the current part
@@ -160,12 +164,13 @@ permanent topology naming. See decision 0008.
 Version 1 is exactly one legacy box with no feature name. Version 2 adds named
 parametric history/entities but no relations. Version 3 adds Coincident/H/V;
 version 4 adds face attachments. These are read without inventing constraints or
-features. Saving intentionally writes version 11 .thepart to the selected path.
+features. Saving intentionally writes version 12 .thepart to the selected path.
 Version 5 adds dimensions and multiple region selections. Version 7 adds relative
 annotation placement; version 8 adds points, construction flags, on-geometry
 relations and regular polygon groups. Version 9 adds contextual relation types and
 full-entity Fix snapshots. Version 10 adds equality-group IDs; version 11 adds
-persistent Midpoint relations. Older applications
+persistent Midpoint relations. Version 12 adds intersection-boundary references.
+Older applications
 reject newer unsupported versions safely; readers retain all supported older records.
 
 Only a fully successful candidate history replaces the document and precise OCCT
@@ -175,7 +180,8 @@ failed replacement preserves the existing destination. Save reuses the active
 path, Save As switches paths, and unsaved changes use Save/Discard/Cancel.
 
 Limits: 1 MiB input/output, 500 features, 1000 entities and at most 4000 relations
-and 4000 dimensions per sketch; finite coordinates/values within 1e9 mm.
+and 4000 dimensions per sketch; finite coordinates/values within 1e9 mm. Intersection
+analysis allows at most 12,000 fragments, 1,000 regions and 1,000 references per region.
 Session undo/redo retains ten completed edits and is not serialized in this file.
 There is no suppression, history reordering, spatial sketching,
 assembly/drawing implementation, straight/reflex angular sectors, trimming or automatic repair.

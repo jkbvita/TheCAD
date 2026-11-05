@@ -1,4 +1,5 @@
 #include "modeling/RelationCommands.h"
+#include "modeling/PlanarRegions.h"
 #include "modeling/SketchTools.h"
 #include <BRepTools.hxx>
 #include <BRep_Tool.hxx>
@@ -473,8 +474,8 @@ std::vector<Contour> closedContours(const Sketch& sketch)
             const int a=nodeFor(e.first),b=nodeFor(e.second),index=int(edges.size());
             edges.push_back({a,b,i});incident[a].push_back(index);incident[b].push_back(index);
         }
-        // Unsplit crossings/T-junctions and overlapping edges are intentionally
-        // unsupported. Never infer a different perimeter by ignoring a crossing.
+        // Keep established whole-edge references for simple profiles. Crossings
+        // and T-junctions use an exact derived arrangement without editing entities.
         for(std::size_t i=0;i<edges.size();++i)for(std::size_t j=i+1;j<edges.size();++j) {
             const auto a=nodes[edges[i].a],b=nodes[edges[i].b],c=nodes[edges[j].a],d=nodes[edges[j].b];
             if(!intersects(a,b,c,d))continue;
@@ -484,7 +485,7 @@ std::vector<Contour> closedContours(const Sketch& sketch)
                 (onSegment(c,d,a)&&!samePoint(a,c)&&!samePoint(a,d)) ||
                 (onSegment(c,d,b)&&!samePoint(b,c)&&!samePoint(b,d));
             if(!shared || interior || (samePoint(a,c)&&samePoint(b,d)) || (samePoint(a,d)&&samePoint(b,c)))
-                fail("Intersecting, overlapping or unsplit sketch edges are unsupported. Use simple boundaries with shared endpoints.");
+                return intersectedContours(sketch);
         }
         for(const auto& line:sketch.entities)if(line.kind==EntityKind::Line)for(const auto& primitive:sketch.entities) {
             if(primitive.kind==EntityKind::Rectangle) {
@@ -499,7 +500,7 @@ std::vector<Contour> closedContours(const Sketch& sketch)
                         (onSegment(line.first,line.second,b)&&!samePoint(b,line.first)&&!samePoint(b,line.second)) ||
                         (samePoint(a,line.first)&&samePoint(b,line.second)) || (samePoint(b,line.first)&&samePoint(a,line.second));
                     if(!corner || overlap || covers)
-                        fail("Intersecting or overlapping rectangle/line boundaries are unsupported.");
+                        return intersectedContours(sketch);
                 }
             } else if(primitive.kind==EntityKind::Circle) {
                 const double dx=line.second.x-line.first.x,dy=line.second.y-line.first.y;
@@ -507,7 +508,7 @@ std::vector<Contour> closedContours(const Sketch& sketch)
                 const double a=dx*dx+dy*dy,b=2*(ox*dx+oy*dy),c=ox*ox+oy*oy-primitive.radius*primitive.radius;
                 const double discriminant=b*b-4*a*c;
                 if(discriminant>=0)for(double t:{(-b-std::sqrt(discriminant))/(2*a),(-b+std::sqrt(discriminant))/(2*a)})
-                    if(t>=-1e-9 && t<=1+1e-9)fail("Intersecting or touching circle/line boundaries are unsupported.");
+                    if(t>=-1e-9 && t<=1+1e-9)return intersectedContours(sketch);
             }
         }
         std::vector<int> discovered(nodes.size(),-1),low(nodes.size());std::vector<bool> bridge(edges.size(),false);int clock=0;
@@ -577,7 +578,7 @@ std::vector<Contour> closedContours(const Sketch& sketch)
             if(!distance.IsDone())fail("Cannot validate sketch boundaries.");
             if(distance.Value()<=joiningTolerance) {
                 const auto linesOnly=[&](std::size_t index){return std::all_of(simple[index].entityIds.begin(),simple[index].entityIds.end(),[&](const auto& id){const auto found=std::find(identifiers.begin(),identifiers.end(),id);return found!=identifiers.end() && sketch.entities[std::size_t(found-identifiers.begin())].kind==EntityKind::Line;});};
-                if(!linesOnly(i) || !linesOnly(j))fail("Touching circle or legacy rectangle boundaries are unsupported. Use explicit connected line boundaries.");
+                if(!linesOnly(i) || !linesOnly(j))return intersectedContours(sketch);
                 BRepAlgoAPI_Common common(simple[i].face,simple[j].face);common.SetNonDestructive(Standard_True);common.Build();
                 if(!common.IsDone() || common.HasErrors())fail("Cannot validate adjacent sketch regions.");
                 GProp_GProps overlap;BRepGProp::SurfaceProperties(common.Shape(),overlap);
@@ -678,6 +679,8 @@ Sketch selectContour(const Sketch& sketch, const std::vector<std::string>& entit
     if (requested.size() != entityIds.size()) {
         fail("A profile selection contains duplicate entity IDs.");
     }
+    if(std::any_of(entityIds.begin(),entityIds.end(),isFragmentReference))
+        fail("A subdivided region must use the region extrusion/cut API; its arcs are not independent sketch entities.");
     for (const auto& contour : closedContours(sketch)) {
         const std::set<std::string> candidate(contour.entityIds.begin(), contour.entityIds.end());
         if (candidate != requested) {

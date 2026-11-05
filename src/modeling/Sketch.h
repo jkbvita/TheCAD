@@ -85,9 +85,11 @@ Sketch moveSketchPoint(const Sketch& sketch, const SketchPointRef& reference, Po
 Sketch removeSketchEntity(const Sketch& sketch, const std::string& entityId);
 
 enum class Direction { Positive, Negative };
+// Region boundaries retain whole-entity IDs where possible, and versioned
+// source/intersection fragment references for subdivided sketch geometry.
 using RegionReferences = std::vector<std::vector<std::string>>;
 struct Contour {
-    std::vector<std::string> entityIds;
+    std::vector<std::string> entityIds; // Persistent boundary references, including derived fragments.
     TopoDS_Face face;
 };
 

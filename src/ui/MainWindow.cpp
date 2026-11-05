@@ -1372,7 +1372,7 @@ void MainWindow::operationSketchChanged()
         for (std::size_t i = 0; i < draft.availableContours.size(); ++i) {
             QVariantList ids;
             for (const auto& id : draft.availableContours[i].entityIds) ids.append(QString::fromStdString(id));
-            auto* item=new QListWidgetItem(QString("Contour %1 (%2 boundary entities)").arg(i+1).arg(ids.size()),draft.contours);
+            auto* item=new QListWidgetItem(QString("Region %1").arg(i+1),draft.contours);
             item->setData(Qt::UserRole,ids);
         }
         draft.contours->setCurrentRow(-1);draft.contours->clearSelection();

@@ -40,12 +40,12 @@ int main(int argc,char** argv){QCoreApplication app(argc,argv);try{
  const auto path=directory.filePath("branches.thepart");document.save(path);auto loaded=PartDocument::load(path);
  require(loaded.features()[0].sketch.entities.size()==s.entities.size(),"Open geometry lost on reopen");require(std::abs(volume(loaded.shape())-600)<1e-6,"Saved contour regeneration");}
  Sketch legacy;legacy.entities={{EntityKind::Rectangle,{0,0},{20,10},1,"rectangle"},{EntityKind::Line,{0,0},{-5,0},1,"tail"}};require(closedContours(legacy).size()==1,"Legacy rectangle with corner branch");
- auto circleCross=legacy;circleCross.entities={{EntityKind::Circle,{0,0},{},3,"circle"},{EntityKind::Line,{-5,0},{5,0},1,"line"}};reject([&]{closedContours(circleCross);});
+ auto circleCross=legacy;circleCross.entities={{EntityKind::Circle,{0,0},{},3,"circle"},{EntityKind::Line,{-5,0},{5,0},1,"line"}};require(closedContours(circleCross).size()==2,"An intersecting diameter defines two selectable regions");
  auto triangle=rectangle();triangle.entities.resize(3);triangle.entities[1].second={0,10};triangle.entities[2].first={0,10};triangle.entities[2].second={0,0};triangle.entities.push_back({EntityKind::Line,{0,0},{-3,0},1,"tail"});require(closedContours(triangle).size()==1,"Triangle with tail");
  auto two=rectangle();auto other=rectangle(40);two.entities.insert(two.entities.end(),other.entities.begin(),other.entities.end());require(closedContours(two).size()==2,"Independent cycles");
  two.entities.push_back({EntityKind::Line,{20,0},{40,0},1,"bridge"});require(closedContours(two).size()==2,"Bridge between closed cycles");
  Sketch open;open.entities={{EntityKind::Line,{0,0},{1,1},1,"open"}};require(closedContours(open).empty(),"Only open lines");
- auto crossing=rectangle();crossing.entities.push_back({EntityKind::Line,{-1,5},{21,5},1,"cross"});reject([&]{closedContours(crossing);});
+ auto crossing=rectangle();crossing.entities.push_back({EntityKind::Line,{-1,5},{21,5},1,"cross"});require(closedContours(crossing).size()==2,"A crossing line divides the rectangle into selectable regions");
  auto base=PartDocument::createEmpty();auto profile=rectangle();auto source=base.addSketch(profile);base.addExtrude(source,closedContours(base.features()[0].sketch)[0].entityIds,15,Direction::Positive);
  TopTools_IndexedMapOfShape faces;TopExp::MapShapes(base.shape(),TopAbs_FACE,faces);int top=0,side=0;
  for(int i=1;i<=faces.Extent();++i){const auto axes=planarFaceAxes(TopoDS::Face(faces(i)));if(axes.Direction().Z()>0.99)top=i;if(axes.Direction().X()>0.99)side=i;}
