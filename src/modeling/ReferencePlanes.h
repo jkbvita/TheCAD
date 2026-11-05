@@ -24,6 +24,7 @@ struct ReferencePlaneHit {
 // Two-sided, actual face-region picking along the forward ray (parameter >= 0).
 // Nearest hit wins; distances within max(kernel tolerance, halfExtent*1e-9)
 // tie in the deterministic order Front, Top, Right. Labels are never hit targets.
-std::optional<ReferencePlaneHit> pickReferencePlane(const gp_Lin& forwardRay, double halfExtent);
+std::optional<ReferencePlaneHit> pickReferencePlane(const gp_Lin& forwardRay, double halfExtent,
+                                                  std::optional<SketchPlane> filter = {});
 
 } // namespace thecad::modeling

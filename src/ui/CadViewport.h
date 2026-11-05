@@ -5,6 +5,8 @@
 #include "modeling/FeaturePreview.h"
 #include "modeling/ReferencePlanes.h"
 #include "modeling/ReferenceGeometry.h"
+#include "modeling/Selection.h"
+#include <QPointer>
 #include <array>
 #include <AIS_TextLabel.hxx>
 #include <AIS_Point.hxx>
@@ -22,9 +24,13 @@
 #include <TopoDS_Shape.hxx>
 #include <V3d_View.hxx>
 #include <V3d_Viewer.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
+#include <set>
+class QMenu;
+class QContextMenuEvent;
 
 namespace thecad::ui {
-struct DatumVisual {std::string id,name;modeling::DatumGeometry geometry;};
+struct DatumVisual {std::string id,name;modeling::DatumGeometry geometry;bool visible=true;};
 struct ReferencePickItem {modeling::GeometryReference reference;modeling::DatumGeometry geometry;TopoDS_Shape shape;};
 
 class CadViewportTest;
@@ -85,8 +91,17 @@ public:
     std::string datumAt(const QPointF& position,std::optional<modeling::DatumKind> kind={});
     void setReferenceCandidates(const std::vector<ReferencePickItem>& candidates,std::optional<modeling::DatumKind> kind);
     int referenceCandidateAt(const QPointF& position);
+    std::vector<modeling::SelectionRef> selection() const;
+    const modeling::SelectionPolicy& selectionPolicy() const {return m_selectionPolicy;}
+    void setSelectionFilters(std::uint32_t filters,bool enabled=true);
+    void showSelectOther(const QPoint& position);
+    void clearSelection();
+    void beginTreeSelection();
+    void setSelectionFeatureIds(std::string body,std::string sketch){m_bodyFeatureId=std::move(body);m_sketchFeatureId=std::move(sketch);}
 
 signals:
+    void constructionContextRequested(QMenu* menu);
+    void selectionChanged();
     void datumSelected(const QString& id);
     void referenceGeometryPicked(int option);
     void relationsContextRequested(QPoint position);
@@ -125,12 +140,36 @@ protected:
     void keyPressEvent(QKeyEvent* event) override;
     void keyReleaseEvent(QKeyEvent* event) override;
     bool event(QEvent* event) override;
+    void contextMenuEvent(QContextMenuEvent* event) override;
 
 private:
     friend class CadViewportTest;
     friend class SketchInteractionTest;
     friend class ModelingWorkflowTest;
     friend class GraphicalPlaneWorkflowTest;
+    friend class SelectionWorkflowTest;
+    struct PickCandidate {modeling::SelectionCandidate value;TopoDS_Shape shape;Handle(SelectMgr_EntityOwner) owner;};
+    std::vector<PickCandidate> selectionCandidates(const QPointF&,bool includeOccluded=false);
+    void selectCandidate(const PickCandidate&,bool toggle=false);
+    void updateSelectionHover(const QPointF&);
+    void previewCandidate(const std::optional<PickCandidate>&);
+    void refreshNativeSelection();
+    void invalidateBodySelection();
+    void prepareBodyPicking();
+    std::uint64_t m_pickCacheGeneration=~std::uint64_t(0);
+    TopTools_IndexedMapOfShape m_selectionFaces,m_selectionEdges,m_selectionVertices,m_selectionBodies;
+    std::set<int> m_seamEdges,m_artificialVertices;
+    std::vector<modeling::SelectionCandidate> sketchEntityCandidates(const QPointF&) const;
+    modeling::SelectionPolicy m_selectionPolicy;
+    modeling::SelectionModel m_selection;
+    std::uint64_t m_shapeGeneration=0;
+    std::string m_bodyFeatureId,m_sketchFeatureId;
+    std::vector<PickCandidate> m_nativeSelections;
+    Handle(AIS_Shape) m_selectionHover;
+    QPointer<QMenu> m_selectOtherMenu;
+    QPointF m_contextPress;
+    bool m_contextClick=false;
+    bool m_dispatchingSelection=false;
     enum class Navigation { None, Orbit, Pan };
     void initialize();
     void releaseViewer();
@@ -167,6 +206,7 @@ private:
     std::optional<SnapHit> selectionPointAt(const QPointF& position) const;
     std::optional<std::string> entityAt(const QPointF& position) const;
     std::optional<std::string> dimensionAt(const QPointF& position) const;
+    std::vector<modeling::SelectionCandidate> dimensionCandidates(const QPointF& position) const;
     QString dimensionText(const modeling::SketchDimension& dimension) const;
     void updateSketchHover(const QPointF& position);
     void updateDimensionDrag(const QPointF& position);
@@ -211,6 +251,7 @@ private:
     std::string m_selectedDatum,m_hoveredDatum;
     Handle(AIS_Shape) m_referenceHover;
     void updateDatumStyles();
+    std::vector<std::string> datumIdsAt(const QPointF& position);
     void updateReferenceHover(const QPointF& position);
     std::optional<modeling::EntityKind> m_sketchTool;
     bool m_constructionTool=false;

@@ -4,6 +4,7 @@
 #include "ui/CadViewport.h"
 #include "ui/RelationIcons.h"
 #include "modeling/RelationCommands.h"
+#include "modeling/SketchTools.h"
 #include "modeling/ConstraintSolver.h"
 #include <QApplication>
 #include <QFrame>
@@ -72,10 +73,8 @@ void MainWindow::deleteRelation(const std::string& id){
     catch(const std::exception& e){constraintError(QString::fromUtf8(e.what()));}
 }
 void MainWindow::applyContextConstruction(const std::vector<std::string>& ids){
-    if(!m_editSketch || ids!=m_viewport->selectedSketchEntities())return;auto candidate=*m_editSketch;
-    const bool ordinary=std::any_of(candidate.entities.begin(),candidate.entities.end(),[&](const auto& e){return std::find(ids.begin(),ids.end(),e.id)!=ids.end() && !e.construction;});
-    for(auto& e:candidate.entities)if(std::find(ids.begin(),ids.end(),e.id)!=ids.end())e.construction=ordinary;
-    try{acceptConstrainedSketch(candidate);m_viewport->setSketch(*m_editSketch);setWindowModified(true);updateEntityList();updateActions();}
-    catch(const std::exception& e){constraintError(QString::fromUtf8(e.what()));QToolTip::showText(m_relationsAnchor,QString::fromUtf8(e.what()),m_viewport);}m_viewport->setFocus();
+    if(!m_editSketch || ids!=m_viewport->selectedSketchEntities())return;
+    const auto state=modeling::constructionState(*m_editSketch,ids);
+    if(state!=modeling::ConstructionState::Unavailable)setSelectionConstruction(state!=modeling::ConstructionState::Construction);
 }
 }

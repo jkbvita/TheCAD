@@ -403,13 +403,13 @@ MainWindow::MainWindow(QWidget* parent)
     insertMenu->addAction(m_cut);
     auto* referenceMenu=insertMenu->addMenu("Reference Geometry");referenceMenu->addActions({m_referencePlane,m_referenceAxis,m_referencePoint});
     toolsMenu->addAction(m_selectEntity);
-    auto* tolerance=toolsMenu->addAction("Sketch Picking Tolerance...");
+    auto* tolerance=toolsMenu->addAction("Picking Tolerance...");
     tolerance->setObjectName("actionSketchPickingTolerance");
     connect(tolerance,&QAction::triggered,this,[this]{
         bool accepted=false;
-        const double pixels=QInputDialog::getDouble(this,"Sketch Picking Tolerance","Tolerance (logical pixels)",
+        const double pixels=QInputDialog::getDouble(this,"Picking Tolerance","Tolerance (logical pixels)",
             m_viewport->pickingTolerance(),1,32,1,&accepted);
-        if(accepted)m_viewport->setPickingTolerance(pixels);
+        if(accepted){m_viewport->setPickingTolerance(pixels);if(auto* control=findChild<QDoubleSpinBox*>("pickingTolerance")){const QSignalBlocker blocker(control);control->setValue(pixels);}}
     });
     toolsMenu->addSeparator();
     toolsMenu->addAction(findChild<QAction*>("actionDisplayDeleteRelations"));
@@ -489,7 +489,8 @@ MainWindow::MainWindow(QWidget* parent)
     m_deleteEntity->setShortcutContext(Qt::WidgetWithChildrenShortcut);
     m_entities->addAction(m_deleteEntity);
     geometryLayout->addLayout(entityButtons);
-    historySplitter->addWidget(geometryPanel);
+    auto* geometryScroll=new QScrollArea;geometryScroll->setObjectName("sketchGeometryScroll");geometryScroll->setWidgetResizable(true);geometryScroll->setFrameShape(QFrame::NoFrame);geometryScroll->setWidget(geometryPanel);
+    historySplitter->addWidget(geometryScroll);
     historySplitter->setStretchFactor(0, 2);
     historySplitter->setStretchFactor(1, 1);
     historyLayout->addWidget(historySplitter);
@@ -503,6 +504,7 @@ MainWindow::MainWindow(QWidget* parent)
     viewMenu->addAction(historyDock->toggleViewAction());
     editMenu->addAction(m_editEntity);
     editMenu->addAction(m_deleteEntity);
+    initializeSelectionUi(viewMenu);
     connect(m_tree, &QTreeWidget::itemSelectionChanged, this, [this] { selectionChanged(); });
     connect(m_tree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem*, int) { editSelectedFeature(); });
     connect(m_editFeature, &QAction::triggered, this, [this] { editSelectedFeature(); });
@@ -579,7 +581,7 @@ MainWindow::MainWindow(QWidget* parent)
         {const QSignalBlocker blocker(m_tree);m_tree->clearSelection();}
         m_viewport->setSelectedReferencePlane({});updateActions();
         if(index==0){m_viewport->setSelectedSolidFace(0);return;}
-        try {(void)m_document.sketchOnFace(index);}catch(const std::exception& error){m_selectedFace=0;m_viewport->setSelectedSolidFace(0);reportError(QString::fromUtf8(error.what()));return;}
+        if(m_selectingPlane)try {(void)m_document.sketchOnFace(index);}catch(const std::exception& error){m_selectedFace=0;m_viewport->setSelectedSolidFace(0);reportError(QString::fromUtf8(error.what()));return;}
         m_selectedPlane.reset();m_selectedFace=index;m_viewport->setSelectedReferencePlane({});
         m_viewport->setSelectedSolidFace(index);
         if(m_selectingPlane)createSketchOnFace(index);
@@ -807,6 +809,7 @@ bool MainWindow::replaceDocument(document::PartDocument candidate, const QString
         reportError("The part could not be displayed. The current document has been retained.");
         return false;
     }
+    m_viewport->clearSelection();
     m_selectingPlane = false;
     m_selectedPlane.reset();
     m_viewport->cancelPlaneSelection();
@@ -860,6 +863,7 @@ void MainWindow::selectFeature(const std::string& id)
 
 void MainWindow::selectionChanged()
 {
+    m_viewport->beginTreeSelection();
     m_selectedFace=0;
     m_viewport->setSelectedSolidFace(0);
     m_viewport->setSelectedDatum({});
@@ -894,6 +898,8 @@ void MainWindow::selectionChanged()
 }
 void MainWindow::updateDocumentUi()
 {
+    std::string bodyId;for(const auto& feature:m_document.features())if(document::isSolidFeature(feature.kind))bodyId=feature.id;
+    m_viewport->setSelectionFeatureIds(bodyId,m_editSketchId);
     refreshReferenceGeometry();
     const QString name = m_path.isEmpty() ? "Untitled.thepart" : QFileInfo(m_path).fileName();
     setWindowTitle(name + "[*] - TheCAD");
@@ -1010,16 +1016,17 @@ void MainWindow::updateActions()
     for (const auto* name : {"actionNew", "actionOpen", "actionSave", "actionSaveAs"}) {
         if (auto* action = findChild<QAction*>(name)) action->setEnabled(!operation && !selecting && !m_constraints);
     }
-    m_createSketch->setEnabled(!m_editSketch && !operation && !selecting);
+    bool sketchSupport=true;const auto selection=m_viewport->selection();
+    if(selection.size()>1)sketchSupport=false;
+    else if(selection.size()==1){using K=modeling::SelectionKind;const auto kind=selection.front().kind;sketchSupport=kind==K::Face||kind==K::ReferencePlane||kind==K::OriginPlane;
+        if(kind==K::Face)try{(void)m_document.sketchOnFace(selection.front().index);}catch(const std::exception&){sketchSupport=false;}}
+    m_createSketch->setEnabled(!m_editSketch && !operation && !selecting && sketchSupport);
     m_selectEntity->setEnabled(editing && !operation);
     m_line->setEnabled(editing && !operation);
     m_rectangle->setEnabled(editing && !operation);
     m_circle->setEnabled(editing && !operation);
     for(auto* tool:{m_point,m_centerline,m_polygon})tool->setEnabled(editing && !operation);
-    const auto selectedEntity=m_viewport->selectedSketchEntity();
-    const auto selectedLine=m_editSketch?std::find_if(m_editSketch->entities.begin(),m_editSketch->entities.end(),[&](const auto& e){return e.id==selectedEntity;}):std::vector<modeling::SketchEntity>::const_iterator{};
-    const bool lineSelected=m_editSketch && selectedLine!=m_editSketch->entities.end() && selectedLine->kind==modeling::EntityKind::Line;
-    m_construction->setEnabled(editing && !operation && lineSelected);m_construction->setChecked(lineSelected && selectedLine->construction);
+    updateConstructionControls();
     m_finishSketch->setEnabled(editing && !operation);
     const auto* selected = selectedFeature();
     m_editFeature->setEnabled(!m_editSketch && !operation && !selecting && selected);

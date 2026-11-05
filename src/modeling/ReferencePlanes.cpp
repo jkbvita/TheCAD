@@ -59,7 +59,7 @@ TopoDS_Face referencePlaneFace(SketchPlane plane, double halfExtent)
     }
 }
 
-std::optional<ReferencePlaneHit> pickReferencePlane(const gp_Lin& forwardRay, double halfExtent)
+std::optional<ReferencePlaneHit> pickReferencePlane(const gp_Lin& forwardRay, double halfExtent,std::optional<SketchPlane> filter)
 {
     validateExtent(halfExtent);
     validateRay(forwardRay);
@@ -67,6 +67,7 @@ std::optional<ReferencePlaneHit> pickReferencePlane(const gp_Lin& forwardRay, do
     std::optional<ReferencePlaneHit> closest;
     try {
         for (const auto plane : {SketchPlane::XY, SketchPlane::XZ, SketchPlane::YZ}) {
+            if(filter&&*filter!=plane)continue;
             const auto axes = sketchAxes(plane);
             const gp_Vec normal(axes.Direction());
             const gp_Vec direction(forwardRay.Direction());

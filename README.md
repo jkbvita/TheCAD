@@ -63,8 +63,8 @@ With dependencies installed, run from the repository root:
 
 ## Launch from Windows Explorer
 
-For the current sketch repair build, use the updated desktop **TheCAD**
-shortcut or `build/package/TheCAD-Sketch-Definition-Camera/TheCAD.exe` in the isolated
+For the current selection/construction build, use the updated desktop **TheCAD**
+shortcut or `build/package/TheCAD-Selection-Construction-Final/TheCAD.exe` in the isolated
 worktree. The older package is retained to protect an open sketch; see the
 [repair checks](docs/verification/sketch-relations-system.md).
 
@@ -114,8 +114,10 @@ The provisional standalone PlaneGCS adapter solves supported dimensions and rela
 regenerating dependent features before accepting changes.
 
 Point places selectable, draggable, dimensionable points with persistent snapping.
-Centerline draws construction lines using the usual Line interaction; select a
-line and use **For Construction** to convert it in either direction. Points and
+Centerline draws construction lines using the usual Line interaction; select
+lines or circles and use **For Construction** in the left properties or right-click
+menu to convert them in either direction. Mixed selections show a partial check.
+Conversion preserves geometry IDs, dimensions and constraints and supports Undo/Redo. Points and
 construction geometry are excluded from extrusion boundaries.
 
 Polygon creates a regular six-sided polygon: click the center, then set size and
@@ -173,11 +175,24 @@ Dimensions follow current geometry throughout endpoint dragging and numeric edit
 In Select mode or idle Smart Dimension, drag text or dimension lines to reposition
 the annotation without changing its value. Circle dimensions use diametric/radial
 lines and circumference arrows; dragging rotates their placement. Placements survive
-save/reopen in `.thepart` schema 13; earlier supported files remain readable.
+save/reopen in `.thepart` schema 14; earlier supported files remain readable.
 Smart Dimension and drawing buttons stay visibly pressed while active; Esc exits.
 Geometry highlights on hover. Picking defaults to 8 logical pixels, adjustable for
-the session under **Tools > Sketch Picking Tolerance**.
+the session under **Tools > Picking Tolerance** or the Selection Filters toolbar.
 See the [manual checks and limits](docs/verification/dimension-graphics-selection.md).
+
+Part selection distinguishes solid bodies, planar/cylindrical faces, curved and
+circular edges and real vertices. Hover is orange; selection is light blue.
+Shift-click or Ctrl-click adds/removes entities. Click empty space or Escape to
+clear. **F5** shows Selection Filters; choose Faces, Edges, Vertices, Sketch
+geometry, Reference geometry, Solid bodies or Dimensions/relations. **F6** bypasses
+and restores the chosen filters. The toolbar also controls logical-pixel pick
+tolerance. Right-click → **Select Other** lists overlapping candidates; Tab cycles,
+Enter selects and Escape cancels. Deeper candidates are explicitly marked.
+Transient topology selections clear when the body regenerates, preserving the
+existing conservative persistent-reference checks.
+See [research](docs/research/solidworks-selection-construction-2026-11-05.md) and
+[selection/construction checks](docs/verification/selection-construction-reference.md).
 
 **Ctrl+Z / Ctrl+Y** undo and redo the last ten completed modeling edits, including
 geometry, dimensions and annotation placement. A new edit after Undo clears Redo;
@@ -214,6 +229,9 @@ Pick references in the viewport or choose them from filtered lists. New datums
 are selectable and named in the feature tree. Select a reference plane and click
 Sketch to draw/extrude/cut in its local frame. Editing defining geometry regenerates
 dependents. Undo/Redo and `.thepart` save/reopen preserve definitions and stable IDs.
+Use a reference feature's tree context menu or View menu to hide/show it. Visibility
+persists and is undoable; hidden references remain valid for dependent features.
+Compatible typed preselection fills simple reference-creation inputs automatically.
 Solid topology references keep the existing conservative signature validation.
 These are datum features; spatial sketch constraint solving remains future scope.
 See [supported workflows and manual checks](docs/verification/reference-geometry.md).

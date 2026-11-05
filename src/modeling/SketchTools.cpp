@@ -6,6 +6,18 @@
 #include <set>
 #include <stdexcept>
 namespace thecad::modeling {
+ConstructionState constructionState(const Sketch& sketch,const std::vector<std::string>& ids){
+    if(ids.empty())return ConstructionState::Unavailable;bool normal=false,construction=false;
+    for(const auto& id:ids){const auto e=std::find_if(sketch.entities.begin(),sketch.entities.end(),[&](const auto& e){return e.id==id;});
+        if(e==sketch.entities.end() || (e->kind!=EntityKind::Line&&e->kind!=EntityKind::Circle&&e->kind!=EntityKind::Rectangle))return ConstructionState::Unavailable;
+        normal|=!e->construction;construction|=e->construction;
+    }return normal&&construction?ConstructionState::Mixed:construction?ConstructionState::Construction:ConstructionState::Normal;
+}
+Sketch setSketchConstruction(const Sketch& sketch,const std::vector<std::string>& ids,bool construction){
+    if(constructionState(sketch,ids)==ConstructionState::Unavailable)throw std::runtime_error("Select sketch curves to change their construction state.");
+    auto candidate=sketch;for(auto& e:candidate.entities)if(std::find(ids.begin(),ids.end(),e.id)!=ids.end())e.construction=construction;
+    validateSketchConstraintReferences(candidate);return candidate;
+}
 namespace {
 constexpr double pi=3.14159265358979323846;
 void require(bool value,const char* message){if(!value)throw std::runtime_error(message);}

@@ -26,6 +26,7 @@ class QDockWidget;
 class QStackedWidget;
 class QFrame;
 class QEvent;
+class QMenu;
 
 namespace thecad::ui {
 
@@ -81,6 +82,14 @@ private:
     void applyContextRelation(modeling::RelationKind,const std::vector<std::string>&);
     void deleteRelation(const std::string& id);
     void applyContextConstruction(const std::vector<std::string>&);
+    void initializeSelectionUi(QMenu* viewMenu);
+    void updateConstructionControls();
+    void setSelectionConstruction(bool construction);
+    void toggleReferenceVisibility();
+    QCheckBox* m_forConstruction=nullptr;
+    QLabel* m_constructionSummary=nullptr;
+    QGroupBox* m_constructionPanel=nullptr;
+    QAction* m_referenceVisibility=nullptr;
     QPointer<QFrame> m_relationsToolbar;
     QPoint m_relationsAnchor;
     void acceptConstrainedSketch(const modeling::Sketch& candidate);

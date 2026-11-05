@@ -58,6 +58,7 @@ void CadViewport::updateRelationSymbols(){
     }
 }
 std::optional<std::string> CadViewport::relationAt(const QPointF& position) const {
+    if(!m_selectionPolicy.allows(modeling::SelectionKind::Relation))return {};
     if(!m_showRelations)return {};for(const auto& hit:m_relationHits)if(hit.bounds.adjusted(-2,-2,2,2).contains(position))return hit.id;return {};
 }
 void CadViewport::showSketchRelations(bool visible){m_showRelations=visible;m_hoveredRelation.clear();if(!visible)m_selectedRelation.clear();updateRelationSymbols();update();}

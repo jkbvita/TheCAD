@@ -28,6 +28,7 @@ struct Feature {
     std::vector<std::string> dependencies;
     modeling::DatumDefinition reference;
     modeling::DatumGeometry datum; // Derived by regeneration, not persisted.
+    bool referenceVisible=true;
 };
 struct ReferenceOption {std::string label;modeling::GeometryReference reference;modeling::DatumGeometry geometry;TopoDS_Shape selectionShape;};
 

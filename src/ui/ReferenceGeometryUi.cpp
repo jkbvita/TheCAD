@@ -1,5 +1,6 @@
 #include "ui/ReferenceGeometryUi.h"
 #include "ui/CadViewport.h"
+#include "modeling/Selection.h"
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QLineEdit>
@@ -22,7 +23,7 @@ namespace thecad::ui {
 namespace {
 using namespace modeling;
 bool same(const GeometryReference& a,const GeometryReference& b){return a.source==b.source&&a.featureId==b.featureId&&a.entityId==b.entityId&&a.role==b.role&&a.index==b.index&&a.signature==b.signature;}
-std::vector<DatumVisual> visuals(const document::PartDocument& doc){std::vector<DatumVisual> result;for(const auto& f:doc.features())if(f.kind==document::FeatureKind::ReferenceGeometry)result.push_back({f.id,f.name,f.datum});return result;}
+std::vector<DatumVisual> visuals(const document::PartDocument& doc){std::vector<DatumVisual> result;for(const auto& f:doc.features())if(f.kind==document::FeatureKind::ReferenceGeometry)result.push_back({f.id,f.name,f.datum,f.referenceVisible});return result;}
 double entered(QDoubleSpinBox* spin){bool okay=false;const double value=spin->locale().toDouble(spin->cleanText(),&okay);if(!okay||!spin->hasAcceptableInput())throw std::runtime_error("Enter a valid number in each visible parameter.");return value;}
 }
 void MainWindow::startReferenceGeometry(modeling::DatumKind kind,const document::Feature* editing){
@@ -30,12 +31,30 @@ void MainWindow::startReferenceGeometry(modeling::DatumKind kind,const document:
     auto draft=std::make_unique<ReferenceDraft>();draft->kind=kind;draft->editing=editing!=nullptr;if(editing)draft->feature=*editing;
     draft->support=editing?m_document.beforeFeature(editing->id):m_document;draft->options=draft->support.referenceOptions();
     std::optional<GeometryReference> selectedPlane;
+    std::vector<GeometryReference> selectedReferences;std::vector<DatumKind> selectedKinds;std::optional<DatumMethod> selectedMethod;
+    if(!editing)for(const auto& selection:m_viewport->selection())for(const auto& option:draft->options){
+        using K=SelectionKind;const auto& ref=option.reference;bool match=false;
+        if(selection.kind==K::Face)match=ref.source==ReferenceSource::BodyFace&&ref.index==selection.index;
+        else if(selection.kind==K::Edge)match=ref.source==ReferenceSource::BodyEdge&&ref.index==selection.index;
+        else if(selection.kind==K::Vertex)match=ref.source==ReferenceSource::BodyVertex&&ref.index==selection.index;
+        else if(selection.kind==K::OriginPlane)match=ref.source==ReferenceSource::BasePlane&&ref.index==selection.index;
+        else if(selection.kind==K::ReferencePlane||selection.kind==K::ReferenceAxis||selection.kind==K::ReferencePoint)match=ref.source==ReferenceSource::Datum&&ref.featureId==selection.featureId;
+        if(match){selectedReferences.push_back(ref);selectedKinds.push_back(option.geometry.kind);break;}
+    }
+    if(kind==DatumKind::Axis&&selectedKinds==std::vector<DatumKind>{DatumKind::Axis})selectedMethod=DatumMethod::AxisOnReference;
+    else if(kind==DatumKind::Axis&&selectedKinds==std::vector<DatumKind>{DatumKind::Point,DatumKind::Point})selectedMethod=DatumMethod::AxisTwoPoints;
+    else if(kind==DatumKind::Plane&&selectedKinds==std::vector<DatumKind>{DatumKind::Plane})selectedMethod=DatumMethod::PlaneOffset;
+    else if(kind==DatumKind::Plane&&selectedKinds==std::vector<DatumKind>{DatumKind::Point,DatumKind::Point,DatumKind::Point})selectedMethod=DatumMethod::PlaneThreePoints;
+    // Keep consecutive XYZ point creation available when the previous result
+    // remains selected. An explicitly selected body vertex supplies a derived
+    // point; other point references remain available in the method selector.
+    else if(kind==DatumKind::Point&&selectedKinds==std::vector<DatumKind>{DatumKind::Point}&&selectedReferences.front().source==ReferenceSource::BodyVertex)selectedMethod=DatumMethod::PointOnReference;
     if(!editing&&kind==DatumKind::Plane){
         if(m_selectedPlane){GeometryReference ref;ref.source=ReferenceSource::BasePlane;ref.index=int(*m_selectedPlane);selectedPlane=ref;}
         else if(const auto* feature=selectedFeature();feature&&feature->kind==document::FeatureKind::ReferenceGeometry&&feature->datum.kind==DatumKind::Plane){GeometryReference ref;ref.source=ReferenceSource::Datum;ref.featureId=feature->id;selectedPlane=ref;}
         else if(m_selectedFace)for(const auto& option:draft->options)if(option.reference.source==ReferenceSource::BodyFace&&option.reference.index==m_selectedFace&&option.geometry.kind==DatumKind::Plane){selectedPlane=option.reference;break;}
     }
-    m_selectedFace=0;m_selectedPlane.reset();
+    m_viewport->clearSelection();m_selectedFace=0;m_selectedPlane.reset();
     m_referenceDraft=std::move(draft);auto& d=*m_referenceDraft;m_mode=WorkspaceMode::FeatureDraft;hideRelationsContext();
     const auto title=kind==DatumKind::Point?"Reference Point":kind==DatumKind::Axis?"Reference Axis":"Reference Plane";
     d.page=new PropertyManagerPage(title,"Choose a construction method. Select references in the viewport or the lists, or enter XYZ coordinates.",m_managerStack);d.page->setObjectName("referenceGeometryPanel");d.page->buttons->setObjectName("referenceGeometryButtons");
@@ -57,6 +76,7 @@ void MainWindow::startReferenceGeometry(modeling::DatumKind kind,const document:
     if(editing){const QSignalBlocker blocker(d.method);d.method->setCurrentIndex(d.method->findData(int(editing->reference.method)));}
     updateReferenceGeometryForm();
     if(editing){for(int i=0;i<int(editing->reference.references.size());++i)for(int j=0;j<d.references[i]->count();++j){const int option=d.references[i]->itemData(j).toInt();if(same(editing->reference.references[std::size_t(i)],d.options[std::size_t(option)].reference)){const QSignalBlocker blocker(d.references[i]);d.references[i]->setCurrentIndex(j);break;}}updateReferenceGeometryPreview();}
+    else if(selectedMethod){d.method->setCurrentIndex(d.method->findData(int(*selectedMethod)));for(int i=0;i<int(selectedReferences.size());++i)for(int j=0;j<d.references[i]->count();++j){const auto& ref=d.options[std::size_t(d.references[i]->itemData(j).toInt())].reference;if(same(ref,selectedReferences[std::size_t(i)])){d.references[i]->setCurrentIndex(j);break;}}}
     else if(selectedPlane){d.method->setCurrentIndex(d.method->findData(int(DatumMethod::PlaneOffset)));for(int j=0;j<d.references[0]->count();++j){const auto& ref=d.options[std::size_t(d.references[0]->itemData(j).toInt())].reference;if(same(ref,*selectedPlane)){d.references[0]->setCurrentIndex(j);break;}}}
     m_managerStack->addWidget(d.page);m_managerStack->setCurrentWidget(d.page);m_historyDock->setWindowTitle("PropertyManager");updateActions();
     const auto method=DatumMethod(d.method->currentData().toInt());if(datumReferenceKinds(method).empty()){d.position[0]->setFocus();d.position[0]->selectAll();}else if(method==DatumMethod::PlaneOffset){d.value->setFocus();d.value->selectAll();}else d.references[0]->setFocus();

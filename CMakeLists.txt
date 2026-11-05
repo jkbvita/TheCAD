@@ -24,6 +24,7 @@ add_library(thecad_modeling STATIC src/modeling/Box.cpp src/modeling/Sketch.cpp 
 set_target_properties(thecad_modeling PROPERTIES AUTOMOC OFF)
 target_sources(thecad_modeling PRIVATE src/modeling/FeaturePreview.cpp)
 target_sources(thecad_modeling PRIVATE src/modeling/ReferenceGeometry.cpp)
+target_sources(thecad_modeling PRIVATE src/modeling/Selection.cpp)
 target_include_directories(thecad_modeling PUBLIC src)
 target_link_libraries(thecad_modeling PRIVATE thecad_planegcs PUBLIC thecad_occt TKPrim TKTopAlgo TKBRep TKBO TKBool TKShHealing)
 
@@ -36,6 +37,8 @@ target_link_libraries(thecad_document PUBLIC thecad_modeling Qt6::Core)
 add_library(thecad_ui STATIC
     src/ui/PropertyManagerPage.cpp
     src/ui/ReferenceGeometryViewport.cpp
+    src/ui/SelectionViewport.cpp
+    src/ui/SelectionUi.cpp
     src/ui/ReferenceGeometryUi.cpp
     src/ui/CadViewport.cpp src/ui/CadViewport.h
     src/ui/MainWindow.cpp src/ui/MainWindow.h src/ui/SketchConstraintsUi.cpp src/ui/SmartDimensionUi.cpp src/ui/EditHistory.cpp src/ui/SketchToolsUi.cpp src/ui/RelationIcons.cpp src/ui/RelationsContextUi.cpp src/ui/RelationSymbols.cpp)
@@ -55,6 +58,10 @@ endforeach()
 include(CTest)
 option(THECAD_GUI_TESTS "Run viewport tests (requires a desktop and OpenGL)" OFF)
 if(BUILD_TESTING)
+    add_executable(thecad_selection_tests tests/SelectionTests.cpp)
+    set_target_properties(thecad_selection_tests PROPERTIES AUTOMOC OFF)
+    target_link_libraries(thecad_selection_tests PRIVATE thecad_document)
+    add_test(NAME selection.model-construction COMMAND thecad_selection_tests)
     add_executable(thecad_reference_geometry_tests tests/ReferenceGeometryTests.cpp)
     set_target_properties(thecad_reference_geometry_tests PROPERTIES AUTOMOC OFF)
     target_link_libraries(thecad_reference_geometry_tests PRIVATE thecad_document)
@@ -137,6 +144,12 @@ if(BUILD_TESTING)
     add_test(NAME modeling.reference-faces-contours COMMAND thecad_reference_face_tests)
 
     if(THECAD_GUI_TESTS)
+        add_executable(thecad_selection_workflow_tests tests/SelectionWorkflowTests.cpp)
+        target_link_libraries(thecad_selection_workflow_tests PRIVATE thecad_ui Qt6::Test)
+        add_test(NAME ui.selection-construction COMMAND thecad_selection_workflow_tests -o "${CMAKE_BINARY_DIR}/selection-results.txt,txt")
+        add_test(NAME ui.selection-construction.hidpi COMMAND thecad_selection_workflow_tests -o "${CMAKE_BINARY_DIR}/selection-hidpi-results.txt,txt")
+        set_tests_properties(ui.selection-construction ui.selection-construction.hidpi PROPERTIES TIMEOUT 90 LABELS "gui;selection" RUN_SERIAL TRUE)
+        set_tests_properties(ui.selection-construction.hidpi PROPERTIES ENVIRONMENT "QT_SCALE_FACTOR=1.5" LABELS "gui;selection;hidpi")
         find_package(Qt6 REQUIRED COMPONENTS Test)
         add_executable(thecad_startup_launch_tests tests/StartupLaunchTests.cpp)
         target_compile_definitions(thecad_startup_launch_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
