@@ -198,9 +198,10 @@ private slots:
         choose({-25,-12.5});choose({25,25});QCOMPARE(viewport->selectedSketchEntities().size(),std::size_t(2));QVERIFY(!viewport->m_pointDrag);QVERIFY(!viewport->m_firstPoint);QVERIFY(!viewport->m_sketchTool);
         choose({-25,-12.5});QCOMPARE(viewport->selectedSketchEntities().size(),std::size_t(1));choose({-25,-12.5});QTest::keyRelease(viewport,Qt::Key_Shift);
         auto* toolbar=window.findChild<QFrame*>("sketchRelationsContext");QVERIFY(toolbar && toolbar->isVisible());
-        QVERIFY(QRect(viewport->mapToGlobal(QPoint(0,0)),viewport->size()).contains(toolbar->frameGeometry()));
+        QVERIFY(!toolbar->isWindow());QCOMPARE(toolbar->parentWidget(),viewport);QVERIFY(toolbar->testAttribute(Qt::WA_NativeWindow));
+        QVERIFY(viewport->rect().contains(toolbar->geometry()));
         QTest::keyClick(viewport,Qt::Key_Escape);QVERIFY(!toolbar->isVisible());
-        viewport->relationsContextRequested(viewport->rect().bottomRight());toolbar=window.findChild<QFrame*>("sketchRelationsContext");QVERIFY(toolbar->isVisible());QVERIFY(QRect(viewport->mapToGlobal(QPoint(0,0)),viewport->size()).contains(toolbar->frameGeometry()));
+        viewport->relationsContextRequested(viewport->rect().bottomRight());toolbar=window.findChild<QFrame*>("sketchRelationsContext");QVERIFY(toolbar->isVisible());QVERIFY(viewport->rect().contains(toolbar->geometry()));
         QMouseEvent away(QEvent::MouseMove,QPoint(1,1),viewport->mapToGlobal(QPoint(1,1)),Qt::NoButton,Qt::NoButton,Qt::NoModifier);QApplication::sendEvent(viewport,&away);QVERIFY(!toolbar->isVisible());
         viewport->relationsContextRequested(point(viewport,{-25,-12.5}));toolbar=window.findChild<QFrame*>("sketchRelationsContext");QVERIFY(toolbar->isVisible());
         auto* parallel=toolbar->findChild<QToolButton*>(QString("contextRelation%1").arg(int(RelationKind::Parallel)));QVERIFY(parallel);
@@ -219,6 +220,46 @@ private slots:
         QTest::mouseClick(window.findChild<QPushButton*>("cancelDimension"),Qt::LeftButton);QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);visible->setChecked(true);QVERIFY(!viewport->m_relationHits.empty());
         QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{-60,55}));QVERIFY(viewport->selectedSketchEntities().empty());
         QVERIFY(window.errors.isEmpty());command(window,"actionFinishSketch");window.close();
+    }
+    void shiftReleaseFromSidePanelShowsOneShotRelationsOverlay() {
+        using namespace modeling;WorkflowWindow window;window.show();QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
+        Sketch sketch;sketch.entities={{EntityKind::Line,{-40,-20},{-10,-5},1,"a"},{EntityKind::Line,{10,20},{40,30},1,"b"}};viewport->sketchChanged(sketch);
+        auto* entities=window.findChild<QListWidget*>("sketchEntities");QVERIFY(entities);
+        QTest::keyPress(viewport,Qt::Key_Shift);
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::ShiftModifier,point(viewport,{-25,-12.5}));
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::ShiftModifier,point(viewport,{25,25}));
+        QCOMPARE(viewport->selectedSketchEntities().size(),std::size_t(2));
+        QVERIFY(!window.findChild<QFrame*>("sketchRelationsContext"));
+        entities->setFocus();QVERIFY(entities->hasFocus());
+        QKeyEvent repeated(QEvent::KeyRelease,Qt::Key_Shift,Qt::NoModifier,QString{},true);QApplication::sendEvent(entities,&repeated);
+        QVERIFY(!window.findChild<QFrame*>("sketchRelationsContext"));
+        QTest::keyRelease(entities,Qt::Key_Shift);
+        auto* toolbar=window.findChild<QFrame*>("sketchRelationsContext");QVERIFY(toolbar&&toolbar->isVisible());
+        QCOMPARE(toolbar->window(),&window);QVERIFY(entities->hasFocus());QVERIFY(!toolbar->hasFocus());
+        QVERIFY(viewport->rect().contains(toolbar->geometry()));
+        QVERIFY((toolbar->pos()-(point(viewport,{25,25})+QPoint(14,14))).manhattanLength()<2);
+        auto* equal=toolbar->findChild<QToolButton*>(QString("contextRelation%1").arg(int(RelationKind::Equal)));QVERIFY(equal);
+        QVERIFY(!toolbar->findChild<QToolButton*>(QString("contextRelation%1").arg(int(RelationKind::Concentric))));
+        QTest::mouseMove(equal,equal->rect().center());QVERIFY(toolbar->isVisible());
+        QTest::mouseClick(equal,Qt::LeftButton);QVERIFY(!toolbar->isVisible());
+        QCOMPARE(viewport->m_sketch->relations.size(),std::size_t(1));QCOMPARE(viewport->m_sketch->relations[0].kind,RelationKind::Equal);
+        const auto id=viewport->m_sketch->relations[0].id;
+        QTest::keyClick(viewport,Qt::Key_Z,Qt::ControlModifier);QVERIFY(viewport->m_sketch->relations.empty());
+        QTest::keyClick(viewport,Qt::Key_Y,Qt::ControlModifier);QCOMPARE(viewport->m_sketch->relations[0].id,id);
+        // Releasing Shift by itself must not reopen a toolbar for an old selection.
+        QTest::keyClick(viewport,Qt::Key_Shift);QVERIFY(!toolbar->isVisible());
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,QPoint(10,10));
+        QTest::keyPress(viewport,Qt::Key_Shift);QTest::mouseClick(viewport,Qt::LeftButton,Qt::ShiftModifier,QPoint(10,10));QTest::keyRelease(viewport,Qt::Key_Shift);
+        QVERIFY(!toolbar->isVisible());QVERIFY(viewport->selectedSketchEntities().empty());
+        QTest::keyPress(viewport,Qt::Key_Shift);
+        for(const auto& entity:viewport->m_sketch->entities)QTest::mouseClick(viewport,Qt::LeftButton,Qt::ShiftModifier,point(viewport,{(entity.first.x+entity.second.x)/2,(entity.first.y+entity.second.y)/2}));
+        QTest::keyRelease(viewport,Qt::Key_Shift);toolbar=window.findChild<QFrame*>("sketchRelationsContext");QVERIFY(toolbar->isVisible());
+        // A click in the side panel dismisses it without changing constraints.
+        QTest::mouseClick(entities->viewport(),Qt::LeftButton,Qt::NoModifier,QPoint(5,5));QVERIFY(!toolbar->isVisible());QCOMPARE(viewport->m_sketch->relations.size(),std::size_t(1));
+        QTest::keyPress(viewport,Qt::Key_Shift);QTest::mouseClick(viewport,Qt::LeftButton,Qt::ShiftModifier,point(viewport,{-25,-12.5}));
+        command(window,"actionFinishSketch");QTest::keyRelease(&window,Qt::Key_Shift);QVERIFY(!toolbar->isVisible());QVERIFY(!viewport->m_shiftSelectionChanged);
+        QVERIFY(window.errors.isEmpty());QVERIFY(window.close());
     }
     void circleContextConstructionAndInspectorChange() {
         using namespace modeling;WorkflowWindow window;window.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&window));auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);

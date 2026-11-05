@@ -556,6 +556,7 @@ void CadViewport::beginSketch(const modeling::Sketch& sketch)
 
 void CadViewport::endSketch()
 {
+    cancelSketchMultiSelection();
     cancelDimensionDrag();cancelPointDrag(); resetSketchInference();
     m_sketchEditing = false;
     updateSketchAxes();
@@ -759,6 +760,7 @@ void CadViewport::updateConstraintPresentation() {
 
 void CadViewport::setSketchTool(modeling::EntityKind kind,bool construction)
 {
+    cancelSketchMultiSelection();
     cancelDimensionDrag();cancelPointDrag(); resetSketchInference();
     m_selectedRelation.clear();
     m_sketchTool = kind;m_constructionTool=construction;m_drawingPreview.reset();
@@ -794,6 +796,7 @@ void CadViewport::placeSketchPoint(const QPointF& position) {
 
 void CadViewport::selectSketchTool()
 {
+    cancelSketchMultiSelection();
     cancelDimensionDrag();cancelPointDrag(); resetSketchInference();
     m_sketchTool.reset(); m_firstPoint.reset(); m_firstReference.reset();m_constructionTool=false;m_drawingPreview.reset();
     m_hoveredPoint.reset();QToolTip::hideText();
@@ -1327,10 +1330,11 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
     if(event->button()==Qt::LeftButton && m_sketchEditing && event->modifiers().testFlag(Qt::ShiftModifier)){
         if(m_constraintPicking)emit constraintPickingCanceled();
         if(m_sketchTool)selectSketchTool();
-        setFocus(Qt::MouseFocusReason);m_shiftSelectionChanged=true;m_selectionCursor=event->position().toPoint();
+        setFocus(Qt::MouseFocusReason);m_selectionCursor=event->position().toPoint();m_selectedRelation.clear();
         const auto point=selectionPointAt(event->position());const auto body=point?std::optional<std::string>(point->reference.entityId):entityAt(event->position());
         m_selectedDimensions.clear();m_selectedPoint.reset();
         if(body && !body->empty()){
+            m_shiftSelectionChanged=true;
             const auto found=std::find(m_selectedEntities.begin(),m_selectedEntities.end(),*body);
             if(found==m_selectedEntities.end())m_selectedEntities.push_back(*body);else m_selectedEntities.erase(found);
         }
@@ -1602,13 +1606,18 @@ void CadViewport::keyPressEvent(QKeyEvent* event)
 
 void CadViewport::keyReleaseEvent(QKeyEvent* event)
 {
-    if(event->key()==Qt::Key_Shift && !event->isAutoRepeat() && m_shiftSelectionChanged){
-        m_shiftSelectionChanged=false;
-        if(m_sketchEditing && !m_selectedEntities.empty())emit relationsContextRequested(m_selectionCursor);
-        event->accept();return;
-    }
+    if(event->key()==Qt::Key_Shift && !event->isAutoRepeat() && finishSketchMultiSelection()){event->accept();return;}
     QWidget::keyReleaseEvent(event);
 }
+
+bool CadViewport::finishSketchMultiSelection(){
+    if(!m_shiftSelectionChanged)return false;
+    m_shiftSelectionChanged=false;
+    if(m_sketchEditing && !m_sketchTool && !m_constraintPicking && !m_selectedEntities.empty())emit relationsContextRequested(m_selectionCursor);
+    return true;
+}
+
+void CadViewport::cancelSketchMultiSelection(){m_shiftSelectionChanged=false;}
 
 void CadViewport::fitAll()
 {

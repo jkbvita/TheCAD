@@ -48,6 +48,8 @@ public:
     void setSketchTool(modeling::EntityKind kind,bool construction=false);
     bool constructionTool() const {return m_constructionTool;}
     void selectSketchTool();
+    bool finishSketchMultiSelection();
+    void cancelSketchMultiSelection();
     void selectSketchEntity(const QString& id);
     void setSketch(const modeling::Sketch& sketch);
     void beginContourSelection(const modeling::Sketch& sketch);

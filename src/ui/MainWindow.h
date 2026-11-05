@@ -4,6 +4,7 @@
 #include "document/UndoHistory.h"
 
 #include <QMainWindow>
+#include <QPointer>
 #include <optional>
 #include <memory>
 
@@ -79,7 +80,7 @@ private:
     void applyContextRelation(modeling::RelationKind,const std::vector<std::string>&);
     void deleteRelation(const std::string& id);
     void applyContextConstruction(const std::vector<std::string>&);
-    QFrame* m_relationsToolbar=nullptr;
+    QPointer<QFrame> m_relationsToolbar;
     QPoint m_relationsAnchor;
     void acceptConstrainedSketch(const modeling::Sketch& candidate);
     void constraintError(const QString& error);

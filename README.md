@@ -63,8 +63,8 @@ With dependencies installed, run from the repository root:
 
 ## Launch from Windows Explorer
 
-For the current feature-panel build, use the updated desktop **TheCAD**
-shortcut or `build/package/TheCAD-Feature-PropertyManager/TheCAD.exe` in the isolated
+For the current sketch-relation popup build, use the updated desktop **TheCAD**
+shortcut or `build/package/TheCAD-Relations-Popup/TheCAD.exe` in the isolated
 worktree. The older package is retained to protect an open sketch; see the
 [repair checks](docs/verification/sketch-relations-system.md).
 
@@ -133,9 +133,13 @@ completed geometry intact. Tab switching alone does not finish a sketch.
 ## Sketch relations
 
 Hold **Shift** and click sketch entities to toggle a multiple selection. Release
-Shift for the floating toolbar of applicable relations. Shift selection switches
+Shift for the toolbar of applicable relations beside the cursor, inside the viewport.
+Shift selection switches
 the active drawing/dimension command to Select. The toolbar stays until you choose
 a command, clear selection, press Esc or move sufficiently far away; it has no timer.
+One click applies the chosen relation and closes the bar. Shift release is handled
+throughout the sketch window, including after a focus change to the side panel.
+See the [popup verification checklist](docs/verification/sketch-relations-popup.md).
 Use its **For Construction / Normal Geometry** command to convert selected entities.
 The dedicated Centerline tool remains on the Sketch ribbon.
 

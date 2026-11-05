@@ -42,6 +42,7 @@ approved scope do not need repeated approval.
 - [0018: Intersection-aware sketch regions for Extrude and Cut](0018-intersecting-sketch-regions.md).
 - [0019: Independent sketch definition colors and planar face selection](0019-definition-colors-face-selection.md).
 - [0020: Feature PropertyManager, immediate depth entry and material previews](0020-feature-property-manager.md).
+- [0021: Reliable Shift-release sketch relations overlay](0021-sketch-relations-popup.md).
 
 ## Pending owner decisions
 
