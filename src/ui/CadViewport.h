@@ -2,6 +2,7 @@
 
 #include "modeling/Sketch.h"
 #include "modeling/ConstraintSolver.h"
+#include "modeling/FeaturePreview.h"
 #include "modeling/ReferencePlanes.h"
 #include <array>
 #include <AIS_TextLabel.hxx>
@@ -51,7 +52,8 @@ public:
     void setSketch(const modeling::Sketch& sketch);
     void beginContourSelection(const modeling::Sketch& sketch);
     void endContourSelection();
-    void previewShape(const TopoDS_Shape& shape);
+    void setSelectedContourFaces(const std::vector<TopoDS_Face>& faces);
+    void previewShape(const TopoDS_Shape& shape,const modeling::MaterialChanges& changes={});
     void clearPreview();
     void setConstraintPicking(bool enabled);
     void setSmartDimensionPicking(bool enabled);
@@ -233,6 +235,8 @@ private:
     bool m_regionClickCandidate = false;
     QPointF m_regionPressPosition;
     Handle(AIS_Shape) m_previewPresentation;
+    std::vector<Handle(AIS_Shape)> m_materialPreviewPresentations;
+    std::vector<Handle(AIS_Shape)> m_selectedContourPresentations;
     std::array<Handle(AIS_Shape), 3> m_referencePlanes;
     std::array<Handle(AIS_TextLabel), 3> m_planeLabels;
     std::array<Handle(AIS_Shape), 3> m_planeCenterlines;

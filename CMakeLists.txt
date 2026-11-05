@@ -22,6 +22,7 @@ target_include_directories(thecad_occt SYSTEM INTERFACE "${OpenCASCADE_INCLUDE_D
 
 add_library(thecad_modeling STATIC src/modeling/Box.cpp src/modeling/Sketch.cpp src/modeling/PlanarRegions.cpp src/modeling/ReferencePlanes.cpp src/modeling/ConstraintSolver.cpp src/modeling/DimensionInference.cpp src/modeling/DimensionAnnotation.cpp src/modeling/SketchTools.cpp src/modeling/RelationCommands.cpp)
 set_target_properties(thecad_modeling PROPERTIES AUTOMOC OFF)
+target_sources(thecad_modeling PRIVATE src/modeling/FeaturePreview.cpp)
 target_include_directories(thecad_modeling PUBLIC src)
 target_link_libraries(thecad_modeling PRIVATE thecad_planegcs PUBLIC thecad_occt TKPrim TKTopAlgo TKBRep TKBO TKBool TKShHealing)
 
@@ -31,6 +32,7 @@ target_include_directories(thecad_document PUBLIC src)
 target_link_libraries(thecad_document PUBLIC thecad_modeling Qt6::Core)
 
 add_library(thecad_ui STATIC
+    src/ui/PropertyManagerPage.cpp
     src/ui/CadViewport.cpp src/ui/CadViewport.h
     src/ui/MainWindow.cpp src/ui/MainWindow.h src/ui/SketchConstraintsUi.cpp src/ui/SmartDimensionUi.cpp src/ui/EditHistory.cpp src/ui/SketchToolsUi.cpp src/ui/RelationIcons.cpp src/ui/RelationsContextUi.cpp src/ui/RelationSymbols.cpp)
 target_include_directories(thecad_ui PUBLIC src)
@@ -49,6 +51,10 @@ endforeach()
 include(CTest)
 option(THECAD_GUI_TESTS "Run viewport tests (requires a desktop and OpenGL)" OFF)
 if(BUILD_TESTING)
+    add_executable(thecad_feature_preview_tests tests/FeaturePreviewTests.cpp)
+    set_target_properties(thecad_feature_preview_tests PROPERTIES AUTOMOC OFF)
+    target_link_libraries(thecad_feature_preview_tests PRIVATE thecad_modeling)
+    add_test(NAME modeling.feature-preview COMMAND thecad_feature_preview_tests)
     add_executable(thecad_sketch_definition_tests tests/SketchDefinitionTests.cpp)
     set_target_properties(thecad_sketch_definition_tests PROPERTIES AUTOMOC OFF)
     target_link_libraries(thecad_sketch_definition_tests PRIVATE thecad_modeling)

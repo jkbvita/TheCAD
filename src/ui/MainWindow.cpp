@@ -3,6 +3,7 @@
 #include <QInputDialog>
 #include "ui/MainWindow.h"
 #include "ui/CadViewport.h"
+#include "ui/PropertyManagerPage.h"
 #include "modeling/Sketch.h"
 #include "modeling/ConstraintSolver.h"
 #include "modeling/ReferencePlanes.h"
@@ -35,6 +36,7 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QLineEdit>
+#include <QKeyEvent>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -187,14 +189,14 @@ struct MainWindow::OperationDraft {
     bool fromSketch = false;
     bool modifiedBefore = false;
     std::optional<document::PartDocument> sourceDocument;
-    QWidget* panel = nullptr;
+    PropertyManagerPage* panel = nullptr;
     QComboBox* sketches = nullptr;
     QListWidget* contours = nullptr;
     QDoubleSpinBox* length = nullptr;
     QComboBox* direction = nullptr;
     QCheckBox* through = nullptr;
-    QLabel* status = nullptr;
     QDialogButtonBox* buttons = nullptr;
+    QLabel* selectionCount = nullptr;
     std::vector<modeling::Contour> availableContours;
     std::optional<document::PartDocument> candidate;
     std::string candidateFeatureId;
@@ -1243,24 +1245,21 @@ void MainWindow::startOperation(document::Feature feature, bool editing)
     draft.feature=std::move(feature);draft.editing=editing;
     draft.fromSketch=m_editSketch.has_value();draft.modifiedBefore=isWindowModified();
     draft.sourceDocument=std::move(sourceDocument);m_mode=WorkspaceMode::FeatureDraft;
-    draft.panel=new QWidget(m_managerStack);draft.panel->setObjectName("operationPanel");
-    auto* layout=new QVBoxLayout(draft.panel);layout->setContentsMargins(8,8,8,8);
-    auto* title=new QLabel(draft.feature.kind==document::FeatureKind::Cut ? "Extruded Cut" : "Extrude");
-    title->setObjectName("operationTitle");title->setStyleSheet("font-size: 14px; font-weight: 600;");layout->addWidget(title);
-    draft.buttons=new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel);
-    draft.buttons->setObjectName("operationButtons");draft.buttons->button(QDialogButtonBox::Ok)->setText("Confirm");
-    draft.buttons->button(QDialogButtonBox::Ok)->setEnabled(false);layout->addWidget(draft.buttons);
-    auto* scroll=new QScrollArea;scroll->setWidgetResizable(true);scroll->setFrameShape(QFrame::NoFrame);layout->addWidget(scroll);
-    auto* content=new QWidget;scroll->setWidget(content);auto* settings=new QVBoxLayout(content);settings->setContentsMargins(0,0,0,0);
+    draft.panel=new PropertyManagerPage(draft.feature.kind==document::FeatureKind::Cut ? "Extruded Cut" : "Extrude",
+        "Click inside sketch regions, then type the depth. The preview updates as you work.",m_managerStack);
+    auto* settings=draft.panel->settings;draft.buttons=draft.panel->buttons;
+    draft.buttons->button(QDialogButtonBox::Ok)->setEnabled(false);
     auto* referenceForm=new QFormLayout;
     auto* startingReference=new QLabel("Sketch Plane");startingReference->setObjectName("operationStartingReference");
     referenceForm->addRow("Starting reference",startingReference);settings->addLayout(referenceForm);
-    auto* directionGroup=new QGroupBox("Direction 1");auto* directionForm=new QFormLayout(directionGroup);
+    auto* legend=new QLabel("Blue: selected regions\nAmber: added material  ·  Red: removed material");legend->setObjectName("operationPreviewLegend");legend->setWordWrap(true);settings->addWidget(legend);
+    auto* directionGroup=new QGroupBox("Direction 1");auto* directionForm=new QFormLayout(directionGroup);directionForm->setRowWrapPolicy(QFormLayout::WrapLongRows);
     auto* endCondition=new QLabel(draft.feature.throughAll ? "Through All" : "Blind");endCondition->setObjectName("operationEndCondition");
     directionForm->addRow("End condition",endCondition);
     draft.length=number(directionForm,"Depth",draft.feature.length,true);draft.length->setObjectName("featureLength");
+    draft.length->setAccessibleName("Feature depth in millimeters");
     draft.direction=new QComboBox;draft.direction->setObjectName("featureDirection");
-    draft.direction->addItems({"Positive sketch normal","Negative sketch normal"});
+    draft.direction->addItems({"Along sketch normal","Opposite sketch normal"});
     draft.direction->setCurrentIndex(draft.feature.direction==modeling::Direction::Positive ? 0 : 1);
     directionForm->addRow("Direction",draft.direction);
     auto* reverse=new QPushButton("Reverse direction");reverse->setObjectName("featureReverseDirection");
@@ -1271,7 +1270,7 @@ void MainWindow::startOperation(document::Feature feature, bool editing)
         directionForm->addRow(draft.through);draft.through->setChecked(draft.feature.throughAll);draft.length->setEnabled(!draft.feature.throughAll);
     }
     settings->addWidget(directionGroup);
-    auto* selectionGroup=new QGroupBox("Selected Contours");auto* selectionForm=new QFormLayout(selectionGroup);
+    auto* selectionGroup=new QGroupBox("Selected Contours");auto* selectionForm=new QFormLayout(selectionGroup);selectionForm->setRowWrapPolicy(QFormLayout::WrapLongRows);
     draft.sketches=new QComboBox;draft.sketches->setObjectName("operationSketch");draft.sketches->setPlaceholderText("Select a sketch");
     int selectedIndex=-1;
     for(const auto& item:draft.sourceDocument->features()) {
@@ -1282,11 +1281,12 @@ void MainWindow::startOperation(document::Feature feature, bool editing)
     }
     selectionForm->addRow("Sketch",draft.sketches);draft.sketches->setEnabled(!draft.fromSketch);
     draft.contours=new QListWidget;draft.contours->setObjectName("operationContour");
-    draft.contours->setSelectionMode(QAbstractItemView::MultiSelection);draft.contours->setMaximumHeight(150);
+    draft.contours->setSelectionMode(QAbstractItemView::MultiSelection);draft.contours->setMaximumHeight(150);draft.contours->setMinimumHeight(80);
+    draft.selectionCount=new QLabel("0 regions selected");draft.selectionCount->setObjectName("operationSelectionCount");selectionForm->addRow(draft.selectionCount);
     selectionForm->addRow("Contour",draft.contours);
     auto* instructions=new QLabel("Click regions to add or remove them, or select multiple contours here. Inner boundaries form holes in their surrounding region.");
     instructions->setWordWrap(true);selectionForm->addRow(instructions);settings->addWidget(selectionGroup);
-    draft.status=new QLabel;draft.status->setObjectName("operationStatus");draft.status->setWordWrap(true);settings->addWidget(draft.status);settings->addStretch();
+    settings->addStretch();
     connect(draft.sketches,&QComboBox::currentIndexChanged,this,[this]{operationSketchChanged();});
     connect(draft.contours,&QListWidget::itemSelectionChanged,this,[this]{updateOperationPreview();});
     connect(draft.length,&QDoubleSpinBox::valueChanged,this,[this]{updateOperationPreview();});
@@ -1296,7 +1296,7 @@ void MainWindow::startOperation(document::Feature feature, bool editing)
     connect(draft.direction,&QComboBox::currentIndexChanged,this,[this]{updateOperationPreview();});
     connect(reverse,&QPushButton::clicked,this,[this]{if(m_operation)m_operation->direction->setCurrentIndex(1-m_operation->direction->currentIndex());});
     connect(draft.through,&QCheckBox::toggled,this,[this,endCondition](bool through){
-        if(!m_operation)return;endCondition->setText(through?"Through All":"Blind");m_operation->length->setEnabled(!through);updateOperationPreview();
+        if(!m_operation)return;endCondition->setText(through?"Through All":"Blind");m_operation->length->setEnabled(!through);updateOperationPreview();if(!through)focusOperationDepth();
     });
     connect(draft.buttons,&QDialogButtonBox::rejected,this,[this]{finishOperation(false);});
     connect(draft.buttons,&QDialogButtonBox::accepted,this,[this]{
@@ -1315,14 +1315,15 @@ void MainWindow::startOperation(document::Feature feature, bool editing)
         }}
         if(draft.contours->selectedItems().size()!=int(references.size())) {
             const QSignalBlocker blocker(draft.contours);draft.contours->clearSelection();
-            draft.status->setText("A saved region is unavailable. Reselect the intended regions explicitly.");
+            draft.panel->setStatus("A saved region is unavailable. Reselect the intended regions explicitly.",true);
         }
         updateOperationPreview();
-        if(draft.sketches->currentIndex()<0)draft.status->setText("The saved source sketch is unavailable. Select a replacement explicitly.");
-        else if(draft.contours->selectedItems().isEmpty())draft.status->setText("The saved contour is unavailable. Select a replacement explicitly.");
+        if(draft.sketches->currentIndex()<0)draft.panel->setStatus("The saved source sketch is unavailable. Select a replacement explicitly.",true);
+        else if(draft.contours->selectedItems().isEmpty())draft.panel->setStatus("The saved contour is unavailable. Select a replacement explicitly.",true);
     }
     m_managerStack->addWidget(draft.panel);m_managerStack->setCurrentWidget(draft.panel);
     m_historyDock->setWindowTitle("PropertyManager");updateDocumentUi();
+    focusOperationDepth();
 }
 
 void MainWindow::finishOperation(bool accepted)
@@ -1358,6 +1359,7 @@ void MainWindow::operationSketchChanged()
     auto& draft = *m_operation;
     draft.candidate.reset();
     draft.availableContours.clear();
+    draft.selectionCount->setText("0 regions selected");
     m_viewport->clearPreview();
     const QSignalBlocker blocker(draft.contours);
     draft.contours->clear();
@@ -1366,7 +1368,7 @@ void MainWindow::operationSketchChanged()
                                     [&sourceId](const auto& item) { return item.id == sourceId; });
     if (found == draft.sourceDocument->features().end()) {
         m_viewport->endContourSelection();
-        draft.status->setText("Select a source sketch explicitly.");
+        draft.panel->setStatus("Select a source sketch explicitly.");
         draft.buttons->button(QDialogButtonBox::Ok)->setEnabled(false);
         return;
     }
@@ -1380,10 +1382,10 @@ void MainWindow::operationSketchChanged()
             item->setData(Qt::UserRole,ids);
         }
         draft.contours->setCurrentRow(-1);draft.contours->clearSelection();
-        draft.status->setText(draft.availableContours.empty()
+        draft.panel->setStatus(draft.availableContours.empty()
             ? "This sketch has no valid closed contour. Finish a valid closed profile before using it."
             : "Select a contour explicitly to generate a preview.");
-    } catch (const std::exception& error) { draft.status->setText(QString::fromUtf8(error.what())); }
+    } catch (const std::exception& error) { draft.panel->setStatus(QString::fromUtf8(error.what()),true); }
     draft.buttons->button(QDialogButtonBox::Ok)->setEnabled(false);
 }
 
@@ -1393,14 +1395,21 @@ void MainWindow::updateOperationPreview()
     auto& draft = *m_operation;
     draft.candidate.reset();
     draft.buttons->button(QDialogButtonBox::Ok)->setEnabled(false);
-    if(draft.length->isEnabled() && !draft.length->hasAcceptableInput()) {
-        m_viewport->clearPreview();draft.status->setText("Enter a valid positive depth in millimeters.");return;
-    }
-    {const QSignalBlocker blocker(draft.length);const QSignalBlocker editorBlocker(draft.length->findChild<QLineEdit*>());draft.length->interpretText();}
     const auto selected=draft.contours->selectedItems();
+    draft.selectionCount->setText(QString("%1 region%2 selected").arg(selected.size()).arg(selected.size()==1?"":"s"));
+    std::vector<TopoDS_Face> selectedFaces;
+    for(auto* item:selected)selectedFaces.push_back(draft.availableContours[std::size_t(draft.contours->row(item))].face);
+    m_viewport->setSelectedContourFaces(selectedFaces);
+    bool numeric=true;
+    const double depthValue=draft.length->isEnabled()?draft.length->locale().toDouble(draft.length->cleanText(),&numeric):draft.length->value();
+    if(draft.length->isEnabled() && (!numeric || !draft.length->hasAcceptableInput())) {
+        m_viewport->clearPreview();draft.panel->setStatus("Enter a valid positive depth in millimeters.",true);return;
+    }
+    // Read the pending numeric text without normalizing it mid-keystroke. In
+    // particular, interpreting "23." here would erase the decimal separator.
     if(selected.isEmpty()) {
         m_viewport->clearPreview();
-        draft.status->setText("Select a contour explicitly to generate a preview.");
+        draft.panel->setStatus("Click inside a closed region to select it.");
         return;
     }
     try {
@@ -1410,7 +1419,7 @@ void MainWindow::updateOperationPreview()
         for(auto* item:selected)references.push_back(draft.availableContours[std::size_t(draft.contours->row(item))].entityIds);
         feature.contour.clear();feature.contours.clear();
         if(references.size()==1)feature.contour=references.front();else feature.contours=references;
-        feature.length = draft.length->value();
+        feature.length = depthValue;
         feature.direction = draft.direction->currentIndex() == 0 ? modeling::Direction::Positive : modeling::Direction::Negative;
         feature.throughAll = feature.kind == document::FeatureKind::Cut && draft.through->isChecked();
         auto candidate = *draft.sourceDocument;
@@ -1423,14 +1432,15 @@ void MainWindow::updateOperationPreview()
         } else {
             id = candidate.addExtrudeRegions(feature.sketchId, references, feature.length, feature.direction);
         }
-        m_viewport->previewShape(candidate.shape());
+        const auto changes=modeling::materialChanges(draft.sourceDocument->shape(),candidate.shape());
+        m_viewport->previewShape(candidate.shape(),changes);
         draft.candidate = std::move(candidate);
         draft.candidateFeatureId = id;
-        draft.status->setText("Preview is valid. Confirm to commit this feature, or Cancel to retain the original part.");
+        draft.panel->setStatus("Preview ready. Type a depth or select more regions. Enter confirms.");
         draft.buttons->button(QDialogButtonBox::Ok)->setEnabled(true);
     } catch (const std::exception& error) {
         m_viewport->clearPreview();
-        draft.status->setText(QString("Cannot generate preview: %1").arg(error.what()));
+        draft.panel->setStatus(QString("Cannot generate preview: %1").arg(error.what()),true);
     }
 }
 
@@ -1447,17 +1457,46 @@ void MainWindow::operationRegionClicked(modeling::Point2 point)
         for (std::size_t i = 0; i < draft.availableContours.size(); ++i) {
             if (!modeling::contourContains(draft.availableContours[i], found->sketch, point)) continue;
             if (selected >= 0) {
-                draft.status->setText("Several contours contain this point. Choose the intended contour in the list.");
+                draft.panel->setStatus("Several contours contain this point. Choose the intended contour in the list.");
                 return;
             }
             selected = int(i);
         }
         if (selected >= 0) {
-            draft.contours->setCurrentRow(selected,QItemSelectionModel::NoUpdate);
-            draft.contours->item(selected)->setSelected(!draft.contours->item(selected)->isSelected());
+            {const QSignalBlocker blocker(draft.contours);draft.contours->setCurrentRow(selected,QItemSelectionModel::NoUpdate);
+            draft.contours->item(selected)->setSelected(!draft.contours->item(selected)->isSelected());}
             updateOperationPreview();
-        } else draft.status->setText("No valid closed contour contains this point. Click inside a region or choose it in the list.");
-    } catch (const std::exception& error) { draft.status->setText(QString::fromUtf8(error.what())); }
+            focusOperationDepth();
+        } else draft.panel->setStatus("No valid closed contour contains this point. Click inside a region or choose it in the list.");
+    } catch (const std::exception& error) { draft.panel->setStatus(QString::fromUtf8(error.what()),true); }
+}
+
+void MainWindow::focusOperationDepth(){
+    if(!m_operation || !m_operation->length->isEnabled() || !m_operation->panel->isVisible())return;
+    m_operation->length->setFocus(Qt::OtherFocusReason);m_operation->length->selectAll();
+}
+
+bool MainWindow::operationKeyEvent(QObject* watched,QEvent* event){
+    if(!m_operation || event->type()!=QEvent::KeyPress)return false;
+    auto* widget=qobject_cast<QWidget*>(watched);
+    if(!widget || (widget!=this && widget->window()!=this))return false;
+    auto* key=static_cast<QKeyEvent*>(event);
+    // Normal control activation (buttons, combos, list navigation) keeps its keys.
+    const bool depth=widget==m_operation->length || m_operation->length->isAncestorOf(widget);
+    if(key->key()==Qt::Key_Return || key->key()==Qt::Key_Enter){
+        if(widget!=m_viewport && !depth)return false;
+        updateOperationPreview();
+        if(m_operation && m_operation->candidate)m_operation->buttons->button(QDialogButtonBox::Ok)->click();
+        key->accept();return true;
+    }
+    // View navigation may take focus. The next numeric keystroke starts depth
+    // entry afresh; ordinary text fields and Ctrl shortcuts are never intercepted.
+    if(widget==m_viewport && m_operation->length->isEnabled() && !key->text().isEmpty()
+        && !(key->modifiers()&(Qt::ControlModifier|Qt::AltModifier|Qt::MetaModifier))
+        && (key->text().at(0).isDigit() || key->text()=="." || key->text()=="," || key->text()=="-")){
+        focusOperationDepth();QApplication::sendEvent(m_operation->length,key);return true;
+    }
+    return false;
 }
 void MainWindow::closeEvent(QCloseEvent* event)
 {

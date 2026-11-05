@@ -1,5 +1,6 @@
 #include "modeling/ConstraintSolver.h"
 #include "modeling/RelationCommands.h"
+#include "modeling/SketchTools.h"
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -32,6 +33,16 @@ int main(){try{
     circle.dimensions[0].driving=false;state=analyze(circle);require(!curve(state,"circle")&&!curve(state,"equal"),"Reference dimension must not define size");
     circle.relations.push_back({"center",RelationKind::FixedPoint,{"circle",PointRole::Center},{},{10,20}});state=analyze(circle);require(point(state,"circle",PointRole::Center)&&!curve(state,"circle"),"Anchored center must not define free radius");
     Sketch points;points.entities={{EntityKind::Point,{3,4},{},1,"p"}};require(!point(analyze(points),"p",PointRole::First),"A points-only sketch must retain both freedoms");points.relations={{"fixed",RelationKind::FixedPoint,{"p",PointRole::First},{},{3,4}}};require(point(analyze(points),"p",PointRole::First),"Fixed standalone point must be black");
+    for(const bool construction:{false,true}){
+        Sketch mixed;mixed.entities={{EntityKind::Line,{-20,-10},{-5,15},1,"line",construction},{EntityKind::Circle,{20,20},{},8,"circle",construction},{EntityKind::Point,{40,-20},{},1,"point",construction},{EntityKind::Point,{60,30},{},1,"free"}};
+        mixed=addSelectionRelations(mixed,RelationKind::FixedEntity,{"line","circle","point"},"fix");state=analyze(mixed);
+        require(state.degreesOfFreedom==2&&curve(state,"line")&&curve(state,"circle"),"All defined ordinary and construction curves must be black in mixed sketches");
+        require(point(state,"line",PointRole::First)&&point(state,"line",PointRole::Second)&&point(state,"circle",PointRole::Center)&&point(state,"point",PointRole::First)&&!point(state,"free",PointRole::First),"All defined endpoints, centers and standalone points must be black");
+    }
+    auto polygon=addRegularPolygon({},"hexagon",{{15,25},12,0.25,6});
+    polygon=addSelectionRelations(polygon,RelationKind::FixedEntity,{polygon.polygons[0].edges[0]},"anchor-edge");state=analyze(polygon);
+    require(state.degreesOfFreedom==0,"Anchored regular polygon must be defined");
+    for(const auto& edge:polygon.polygons[0].edges)require(curve(state,edge)&&point(state,edge,PointRole::First)&&point(state,edge,PointRole::Second),"All regular polygon edges and vertices must inherit definition");
     Sketch diagonal;diagonal.entities={{EntityKind::Line,{0,0},{30,40},1,"diagonal"}};diagonal.dimensions={dimension("dx",DimensionKind::HorizontalDistance,{"diagonal",PointRole::First},{"diagonal",PointRole::Second},30),dimension("dy",DimensionKind::VerticalDistance,{"diagonal",PointRole::First},{"diagonal",PointRole::Second},40)};state=analyze(diagonal);require(curve(state,"diagonal")&&!point(state,"diagonal",PointRole::First),"Dimensions can define direction while translation remains free");
     require(analyze({}).degreesOfFreedom==0,"Empty sketch diagnosis");
     auto invalid=sketch;invalid.relations[0].first.entityId="missing";require(!analyzeSketchDefinition(invalid).valid,"Invalid references must not appear fully defined");

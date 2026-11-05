@@ -12,6 +12,7 @@
 #include <Graphic3d_TypeOfLimit.hxx>
 #include <Image_PixMap.hxx>
 #include <Prs3d_PointAspect.hxx>
+#include <Prs3d_LineAspect.hxx>
 #include <QDir>
 #include <QImage>
 #include <set>
@@ -72,6 +73,19 @@ private slots:
         QVERIFY(std::find(viewport->m_definition.definedCurves.begin(),viewport->m_definition.definedCurves.end(),"horizontal")!=viewport->m_definition.definedCurves.end());
         viewport->setSketch(removeSketchRelation(*viewport->m_sketch,"axis"));
         QVERIFY(viewport->m_definition.definedCurves.empty());
+    }
+    void definedCirclesAndConstructionGeometryRenderBlack() {
+        using namespace modeling;
+        Sketch sketch;sketch.entities={{EntityKind::Circle,{-25,20},{},8,"circle"},{EntityKind::Circle,{25,20},{},8,"construction-circle",true},{EntityKind::Line,{-20,-20},{20,-20},1,"centerline",true},{EntityKind::Point,{40,-30},{},1,"free"}};
+        sketch=addSelectionRelations(sketch,RelationKind::FixedEntity,{"circle","construction-circle","centerline"},"fix");viewport->beginSketch(sketch);viewport->selectSketchTool();hover({70,60});
+        QVERIFY(!viewport->m_sketchFullyDefined);QCOMPARE(viewport->m_sketchBatches.size(),std::size_t(2));
+        for(const auto& batch:viewport->m_sketchBatches){Quantity_Color color;batch->Color(color);QVERIFY(color.Distance(Quantity_Color(Quantity_NOC_BLACK))<1e-6);}
+        QVERIFY(!viewport->m_constructionPresentation.IsNull());
+        QCOMPARE(viewport->m_constructionPresentation->Attributes()->WireAspect()->Aspect()->Type(),Aspect_TOL_DOTDASH);
+        const auto color=[&](std::size_t index){const auto image=viewport->m_pointPresentations[index]->Attributes()->PointAspect()->Aspect()->MarkerImage()->GetImage();return image->PixelColor(image->SizeX()/2,image->SizeY()/2).GetRGB();};
+        QCOMPARE(viewport->m_pointPresentations.size(),std::size_t(6));
+        for(std::size_t i=1;i<5;++i)QVERIFY(color(i).Distance(Quantity_Color(Quantity_NOC_BLACK))<0.01);
+        QVERIFY(color(5).Distance(Quantity_Color(Quantity_NOC_BLUE))<0.01);
     }
     void midpointCuesCreationAndPersistentDragging() {
         using namespace modeling;

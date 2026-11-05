@@ -518,6 +518,43 @@ private slots:
         QCOMPARE(window.document().features().size(),std::size_t(4));QCOMPARE(window.document().features()[0].sketch.relations.size(),active.relations.size());
         QVERIFY(BRepCheck_Analyzer(window.document().shape()).IsValid());QVERIFY(window.errors.isEmpty());QVERIFY(window.close());
     }
+    void featureDepthTypingContourFeedbackAndMaterialPreview() {
+        WorkflowWindow window;window.show();QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
+        command(window,"actionRectangle");
+        for(const auto p:{modeling::Point2{-40,-15},modeling::Point2{-10,15},modeling::Point2{10,-15},modeling::Point2{40,15}})QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,p));
+        command(window,"actionExtrude");auto* panel=window.findChild<QWidget*>("operationPanel");QVERIFY(panel);
+        auto* depth=panel->findChild<QDoubleSpinBox*>("featureLength");auto* editor=depth->findChild<QLineEdit*>();QVERIFY(editor);
+        QTRY_VERIFY(depth->hasFocus()||editor->hasFocus());QVERIFY(editor->hasSelectedText());
+        QTest::keyClicks(QApplication::focusWidget(),"23.5");QCOMPARE(depth->value(),23.5);
+        auto* contours=panel->findChild<QListWidget*>("operationContour");QCOMPARE(contours->selectedItems().size(),0);
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{-25,0}));
+        QCOMPARE(contours->selectedItems().size(),1);QCOMPARE(viewport->m_selectedContourPresentations.size(),std::size_t(1));
+        QCOMPARE(viewport->m_materialPreviewPresentations.size(),std::size_t(1));
+        QVERIFY(std::abs(volume(viewport->m_materialPreviewPresentations[0]->Shape())-900*23.5)<1e-5);
+        QTRY_VERIFY(depth->hasFocus()||editor->hasFocus());QVERIFY(editor->hasSelectedText());
+        const auto direction=viewport->m_view->Camera()->Direction();const auto center=viewport->m_view->Camera()->Center();const auto scale=viewport->m_view->Camera()->Scale();
+        QTest::keyClicks(QApplication::focusWidget(),"17.25");QCOMPARE(depth->value(),17.25);
+        QVERIFY(direction.Angle(viewport->m_view->Camera()->Direction())<1e-10);QVERIFY(center.Distance(viewport->m_view->Camera()->Center())<1e-10);QCOMPARE(viewport->m_view->Camera()->Scale(),scale);
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{25,0}));QCOMPARE(contours->selectedItems().size(),2);QCOMPARE(viewport->m_selectedContourPresentations.size(),std::size_t(2));
+        QVERIFY(panel->findChild<QLabel*>("operationSelectionCount")->text().startsWith("2 regions"));
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{-25,0}));QCOMPARE(contours->selectedItems().size(),1);QCOMPARE(viewport->m_selectedContourPresentations.size(),std::size_t(1));
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{25,0}));QVERIFY(contours->selectedItems().isEmpty());QVERIFY(viewport->m_selectedContourPresentations.empty());QVERIFY(viewport->m_previewPresentation.IsNull());QVERIFY(viewport->m_materialPreviewPresentations.empty());
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{25,0}));
+        // Viewport navigation may own focus; numeric input must still start depth entry.
+        viewport->setFocus();QTest::keyClick(viewport,Qt::Key_1);QTest::keyClick(QApplication::focusWidget(),Qt::Key_2);QCOMPARE(depth->value(),12.0);
+        editor->selectAll();QTest::keyClicks(editor,"0");QTest::keyClick(editor,Qt::Key_Return);
+        QVERIFY(window.findChild<QWidget*>("operationPanel"));QCOMPARE(window.document().features().size(),std::size_t(1));QVERIFY(viewport->m_previewPresentation.IsNull());
+        depth->selectAll();QTest::keyClicks(QApplication::focusWidget(),"18");QCOMPARE(depth->value(),18.0);QTest::keyClick(QApplication::focusWidget(),Qt::Key_Return);
+        QCOMPARE(window.document().features().size(),std::size_t(2));QVERIFY(viewport->m_selectedContourPresentations.empty());QVERIFY(viewport->m_materialPreviewPresentations.empty());
+        QVERIFY(std::abs(volume(window.document().shape())-900*18)<1e-5);
+        createSketch(window);command(window,"actionCircle");QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{25,0}));QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{29,0}));
+        command(window,"actionExtrudedCut");panel=window.findChild<QWidget*>("operationPanel");depth=panel->findChild<QDoubleSpinBox*>("featureLength");editor=depth->findChild<QLineEdit*>();
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{25,0}));QTest::keyClicks(QApplication::focusWidget(),"5");QCOMPARE(depth->value(),5.0);
+        QCOMPARE(viewport->m_materialPreviewPresentations.size(),std::size_t(1));QVERIFY(std::abs(volume(viewport->m_materialPreviewPresentations[0]->Shape())-std::acos(-1.0)*16*5)<1e-4);
+        QTest::keyClick(QApplication::focusWidget(),Qt::Key_Escape);QCOMPARE(window.document().features().size(),std::size_t(3));QVERIFY(viewport->m_sketchEditing);QVERIFY(viewport->m_selectedContourPresentations.empty());QVERIFY(viewport->m_materialPreviewPresentations.empty());
+        QVERIFY(window.errors.isEmpty());QVERIFY(window.close());
+    }
     void invalidActiveSketchStaysEditable() {
         WorkflowWindow window;window.show();QVERIFY(QTest::qWaitForWindowExposed(&window));
         auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);

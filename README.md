@@ -63,10 +63,16 @@ With dependencies installed, run from the repository root:
 
 ## Launch from Windows Explorer
 
-For the current definition-color and face-selection build, use the updated desktop **TheCAD**
-shortcut or `build/package/TheCAD-Definition-Colors/TheCAD.exe` in the isolated
+For the current feature-panel build, use the updated desktop **TheCAD**
+shortcut or `build/package/TheCAD-Feature-PropertyManager/TheCAD.exe` in the isolated
 worktree. The older package is retained to protect an open sketch; see the
 [repair checks](docs/verification/sketch-relations-system.md).
+
+Extrude/Cut selects the depth text automatically when opened and after selecting
+a region in the viewport. Type a depth immediately, including decimals; Enter
+confirms a valid preview and Esc cancels. Selected regions fill blue, added material
+shows amber and removed material red. Preview changes preserve the current view.
+See [feature-panel checks](docs/verification/feature-property-manager.md).
 
 Point, Line and Centerline can acquire line midpoints with a temporary hover cue.
 Clicking creates a persistent Midpoint relation, so the attachment follows later

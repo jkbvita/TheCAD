@@ -38,6 +38,7 @@ void MainWindow::showRelationsContext(QPoint position){
     m_relationsToolbar->move(location);m_relationsToolbar->show();m_relationsToolbar->raise();
 }
 bool MainWindow::eventFilter(QObject* watched,QEvent* event){
+    if(operationKeyEvent(watched,event))return true;
     if(m_relationsToolbar && m_relationsToolbar->isVisible()){
         if(event->type()==QEvent::MouseMove){const auto position=static_cast<QMouseEvent*>(event)->globalPosition().toPoint();const auto corridor=m_relationsToolbar->frameGeometry().united(QRect(m_relationsAnchor-QPoint(12,12),QSize(24,24))).adjusted(-75,-75,75,75);if(!corridor.contains(position))hideRelationsContext();}
         else if(event->type()==QEvent::KeyPress && static_cast<QKeyEvent*>(event)->key()==Qt::Key_Escape){hideRelationsContext();event->accept();return true;}

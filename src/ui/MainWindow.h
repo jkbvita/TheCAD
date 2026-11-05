@@ -24,6 +24,7 @@ class QPushButton;
 class QDockWidget;
 class QStackedWidget;
 class QFrame;
+class QEvent;
 
 namespace thecad::ui {
 
@@ -144,6 +145,8 @@ private:
     void operationSketchChanged();
     void updateOperationPreview();
     void operationRegionClicked(modeling::Point2 point);
+    void focusOperationDepth();
+    bool operationKeyEvent(QObject* watched,QEvent* event);
     struct OperationDraft;
 
     enum class WorkspaceMode { Part, SelectingPlane, EditingSketch, FeatureDraft };

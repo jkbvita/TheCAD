@@ -41,6 +41,7 @@ approved scope do not need repeated approval.
 - [0017: Midpoint snapping and free rectangle corner dragging](0017-midpoint-snaps-rectangle-drag.md).
 - [0018: Intersection-aware sketch regions for Extrude and Cut](0018-intersecting-sketch-regions.md).
 - [0019: Independent sketch definition colors and planar face selection](0019-definition-colors-face-selection.md).
+- [0020: Feature PropertyManager, immediate depth entry and material previews](0020-feature-property-manager.md).
 
 ## Pending owner decisions
 

@@ -212,6 +212,8 @@ void CadViewport::releaseViewer()
     m_selectedEntityPresentation.Nullify();
     m_hoveredEntityPresentation.Nullify();
     m_previewPresentation.Nullify();
+    m_materialPreviewPresentations.clear();
+    m_selectedContourPresentations.clear();
     m_sketchPresentation.Nullify();m_constructionPresentation.Nullify();
     m_sketchBatches.clear();m_selectedSolidFace=0;
     m_presentation.Nullify();
@@ -529,6 +531,7 @@ void CadViewport::updateSketchAxes()
 }
 void CadViewport::beginSketch(const modeling::Sketch& sketch)
 {
+    setSelectedContourFaces({});
     setSelectedSolidFace(0);
     cancelDimensionDrag();cancelPointDrag(); resetSketchInference();
     m_selectingPlane = false;
@@ -572,6 +575,7 @@ void CadViewport::endSketch()
 
 void CadViewport::beginContourSelection(const modeling::Sketch& sketch)
 {
+    setSelectedContourFaces({});
     cancelDimensionDrag();cancelPointDrag();resetSketchInference();
     m_sketchTool.reset();m_firstPoint.reset();m_firstReference.reset();
     showReferencePlanes(false);
@@ -585,29 +589,51 @@ void CadViewport::beginContourSelection(const modeling::Sketch& sketch)
 
 void CadViewport::endContourSelection()
 {
+    setSelectedContourFaces({});
     m_navigation=Navigation::None;m_navigationButton=Qt::NoButton;m_regionClickCandidate=false;
     m_regionSelecting = false;
     m_sketch.reset();
     updateSketchPresentation();
 }
 
-void CadViewport::previewShape(const TopoDS_Shape& shape)
+void CadViewport::previewShape(const TopoDS_Shape& shape,const modeling::MaterialChanges& changes)
 {
     if (!isReady() || shape.IsNull()) { return; }
-    const bool firstPreview = m_previewPresentation.IsNull();
     clearPreview();
     m_previewPresentation = new AIS_Shape(shape);
-    m_previewPresentation->SetColor(Quantity_Color(0.30, 0.75, 0.83, Quantity_TOC_RGB));
+    m_previewPresentation->SetColor(Quantity_Color(0.65,0.70,0.75,Quantity_TOC_RGB));
     m_previewPresentation->Attributes()->SetFaceBoundaryDraw(Standard_True);
     if (!m_presentation.IsNull()) { m_context->Erase(m_presentation, Standard_False); }
-    m_context->Display(m_previewPresentation, Standard_False);
-    if (firstPreview) { resetView(); }
+    m_context->Display(m_previewPresentation,AIS_Shaded,-1,Standard_False);
+    const auto displayChange=[&](const TopoDS_Shape& material,const Quantity_Color& color){
+        if(material.IsNull())return;
+        Handle(AIS_Shape) presentation=new AIS_Shape(material);presentation->SetColor(color);presentation->SetTransparency(0.25);
+        presentation->Attributes()->SetFaceBoundaryDraw(Standard_True);presentation->SetZLayer(Graphic3d_ZLayerId_Topmost);
+        m_context->Display(presentation,AIS_Shaded,-1,Standard_False);m_materialPreviewPresentations.push_back(presentation);
+    };
+    displayChange(changes.added,Quantity_Color(1.0,0.74,0.20,Quantity_TOC_RGB));
+    displayChange(changes.removed,Quantity_Color(0.95,0.35,0.23,Quantity_TOC_RGB));
+    update();
+}
+
+void CadViewport::setSelectedContourFaces(const std::vector<TopoDS_Face>& faces){
+    if(!isReady())return;
+    for(auto& face:m_selectedContourPresentations)m_context->Remove(face,Standard_False);
+    m_selectedContourPresentations.clear();
+    for(const auto& face:faces){
+        Handle(AIS_Shape) presentation=new AIS_Shape(face);
+        presentation->SetColor(Quantity_Color(0.25,0.65,1.0,Quantity_TOC_RGB));presentation->SetTransparency(0.35);
+        presentation->SetZLayer(Graphic3d_ZLayerId_Topmost);presentation->Attributes()->SetFaceBoundaryDraw(Standard_True);
+        m_context->Display(presentation,AIS_Shaded,-1,Standard_False);m_selectedContourPresentations.push_back(presentation);
+    }
     update();
 }
 
 void CadViewport::clearPreview()
 {
     if (!isReady()) { return; }
+    for(auto& presentation:m_materialPreviewPresentations)m_context->Remove(presentation,Standard_False);
+    m_materialPreviewPresentations.clear();
     if (!m_previewPresentation.IsNull()) {
         m_context->Remove(m_previewPresentation, Standard_False);
         m_previewPresentation.Nullify();
