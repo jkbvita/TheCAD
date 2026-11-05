@@ -1,11 +1,12 @@
+#include "ui/Theme.h"
 #include "ui/RelationIcons.h"
 #include <QPainter>
 #include <QPixmap>
 namespace thecad::ui {
 QImage relationArtwork(modeling::RelationKind kind,int pixels,bool symbol,bool hover,bool selected){
     QImage image(pixels,pixels,QImage::Format_RGBA8888);image.fill(Qt::transparent);QPainter p(&image);p.setRenderHint(QPainter::Antialiasing);p.scale(pixels/20.0,pixels/20.0);
-    if(symbol){p.setBrush(selected?QColor("#b6edc9"):QColor("#e5f6e9"));p.setPen(QPen(hover?QColor("#ed8a14"):selected?QColor("#2587dc"):QColor("#239543"),1));p.drawRoundedRect(QRectF(0.8,0.8,18.4,18.4),1,1);}
-    p.setPen(QPen(symbol?QColor("#176a31"):QColor("#276a91"),1.5,Qt::SolidLine,Qt::RoundCap,Qt::RoundJoin));p.setBrush(Qt::NoBrush);
+    if(symbol){p.setBrush(ThemeManager::instance().isDark()?(selected?QColor("#27593c"):QColor("#203e2b")):(selected?QColor("#b6edc9"):QColor("#e5f6e9")));p.setPen(QPen(hover?QColor("#ed8a14"):selected?QColor("#2587dc"):QColor("#239543"),1));p.drawRoundedRect(QRectF(0.8,0.8,18.4,18.4),1,1);}
+    p.setPen(QPen(symbol?(ThemeManager::instance().isDark()?QColor("#89D9A2"):QColor("#176a31")):themeColor(ThemeColor::Accent),1.5,Qt::SolidLine,Qt::RoundCap,Qt::RoundJoin));p.setBrush(Qt::NoBrush);
     using K=modeling::RelationKind;
     switch(kind){
     case K::Horizontal:p.drawLine(4,10,16,10);break;

@@ -1,3 +1,4 @@
+#include "ui/Theme.h"
 #include <QInputDialog>
 #include "modeling/RelationCommands.h"
 #include "ui/MainWindow.h"
@@ -48,7 +49,7 @@ void MainWindow::startConstraints() {
     connect(remove,&QPushButton::clicked,this,[this]{if(!m_constraints || !m_constraints->constraints->currentItem())return;const auto key=m_constraints->constraints->currentItem()->data(Qt::UserRole).toString();try{auto candidate=key.startsWith("d:")?modeling::removeSketchDimension(*m_editSketch,key.mid(2).toStdString()):modeling::removeSketchRelation(*m_editSketch,key.mid(2).toStdString());acceptConstrainedSketch(candidate);m_viewport->setSketch(*m_editSketch);setWindowModified(true);closeConstraints();startConstraints();}catch(const std::exception& e){constraintError(e.what());}});
     connect(d.constraints,&QListWidget::itemClicked,this,[this](QListWidgetItem* item){const auto key=item->data(Qt::UserRole).toString();if(key.startsWith("r:"))m_viewport->selectSketchRelation(key.mid(2).toStdString());});
     connect(d.constraints,&QListWidget::itemDoubleClicked,this,[this](QListWidgetItem* item){const auto key=item->data(Qt::UserRole).toString();if(key.startsWith("d:")){closeConstraints();editSmartDimension(key.mid(2).toStdString());}});
-    d.error=new QLabel;d.error->setWordWrap(true);d.error->setObjectName("constraintError");d.error->setStyleSheet("color: #b00020");layout->addWidget(d.error);
+    d.error=new QLabel;d.error->setWordWrap(true);d.error->setObjectName("constraintError");d.error->setStyleSheet("color:"+themeColor(ThemeColor::Error).name());layout->addWidget(d.error);
     auto* change=new QPushButton("Change selected relation...");change->setObjectName("changeRelation");layout->addWidget(change);
     connect(change,&QPushButton::clicked,this,[this]{
         if(!m_constraints || !m_editSketch || !m_constraints->constraints->currentItem())return;

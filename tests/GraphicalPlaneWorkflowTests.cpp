@@ -238,7 +238,10 @@ private slots:
             QCOMPARE(window.document().features().back().sketch.entities.size(), std::size_t(4));
         }
         QCOMPARE(window.document().features().size(), std::size_t(3));
-        // Plane-first in the viewport: selected green differs from amber hover.
+        // Sketch exit preserves the last normal view. Orient explicitly before
+        // picking another plane that would otherwise be edge-on.
+        command(window,"actionIsometric");
+        // Selected light blue differs from amber hover.
         viewport->showReferencePlanes(true);
         const auto selectedPixel = pickPoint(viewport, modeling::SketchPlane::XY);
         QVERIFY(selectedPixel);

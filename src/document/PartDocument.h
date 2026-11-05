@@ -56,6 +56,9 @@ public:
     std::string addExtrudeRegions(const std::string& sketchId,const modeling::RegionReferences& contours,double length,modeling::Direction direction);
     std::string addCutRegions(const std::string& sketchId,const modeling::RegionReferences& contours,double depth,bool throughAll,modeling::Direction direction);
     void replaceFeature(const Feature& feature);
+    // Ordered transitive closure, excluding explicitly selected references.
+    std::vector<Feature> referenceDeletionDependents(const std::vector<std::string>& ids) const;
+    void deleteReferenceGeometry(const std::vector<std::string>& ids,bool includeDependents=false);
 
 private:
     void apply(std::vector<Feature> features, bool validateDependencies = false);

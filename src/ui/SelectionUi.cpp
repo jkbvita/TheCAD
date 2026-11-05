@@ -7,6 +7,10 @@
 #include <QGroupBox>
 #include <QLabel>
 #include <QMenu>
+#include <QMessageBox>
+#include <QPushButton>
+#include <QStringList>
+#include <set>
 #include <QSignalBlocker>
 #include <QStatusBar>
 #include <QToolBar>
@@ -40,10 +44,14 @@ void MainWindow::initializeSelectionUi(QMenu* viewMenu){
         if(state==modeling::ConstructionState::Mixed){auto* normal=menu->addAction("Make all normal geometry");connect(normal,&QAction::triggered,this,[this]{setSelectionConstruction(false);});}
     });
     m_referenceVisibility=viewMenu->addAction("Show Reference Geometry");m_referenceVisibility->setObjectName("actionReferenceVisibility");m_referenceVisibility->setCheckable(true);connect(m_referenceVisibility,&QAction::triggered,this,&MainWindow::toggleReferenceVisibility);
-    m_tree->setContextMenuPolicy(Qt::CustomContextMenu);connect(m_tree,&QTreeWidget::customContextMenuRequested,this,[this](const QPoint& p){const auto* item=m_tree->itemAt(p);if(!item)return;const auto id=item->data(0,Qt::UserRole).toString().toStdString();const auto f=std::find_if(m_document.features().begin(),m_document.features().end(),[&](const auto& f){return f.id==id;});if(f==m_document.features().end()||f->kind!=document::FeatureKind::ReferenceGeometry)return;m_tree->setCurrentItem(const_cast<QTreeWidgetItem*>(item));auto* menu=new QMenu(this);menu->setAttribute(Qt::WA_DeleteOnClose);menu->addAction(m_referenceVisibility);menu->popup(m_tree->viewport()->mapToGlobal(p));});
+    m_deleteReferences=new QAction("Delete Reference Geometry",this);m_deleteReferences->setObjectName("actionDeleteReferences");m_deleteReferences->setShortcut(QKeySequence(Qt::Key_Delete));m_deleteReferences->setShortcutContext(Qt::WidgetWithChildrenShortcut);m_tree->addAction(m_deleteReferences);m_viewport->addAction(m_deleteReferences);m_tree->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    connect(m_deleteReferences,&QAction::triggered,this,&MainWindow::deleteSelectedReferences);
+    connect(m_viewport,&CadViewport::constructionContextRequested,this,[this](QMenu* menu){if(!m_editSketch&&!m_operation&&!m_referenceDraft&&!selectedReferenceIds().empty()){menu->addSeparator();menu->addAction(m_editFeature);menu->addAction(m_referenceVisibility);menu->addAction(m_deleteReferences);}});
+    m_tree->setContextMenuPolicy(Qt::CustomContextMenu);connect(m_tree,&QTreeWidget::customContextMenuRequested,this,[this](const QPoint& p){const auto* item=m_tree->itemAt(p);if(!item)return;const auto id=item->data(0,Qt::UserRole).toString().toStdString();const auto f=std::find_if(m_document.features().begin(),m_document.features().end(),[&](const auto& f){return f.id==id;});if(f==m_document.features().end()||f->kind!=document::FeatureKind::ReferenceGeometry)return;if(!item->isSelected())m_tree->setCurrentItem(const_cast<QTreeWidgetItem*>(item));auto* menu=new QMenu(this);menu->setAttribute(Qt::WA_DeleteOnClose);menu->addAction(m_editFeature);menu->addAction(m_referenceVisibility);menu->addAction(m_deleteReferences);menu->popup(m_tree->viewport()->mapToGlobal(p));});
     connect(m_viewport,&CadViewport::selectionChanged,this,[this]{updateActions();const auto refs=m_viewport->selection();if(refs.size()==1)statusBar()->showMessage(QString::fromLatin1(modeling::selectionKindName(refs.front().kind))+" selected",3000);else if(refs.size()>1)statusBar()->showMessage(QString("%1 entities selected").arg(refs.size()),3000);});
 }
 void MainWindow::updateConstructionControls(){
+    if(m_deleteReferences)m_deleteReferences->setEnabled(!m_editSketch&&!m_operation&&!m_referenceDraft&&!m_selectingPlane&&!selectedReferenceIds().empty());
     if(!m_forConstruction)return;
     const auto state=m_editSketch?modeling::constructionState(*m_editSketch,m_viewport->selectedSketchEntities()):modeling::ConstructionState::Unavailable;
     const bool editable=m_editSketch&&!m_operation&&!m_referenceDraft&&!m_constraints&&state!=modeling::ConstructionState::Unavailable;
@@ -66,4 +74,30 @@ void MainWindow::toggleReferenceVisibility(){
     try{candidate.replaceFeature(feature);m_viewport->clearSelection();applyModel(std::move(candidate),feature.id);}
     catch(const std::exception& e){reportError(QString::fromUtf8(e.what()));}
 }
+std::vector<std::string> MainWindow::selectedReferenceIds() const{
+    std::vector<std::string> ids;
+    const auto add=[&](const std::string& id){const auto f=std::find_if(m_document.features().begin(),m_document.features().end(),[&](const auto& f){return f.id==id;});if(f==m_document.features().end()||f->kind!=document::FeatureKind::ReferenceGeometry)return false;if(std::find(ids.begin(),ids.end(),id)==ids.end())ids.push_back(id);return true;};
+    // Typed viewport selection takes precedence; tree selection is synchronized
+    // only for a single item, while viewport multi-selection clears the tree.
+    if(m_tree->selectedItems().size()>1){for(const auto* item:m_tree->selectedItems())if(!add(item->data(0,Qt::UserRole).toString().toStdString()))return {};return ids;}
+    const auto picked=m_viewport->selection();
+    if(!picked.empty()){for(const auto& r:picked){using K=modeling::SelectionKind;if(r.kind!=K::ReferencePlane&&r.kind!=K::ReferenceAxis&&r.kind!=K::ReferencePoint)return {};if(!add(r.featureId))return {};}}
+    else for(const auto* item:m_tree->selectedItems())if(!add(item->data(0,Qt::UserRole).toString().toStdString()))return {};
+    return ids;
+}
+bool MainWindow::confirmReferenceDeletion(const std::vector<std::string>& ids,const std::vector<document::Feature>& dependents){
+    std::set<std::string> removed(ids.begin(),ids.end());for(const auto& f:dependents)removed.insert(f.id);
+    const auto label=[&](const std::string& id){const auto f=std::find_if(m_document.features().begin(),m_document.features().end(),[&](const auto& f){return f.id==id;});return f==m_document.features().end()?QString::fromStdString(id):QString::fromStdString(f->name+" ["+f->id+"]");};
+    QStringList selected,details;for(const auto& id:ids)selected<<label(id);
+    for(const auto& f:dependents){QStringList parents;for(const auto& dep:f.dependencies)if(removed.count(dep))parents<<label(dep);details<<label(f.id)+" depends on "+parents.join(", ");}
+    QMessageBox box(QMessageBox::Warning,"Delete reference geometry", "Deleting "+selected.join(", ")+" also requires deleting these dependent features:\n\n"+details.join("\n")+"\n\nDelete all listed features, or cancel to keep the part unchanged?",QMessageBox::Cancel,this);
+    box.setTextFormat(Qt::PlainText);auto* remove=box.addButton("Delete references and listed dependents",QMessageBox::DestructiveRole);box.setDefaultButton(QMessageBox::Cancel);box.setEscapeButton(QMessageBox::Cancel);box.exec();return box.clickedButton()==remove;
+}
+void MainWindow::deleteSelectedReferences(){
+    if(m_editSketch||m_operation||m_referenceDraft||m_selectingPlane)return;
+    const auto ids=selectedReferenceIds();if(ids.empty())return;
+    try{const auto dependents=m_document.referenceDeletionDependents(ids);if(!dependents.empty()&&!confirmReferenceDeletion(ids,dependents))return;auto candidate=m_document;candidate.deleteReferenceGeometry(ids,!dependents.empty());if(applyModel(std::move(candidate),{})){m_viewport->clearSelection();statusBar()->showMessage("Reference geometry deleted. Undo restores the complete operation.",4000);}}
+    catch(const std::exception& e){reportError(QString::fromUtf8(e.what()));}
+}
+
 }

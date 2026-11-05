@@ -1,3 +1,4 @@
+#include "ui/Theme.h"
 #include <QToolTip>
 #include "modeling/RelationCommands.h"
 #include "modeling/SketchTools.h"
@@ -117,6 +118,16 @@ CadViewport::CadViewport(const TopoDS_Shape& shape, QWidget* parent)
     setMinimumSize(320, 240);
     setObjectName("cadViewport");
     setAccessibleName("3D CAD viewport");
+    connect(&ThemeManager::instance(),&ThemeManager::changed,this,&CadViewport::applyTheme);
+}
+
+void CadViewport::applyTheme(){
+    if(!isReady())return;
+    const bool dark=ThemeManager::instance().isDark();
+    m_view->SetBgGradientColors(dark?Quantity_Color(0.12549,0.15686,0.20,Quantity_TOC_sRGB):Quantity_Color(0.90,0.92,0.95,Quantity_TOC_RGB),dark?Quantity_Color(0.20784,0.26275,0.32549,Quantity_TOC_sRGB):Quantity_Color(0.99,0.99,0.99,Quantity_TOC_RGB),Aspect_GFM_VER);
+    m_view->TriedronDisplay(Aspect_TOTP_LEFT_LOWER,dark?Quantity_NOC_GRAY80:Quantity_NOC_GRAY30,0.08,V3d_ZBUFFER);
+    updateSketchPresentation();updateReferencePlanes();setDatums(m_datums);
+    if(!m_referenceCandidates.empty()){const auto candidates=m_referenceCandidates;setReferenceCandidates(candidates,m_referenceCandidateKind);}update();
 }
 
 CadViewport::~CadViewport()
@@ -168,9 +179,7 @@ void CadViewport::initialize()
         if (!window->IsMapped()) {
             window->Map();
         }
-        m_view->SetBgGradientColors(
-            Quantity_Color(0.90, 0.92, 0.95, Quantity_TOC_RGB),
-            Quantity_Color(0.99, 0.99, 0.99, Quantity_TOC_RGB), Aspect_GFM_VER);
+        applyTheme();
         m_view->TriedronDisplay(Aspect_TOTP_LEFT_LOWER, Quantity_NOC_GRAY30, 0.08, V3d_ZBUFFER);
 
         m_context->SetDisplayMode(AIS_Shaded, Standard_False);
@@ -181,7 +190,7 @@ void CadViewport::initialize()
         updateReferencePlanes();
         setDatums(m_datums);
         if (m_sketchEditing) { orientSketch(); updateSketchAxes(); }
-        else if (m_planesVisible || !m_datums.empty()) { resetView(); }
+        else if (!m_shape.IsNull() || m_planesVisible || !m_datums.empty()) { resetView(); }
     } catch (const Standard_Failure& failure) {
         m_error = QString::fromUtf8(failure.GetMessageString());
         if (m_error.isEmpty()) {
@@ -306,7 +315,7 @@ bool CadViewport::setShape(const TopoDS_Shape& shape)
         }
         // Live sketch edits regenerate the support body too. Redisplay it
         // without discarding the user's current sketch zoom and pan.
-        if (!m_sketchEditing) { resetView(); }
+        // Redisplay and selection preserve the camera.
     } catch (const Standard_Failure& failure) {
         m_context->Remove(candidate, Standard_False);
         if (!m_presentation.IsNull()) {
@@ -347,11 +356,10 @@ void CadViewport::cancelPlaneSelection()
 
 void CadViewport::showReferencePlanes(bool visible)
 {
-    const bool becameVisible = visible && !m_planesVisible;
     m_planesVisible = visible;
     if (!visible) { m_hoveredPlane.reset(); }
     updateReferencePlanes();
-    if (becameVisible && isReady()) { fitAll(); }
+    // Reference visibility preserves the camera.
 }
 
 void CadViewport::setSelectedReferencePlane(std::optional<modeling::SketchPlane> plane)
@@ -428,7 +436,7 @@ void CadViewport::updateReferencePlanes()
                 builder.Add(lines,BRepBuilderAPI_MakeEdge(modeling::sketchPoint(type,a),modeling::sketchPoint(type,b)).Shape());
             }
             m_planeCenterlines[i]=new AIS_Shape(lines);
-            m_planeCenterlines[i]->Attributes()->SetWireAspect(new Prs3d_LineAspect(Quantity_Color(Quantity_NOC_GRAY20),Aspect_TOL_DASH,devicePixelRatioF()));
+            m_planeCenterlines[i]->Attributes()->SetWireAspect(new Prs3d_LineAspect(viewportColor(ThemeColor::Construction),Aspect_TOL_DASH,devicePixelRatioF()));
             m_planeCenterlines[i]->SetInfiniteState(Standard_True);
             m_context->Display(m_planeCenterlines[i],AIS_WireFrame,-1,Standard_False);
             label->SetInfiniteState(Standard_True);
@@ -449,13 +457,13 @@ void CadViewport::updatePlaneStyles()
         const bool selected = (m_selectedPlane && *m_selectedPlane == type) || std::any_of(m_selection.items().begin(),m_selection.items().end(),[&](const auto& r){return r.kind==modeling::SelectionKind::OriginPlane&&r.index==i;});
         const bool hovered = m_hoveredPlane && *m_hoveredPlane == type;
         const Quantity_Color color = selected ? Quantity_Color(0.55,0.80,1.0,Quantity_TOC_RGB) : hovered ? Quantity_Color(1.0,0.42,0.02,Quantity_TOC_RGB)
-            : (i==1 ? Quantity_Color(0.25,0.42,1.0,Quantity_TOC_RGB) : Quantity_Color(0.09,0.18,0.42,Quantity_TOC_RGB));
+            : viewportColor(ThemeColor::Reference);
         plane->SetColor(Quantity_Color(0.72,0.78,0.90,Quantity_TOC_RGB));
         plane->SetTransparency(0.88);
         plane->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(color,Aspect_TOL_SOLID,(selected||hovered?1.5:1.0)*devicePixelRatioF()));
         m_context->Redisplay(plane, Standard_False);
         if (!m_planeLabels[std::size_t(i)].IsNull()) {
-            m_planeLabels[std::size_t(i)]->SetColor(i==1 ? Quantity_Color(0.25,0.42,1.0,Quantity_TOC_RGB) : Quantity_Color(0.09,0.18,0.42,Quantity_TOC_RGB));
+            m_planeLabels[std::size_t(i)]->SetColor(viewportColor(ThemeColor::Reference));
             m_context->Redisplay(m_planeLabels[std::size_t(i)], Standard_False);
         }
     }
@@ -575,7 +583,7 @@ void CadViewport::endSketch()
     m_sketch.reset();
     updateSketchPresentation();
     unsetCursor();
-    resetView();
+    update();
 }
 
 void CadViewport::beginContourSelection(const modeling::Sketch& sketch)
@@ -590,7 +598,7 @@ void CadViewport::beginContourSelection(const modeling::Sketch& sketch)
     updateSketchAxes();
     m_firstPoint.reset();
     setSketch(sketch);
-    orientSketch();
+    // Contour selection and feature editing preserve the current camera.
 }
 
 void CadViewport::endContourSelection()
@@ -759,7 +767,7 @@ void CadViewport::updateConstraintPresentation() {
         const bool selected=d.first.entityId==m_selectedEntity || d.second.entityId==m_selectedEntity;
         const bool error=std::find(m_constraintErrors.begin(),m_constraintErrors.end(),d.id)!=m_constraintErrors.end();
         const bool selectedAnnotation=std::find(m_selectedDimensions.begin(),m_selectedDimensions.end(),d.id)!=m_selectedDimensions.end();
-        Quantity_Color color(error?Quantity_NOC_RED:d.id==m_hoveredDimension?Quantity_NOC_ORANGE:d.id=="pending-dimension"?Quantity_NOC_BLUE:Quantity_NOC_BLACK);
+        Quantity_Color color=error?viewportColor(ThemeColor::Error):d.id==m_hoveredDimension?Quantity_Color(Quantity_NOC_ORANGE):d.id=="pending-dimension"?viewportColor(ThemeColor::Underdefined):viewportColor(ThemeColor::Defined);
         if(!error && (selectedAnnotation || selected))color=Quantity_Color(0.25,0.72,1.0,Quantity_TOC_RGB);
         const auto graphics=modeling::dimensionGraphics(*m_sketch,d,unit);
         label(graphics.text,dimensionText(d),color,14);
@@ -906,7 +914,7 @@ void CadViewport::updateSketchPresentation(const std::optional<modeling::SketchE
                 group.entities.erase(std::remove_if(group.entities.begin(),group.entities.end(),[&](const auto& e){const bool fixed=std::find(m_definition.definedCurves.begin(),m_definition.definedCurves.end(),e.id)!=m_definition.definedCurves.end();return e.kind==modeling::EntityKind::Point || e.construction!=construction || fixed!=defined;}),group.entities.end());
                 if(group.entities.empty())continue;
                 Handle(AIS_Shape) batch=new AIS_Shape(modeling::sketchShape(group));
-                const Quantity_Color color=defined?Quantity_Color(Quantity_NOC_BLACK):construction?Quantity_Color(0.30,0.40,0.62,Quantity_TOC_RGB):Quantity_Color(0.10,0.22,0.60,Quantity_TOC_RGB);
+                const Quantity_Color color=defined?viewportColor(ThemeColor::Defined):construction?viewportColor(ThemeColor::Construction):viewportColor(ThemeColor::Underdefined);
                 batch->SetColor(color);batch->SetWidth((construction?1.5:2.0)*devicePixelRatioF());
                 if(construction){const Handle(Prs3d_LineAspect) aspect=new Prs3d_LineAspect(color,Aspect_TOL_DOTDASH,1.5*devicePixelRatioF());batch->Attributes()->SetWireAspect(aspect);batch->Attributes()->SetLineAspect(aspect);}
                 batch->Attributes()->SetDeviationCoefficient(1e-5);batch->Attributes()->SetDeviationAngle(0.015);batch->SetZLayer(Graphic3d_ZLayerId_Topmost);
@@ -1102,7 +1110,7 @@ void CadViewport::updatePointPresentation()
             if(!origin && !hovered && !selected && !lineEndpoint && !standalone && !circleCenter && entry.first.entityId!=m_selectedEntity) continue;
             Handle(AIS_Point) marker=new AIS_Point(new Geom_CartesianPoint(modeling::sketchPoint(*m_sketch,entry.second)));
             const bool fixed=std::any_of(m_definition.fixedPoints.begin(),m_definition.fixedPoints.end(),[&](const auto& p){return sameReference(p,entry.first);});
-            Quantity_Color color(hovered ? Quantity_NOC_ORANGE : origin ? Quantity_NOC_RED3 : fixed ? Quantity_NOC_BLACK : Quantity_NOC_BLUE);
+            Quantity_Color color=hovered?Quantity_Color(Quantity_NOC_ORANGE):origin?Quantity_Color(Quantity_NOC_RED3):fixed?viewportColor(ThemeColor::Defined):ThemeManager::instance().isDark()?viewportColor(ThemeColor::Underdefined):Quantity_Color(Quantity_NOC_BLUE);
             if(selected && !origin)color=Quantity_Color(0.25,0.72,1.0,Quantity_TOC_RGB);
             marker->SetZLayer(Graphic3d_ZLayerId_Topmost);
             marker->Attributes()->SetPointAspect(filledPoint(color,(hovered ? 9.0 : selected ? 9.0 : origin ? 4.0 : 7.0)*devicePixelRatioF()));
@@ -1470,7 +1478,7 @@ void CadViewport::mouseMoveEvent(QMouseEvent* event)
     }
     if(m_pointDrag) { updatePointDrag(event->position()); event->accept(); return; }
     if(!m_sketchEditing && !m_regionSelecting && m_navigation==Navigation::None) {
-        if(m_referenceCandidateKind)updateReferenceHover(event->position());else updateSelectionHover(event->position());
+        if(!m_referenceCandidates.empty())updateReferenceHover(event->position());else updateSelectionHover(event->position());
     }
     if(m_regionClickCandidate && (event->position()-m_regionPressPosition).manhattanLength()>QApplication::startDragDistance())
         m_regionClickCandidate=false;
@@ -1529,7 +1537,7 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* event)
         if(regionClick && m_regionSelecting) {
             const auto point=sketchPosition(event->position());if(point) emit sketchRegionClicked(*point);
         } else if (click) {
-            if(m_referenceCandidateKind){const int index=referenceCandidateAt(event->position());if(index>=0)emit referenceGeometryPicked(index);event->accept();return;}
+            if(!m_referenceCandidates.empty()){const int index=referenceCandidateAt(event->position());if(index>=0)emit referenceGeometryPicked(index);event->accept();return;}
             const auto candidates=selectionCandidates(event->position());
             if(candidates.empty())clearSelection();
             else selectCandidate(candidates.front(),event->modifiers().testFlag(Qt::ShiftModifier)||event->modifiers().testFlag(Qt::ControlModifier));

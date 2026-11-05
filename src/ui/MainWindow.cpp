@@ -1,3 +1,5 @@
+#include "ui/Theme.h"
+#include <QDialogButtonBox>
 #include "modeling/SketchTools.h"
 #include "modeling/DimensionAnnotation.h"
 #include <QInputDialog>
@@ -69,11 +71,11 @@ QIcon commandIcon(const QString& name)
     QPainter painter(&image);
     painter.setRenderHint(QPainter::Antialiasing);
     painter.scale(2.0, 2.0);
-    painter.setPen(QPen(QColor("#276a91"), 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.setPen(QPen(themeColor(ThemeColor::Accent), 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     painter.setBrush(Qt::NoBrush);
-    if(name.contains("Point")){painter.setBrush(QColor("#276a91"));painter.drawEllipse(QPointF(16,16),3.5,3.5);}
+    if(name.contains("Point")){painter.setBrush(themeColor(ThemeColor::Accent));painter.drawEllipse(QPointF(16,16),3.5,3.5);}
     else if(name.contains("Polygon"))painter.drawPolygon(QPolygonF{QPointF(16,4),QPointF(26,10),QPointF(26,22),QPointF(16,28),QPointF(6,22),QPointF(6,10)});
-    else if(name.contains("Centerline") || name.contains("Construction")){painter.setPen(QPen(QColor("#276a91"),1.6,Qt::DashDotLine));painter.drawLine(QPointF(4,27),QPointF(28,5));}
+    else if(name.contains("Centerline") || name.contains("Construction")){painter.setPen(QPen(themeColor(ThemeColor::Accent),1.6,Qt::DashDotLine));painter.drawLine(QPointF(4,27),QPointF(28,5));}
     else if (name.contains("Circle")) painter.drawEllipse(QRectF(6, 6, 20, 20));
     else if (name.contains("Rectangle")) painter.drawRect(QRectF(5, 8, 22, 16));
     else if (name.contains("Line")) {
@@ -96,7 +98,7 @@ QIcon commandIcon(const QString& name)
         painter.drawLine(5, 25, 27, 25); painter.drawLine(8, 28, 8, 4);
         painter.setBrush(QColor("#b83b42")); painter.drawEllipse(QPointF(8, 25), 2.5, 2.5);
     } else if(name.contains("Axis")){
-        painter.setPen(QPen(QColor("#276a91"),1.6,Qt::DashDotLine));painter.drawLine(5,27,26,5);painter.setPen(QPen(QColor("#276a91"),1.6));painter.drawLine(26,5,25,13);painter.drawLine(26,5,18,6);
+        painter.setPen(QPen(themeColor(ThemeColor::Accent),1.6,Qt::DashDotLine));painter.drawLine(5,27,26,5);painter.setPen(QPen(themeColor(ThemeColor::Accent),1.6));painter.drawLine(26,5,25,13);painter.drawLine(26,5,18,6);
     } else if (name.contains("Plane")) {
         painter.drawPolygon(QPolygonF{QPointF(4, 11), QPointF(23, 5), QPointF(28, 23), QPointF(9, 28)});
     } else if (name.contains("Extrude") || name.contains("Part")) {
@@ -127,12 +129,12 @@ QWidget* commandGroup(QHBoxLayout* row, const QString& name, QGridLayout*& grid)
     column->addLayout(grid);
     auto* caption = new QLabel(name);
     caption->setAlignment(Qt::AlignCenter);
-    caption->setStyleSheet("color: #626a72; font-size: 10px;");
+    caption->setObjectName("secondaryCaption");
     column->addWidget(caption);
     row->addWidget(group);
     auto* separator = new QFrame;
     separator->setFrameShape(QFrame::VLine);
-    separator->setStyleSheet("color: #d1d5d9;");
+
     row->addWidget(separator);
     return group;
 }
@@ -208,10 +210,7 @@ struct MainWindow::OperationDraft {
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent), m_document(document::PartDocument::createEmpty())
 {
-    // Windows dark widget themes can ignore a light per-window palette. Use
-    // Qt's palette-aware widget style; native Windows title bars/dialogs remain.
-    if (QApplication::style()->objectName().compare("fusion", Qt::CaseInsensitive) != 0)
-        QApplication::setStyle(QStyleFactory::create("Fusion"));
+    ThemeManager::instance();
     resize(1200, 800);
     m_viewport = new CadViewport(m_document.shape(), this);
     setCentralWidget(m_viewport);
@@ -233,39 +232,12 @@ MainWindow::MainWindow(QWidget* parent)
     fileMenu->addSeparator();
     addCommand("E&xit", "actionExit", QKeySequence(Qt::ALT | Qt::Key_F4), [this] { close(); });
 
-    // Keep the standard Windows window and Qt menus, with a light workspace palette.
-    QPalette light = palette();
-    light.setColor(QPalette::Window, QColor("#f5f6f7"));
-    light.setColor(QPalette::Base, QColor("#ffffff"));
-    light.setColor(QPalette::AlternateBase, QColor("#f1f4f6"));
-    light.setColor(QPalette::Text, QColor("#20282f"));
-    light.setColor(QPalette::WindowText, QColor("#20282f"));
-    light.setColor(QPalette::Button, QColor("#f5f6f7"));
-    light.setColor(QPalette::ButtonText, QColor("#20282f"));
-    light.setColor(QPalette::Highlight, QColor("#c6e3f3"));
-    light.setColor(QPalette::HighlightedText, QColor("#173e55"));
-    light.setColor(QPalette::Disabled, QPalette::Text, QColor("#989fa5"));
-    light.setColor(QPalette::Disabled, QPalette::ButtonText, QColor("#989fa5"));
-    QApplication::setPalette(light);
-    setPalette(light);
-    setStyleSheet("QMainWindow { background: #f5f6f7; } "
-                  "QToolBar { background: #f5f6f7; border: none; spacing: 3px; } "
-                  "QMenuBar, QMenu { background: #f5f6f7; color: #20282f; } "
-                  "QMenu::item:selected, QMenuBar::item:selected { background: #d9ebf6; } "
-                  "QMenu::item:disabled { color: #989fa5; } "
-                  "QTabWidget::pane { border: 1px solid #cbd0d5; background: #f5f6f7; } "
-                  "QTabBar::tab { padding: 4px 15px; background: #e6e8eb; border: 1px solid #cbd0d5; } "
-                  "QTabBar::tab:selected { background: #ffffff; color: #174c6e; } "
-                  "QToolButton:hover { background: #d9ebf6; border-radius: 2px; } "
-                  "QToolButton:checked { background: #b8d8ef; border: 1px solid #709ab7; border-radius: 2px; } "
-                  "QToolButton:disabled { color: #a3a8ad; } "
-                  "QTreeWidget, QListWidget { border: 1px solid #d5d9dd; background: #ffffff; } "
-                  "QDockWidget::title { background: #e9ecef; padding: 5px; } "
-                  "QGroupBox { font-weight: 600; margin-top: 10px; border: 1px solid #d5d9dd; } "
-                  "QGroupBox::title { subcontrol-origin: margin; left: 7px; padding: 0 3px; }");
+    ThemeManager::instance();
 
     auto* editMenu = menuBar()->addMenu("&Edit");
     auto* viewMenu = menuBar()->addMenu("&View");
+    auto* preferences=editMenu->addAction("Preferences…");preferences->setObjectName("actionPreferences");connect(preferences,&QAction::triggered,this,[this]{QDialog dialog(this);dialog.setWindowTitle("Preferences");auto* layout=new QFormLayout(&dialog);auto* theme=new QComboBox;theme->setObjectName("appearanceTheme");theme->addItem("Dark",int(ThemeMode::Dark));theme->addItem("Light",int(ThemeMode::Light));theme->addItem("Follow system",int(ThemeMode::System));theme->setCurrentIndex(theme->findData(int(ThemeManager::instance().mode())));layout->addRow("Application theme",theme);connect(theme,&QComboBox::currentIndexChanged,&dialog,[theme]{ThemeManager::instance().setMode(ThemeMode(theme->currentData().toInt()));});auto* buttons=new QDialogButtonBox(QDialogButtonBox::Close);layout->addRow(buttons);connect(buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);dialog.exec();});
+    connect(&ThemeManager::instance(),&ThemeManager::changed,this,[this]{hideRelationsContext();for(auto* a:findChildren<QAction*>())if(!a->icon().isNull()&&a->objectName().startsWith("action")&&!a->objectName().contains("Preferences"))a->setIcon(commandIcon(a->text().remove('&')));});
     m_undo=editMenu->addAction("Undo");m_undo->setObjectName("actionUndo");m_undo->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Z));
     m_redo=editMenu->addAction("Redo");m_redo->setObjectName("actionRedo");m_redo->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Y));
     connect(m_undo,&QAction::triggered,this,[this]{traverseHistory(false);});
@@ -630,7 +602,7 @@ QString MainWindow::currentPath() const { return m_path; }
 QString MainWindow::chooseOpenPath()
 {
     return QFileDialog::getOpenFileName(this, "Open TheCAD part", m_path,
-        "TheCAD Part (*.thepart *.tcpart);;TheCAD Part (*.thepart);;Legacy TheCAD Part (*.tcpart)");
+        "TheCAD Part (*.thepart *.tcpart);;TheCAD Part (*.thepart);;Legacy TheCAD Part (*.tcpart)",nullptr,QFileDialog::DontUseNativeDialog);
 }
 
 QString MainWindow::chooseSavePath()
@@ -640,6 +612,7 @@ QString MainWindow::chooseSavePath()
         suggestion = QFileInfo(suggestion).absolutePath() + "/" + QFileInfo(suggestion).completeBaseName() + ".thepart";
     }
     QFileDialog dialog(this, "Save TheCAD part", suggestion, "TheCAD Part (*.thepart)");
+    dialog.setOption(QFileDialog::DontUseNativeDialog);
     dialog.setAcceptMode(QFileDialog::AcceptSave);
     dialog.setFileMode(QFileDialog::AnyFile);
     dialog.setDefaultSuffix("thepart");
@@ -825,6 +798,7 @@ bool MainWindow::replaceDocument(document::PartDocument candidate, const QString
     m_editHistory.clear();m_revision=0;m_nextRevision=0;m_savedRevision=0;
     updateDocumentUi();
     m_viewport->showReferencePlanes(m_document.features().empty());
+    m_viewport->resetView(); // Opening a different document frames it once.
     return true;
 }
 
@@ -854,7 +828,7 @@ void MainWindow::selectFeature(const std::string& id)
     m_selectedId = id;
     for (QTreeWidgetItemIterator it(m_tree); *it; ++it) {
         if ((*it)->data(0, Qt::UserRole).toString().toStdString() == id) {
-            m_tree->setCurrentItem(*it);
+            m_tree->setCurrentItem(*it,0,QItemSelectionModel::ClearAndSelect);
             m_tree->scrollToItem(*it);
             return;
         }
@@ -863,6 +837,7 @@ void MainWindow::selectFeature(const std::string& id)
 
 void MainWindow::selectionChanged()
 {
+    if(m_referenceDraft){const auto* item=m_tree->currentItem();if(item)referenceGeometryTreePicked(item->data(0,Qt::UserRole).toString());return;}
     m_viewport->beginTreeSelection();
     m_selectedFace=0;
     m_viewport->setSelectedSolidFace(0);

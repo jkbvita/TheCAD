@@ -1,3 +1,4 @@
+#include "ui/Theme.h"
 #include "modeling/DimensionAnnotation.h"
 #include "ui/MainWindow.h"
 #include "ui/CadViewport.h"
@@ -91,7 +92,7 @@ void MainWindow::openDimensionEditor(const modeling::SketchDimension& dimension)
     const bool angular=dimension.kind==modeling::DimensionKind::LineAngle;value->setRange(angular?0.000001:0.0,angular?179.999999:1e9);value->setSuffix(angular?QString::fromUtf8(" °"):" mm");value->setValue(dimension.value);value->setEnabled(dimension.driving);layout->addWidget(value);
     auto* reference=new QCheckBox("Reference");reference->setObjectName("smartDimensionReference");reference->setChecked(!dimension.driving);layout->addWidget(reference);
     connect(reference,&QCheckBox::toggled,value,[value](bool checked){value->setEnabled(!checked);});
-    auto* error=new QLabel;error->setObjectName("smartDimensionError");error->setWordWrap(true);error->setMaximumWidth(300);error->setStyleSheet("color: #b00020");layout->addWidget(error);
+    auto* error=new QLabel;error->setObjectName("smartDimensionError");error->setWordWrap(true);error->setMaximumWidth(300);error->setStyleSheet("color:"+themeColor(ThemeColor::Error).name());layout->addWidget(error);
     auto* buttons=new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);buttons->setObjectName("smartDimensionButtons");layout->addWidget(buttons);buttons->button(QDialogButtonBox::Ok)->setDefault(true);
     connect(buttons,&QDialogButtonBox::rejected,editor,&QDialog::reject);
     connect(editor,&QDialog::rejected,this,[this,editor]{if(!m_smartDimension || m_smartDimension->editor!=editor)return;const bool resume=m_smartDimension->resume;m_smartDimension->editor=nullptr;editor->deleteLater();if(resume)resetSmartSelection();else closeSmartDimension();updateHistoryActions();m_viewport->setFocus();});
@@ -103,7 +104,7 @@ void MainWindow::openDimensionEditor(const modeling::SketchDimension& dimension)
             if(!m_smartDimension->editingExisting)candidate.id=QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
             acceptConstrainedSketch(modeling::setSketchDimension(*m_editSketch,candidate));m_viewport->setSketch(*m_editSketch);setWindowModified(true);updateEntityList();
             const bool resume=m_smartDimension->resume;m_smartDimension->editor=nullptr;editor->accept();editor->deleteLater();if(resume)resetSmartSelection();else closeSmartDimension();updateHistoryActions();m_viewport->setFocus();
-        } catch(const std::exception& failure){const auto message=QString::fromUtf8(failure.what());error->setText(message);value->setStyleSheet("color: #b00020");constraintError(message);value->setFocus();value->selectAll();editor->adjustSize();}
+        } catch(const std::exception& failure){const auto message=QString::fromUtf8(failure.what());error->setText(message);value->setStyleSheet("color:"+themeColor(ThemeColor::Error).name());constraintError(message);value->setFocus();value->selectAll();editor->adjustSize();}
     });
     editor->adjustSize();const auto anchor=m_viewport->mapToGlobal(m_viewport->dimensionScreenPoint(modeling::dimensionAnnotationPosition(*m_editSketch,dimension)));auto location=anchor+QPoint(10,10);
     const auto* screen=QGuiApplication::screenAt(anchor);if(!screen)screen=this->screen();const auto bounds=screen->availableGeometry();

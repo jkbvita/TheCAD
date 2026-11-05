@@ -35,6 +35,7 @@ target_include_directories(thecad_document PUBLIC src)
 target_link_libraries(thecad_document PUBLIC thecad_modeling Qt6::Core)
 
 add_library(thecad_ui STATIC
+    src/ui/Theme.cpp src/ui/Theme.h
     src/ui/PropertyManagerPage.cpp
     src/ui/ReferenceGeometryViewport.cpp
     src/ui/SelectionViewport.cpp
@@ -207,5 +208,16 @@ if(BUILD_TESTING)
         set_tests_properties(ui.viewport PROPERTIES
             TIMEOUT 60 LABELS "gui;opengl"
             ENVIRONMENT "THECAD_TEST_ARTIFACT_DIR=${CMAKE_BINARY_DIR}/test-artifacts")
+        add_executable(thecad_reference_manager_tests tests/ReferenceManagerTests.cpp)
+        target_link_libraries(thecad_reference_manager_tests PRIVATE thecad_ui Qt6::Test)
+        add_test(NAME ui.reference-managers COMMAND thecad_reference_manager_tests -o "${CMAKE_BINARY_DIR}/reference-managers-results.txt,txt")
+        add_test(NAME ui.reference-managers.hidpi COMMAND thecad_reference_manager_tests -o "${CMAKE_BINARY_DIR}/reference-managers-hidpi-results.txt,txt")
+        set_tests_properties(ui.reference-managers ui.reference-managers.hidpi PROPERTIES TIMEOUT 120 LABELS "gui;references;camera;theme" RUN_SERIAL TRUE)
+        set_tests_properties(ui.reference-managers PROPERTIES ENVIRONMENT "THECAD_TEST_THEME=dark")
+        set_tests_properties(ui.reference-managers.hidpi PROPERTIES ENVIRONMENT "THECAD_TEST_THEME=dark;QT_SCALE_FACTOR=1.5")
+        # Existing visual regressions retain their original light-theme contract.
+        foreach(testName ui.selection-construction ui.selection-construction.hidpi ui.startup-file-launch ui.viewport ui.viewport.hidpi ui.documents ui.modeling-workflow ui.modeling-workflow.hidpi ui.graphical-planes ui.graphical-planes.hidpi ui.sketch-interaction ui.sketch-interaction.hidpi)
+            set_property(TEST ${testName} APPEND PROPERTY ENVIRONMENT "THECAD_TEST_THEME=light")
+        endforeach()
     endif()
 endif()

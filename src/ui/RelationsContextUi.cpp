@@ -1,3 +1,4 @@
+#include "ui/Theme.h"
 #include <QPainter>
 #include <QUuid>
 #include "ui/MainWindow.h"
@@ -28,13 +29,12 @@ void MainWindow::showRelationsContext(QPoint position){
     // independent tool window or changing activation when it appears.
     m_relationsToolbar=new QFrame(m_viewport);
     m_relationsToolbar->setObjectName("sketchRelationsContext");m_relationsToolbar->setAttribute(Qt::WA_NativeWindow);m_relationsToolbar->setFocusPolicy(Qt::NoFocus);m_relationsToolbar->setMouseTracking(true);
-    m_relationsToolbar->setStyleSheet("QFrame#sketchRelationsContext {background:#f6f7f8;border:1px solid #9ca9b2;border-radius:3px;} QToolButton {border:0;padding:4px;background:transparent;} QToolButton:hover {background:#d5eaf9;}");
     auto* layout=new QGridLayout(m_relationsToolbar);layout->setContentsMargins(3,3,3,3);layout->setSpacing(1);
     const auto bounds=m_viewport->rect().adjusted(4,4,-4,-4);const int columns=std::max(1,std::min(10,(bounds.width()-8)/30));int index=0;
     const auto button=[&](const QString& name,const QString& object,const QIcon& icon,auto callback){auto* b=new QToolButton(m_relationsToolbar);b->setObjectName(object);b->setToolTip(name);b->setAccessibleName(name);b->setIcon(icon);b->setIconSize({20,20});b->setFixedSize(29,29);b->setFocusPolicy(Qt::NoFocus);b->setMouseTracking(true);layout->addWidget(b,index/columns,index%columns);++index;connect(b,&QToolButton::clicked,this,callback);};
     for(const auto kind:relations)button(modeling::relationName(kind),QString("contextRelation%1").arg(int(kind)),relationIcon(kind),[this,kind,ids]{hideRelationsContext();applyContextRelation(kind,ids);});
     if(construction){const bool allConstruction=std::all_of(ids.begin(),ids.end(),[&](const auto& id){return std::find_if(m_editSketch->entities.begin(),m_editSketch->entities.end(),[&](const auto& e){return e.id==id;})->construction;});
-        QPixmap icon(40,40);icon.fill(Qt::transparent);QPainter p(&icon);p.setPen(QPen(QColor("#276a91"),3,allConstruction?Qt::SolidLine:Qt::DashDotLine));p.drawLine(5,33,35,7);p.end();
+        QPixmap icon(40,40);icon.fill(Qt::transparent);QPainter p(&icon);p.setPen(QPen(themeColor(ThemeColor::Accent),3,allConstruction?Qt::SolidLine:Qt::DashDotLine));p.drawLine(5,33,35,7);p.end();
         button(allConstruction?"Normal Geometry":"For Construction","contextConstruction",QIcon(icon),[this,ids]{hideRelationsContext();applyContextConstruction(ids);});}
     m_relationsToolbar->adjustSize();m_relationsAnchor=m_viewport->mapToGlobal(position);auto location=position+QPoint(14,14);
     location.setX(std::clamp(location.x(),bounds.left(),std::max(bounds.left(),bounds.right()-m_relationsToolbar->width()+1)));location.setY(std::clamp(location.y(),bounds.top(),std::max(bounds.top(),bounds.bottom()-m_relationsToolbar->height()+1)));

@@ -220,7 +220,7 @@ void CadViewport::selectCandidate(const PickCandidate& item,bool toggle){
     }else {emit solidFaceSelected(0);emit datumSelected({});}
 }
 void CadViewport::showSelectOther(const QPoint& point){
-    if(m_sketchTool||m_dimensionDrag||m_pointDrag||m_regionSelecting||m_referenceCandidateKind)return;
+    if(m_sketchTool||m_dimensionDrag||m_pointDrag||m_regionSelecting||!m_referenceCandidates.empty())return;
     const auto candidates=selectionCandidates(point,true);if(candidates.empty())return;
     if(m_selectOtherMenu)m_selectOtherMenu->close();auto* menu=new QMenu(this);menu->setObjectName("selectOtherMenu");menu->setAttribute(Qt::WA_DeleteOnClose);m_selectOtherMenu=menu;
     for(const auto& candidate:candidates){const auto& r=candidate.value.reference;
@@ -236,7 +236,7 @@ void CadViewport::showSelectOther(const QPoint& point){
     connect(menu,&QMenu::aboutToHide,this,[this]{previewCandidate({});update();});menu->popup(mapToGlobal(point));menu->setActiveAction(menu->actions().front());
 }
 void CadViewport::contextMenuEvent(QContextMenuEvent* event){
-    if(m_sketchTool||m_dimensionDrag||m_pointDrag||m_regionSelecting||m_referenceCandidateKind){event->ignore();return;}
+    if(m_sketchTool||m_dimensionDrag||m_pointDrag||m_regionSelecting||!m_referenceCandidates.empty()){event->ignore();return;}
     if(!m_contextClick&&event->reason()!=QContextMenuEvent::Keyboard){event->ignore();return;}
     m_contextClick=false;auto* menu=new QMenu(this);menu->setObjectName("geometryContextMenu");menu->setAttribute(Qt::WA_DeleteOnClose);
     const auto position=event->reason()==QContextMenuEvent::Keyboard?rect().center():event->pos();
@@ -246,7 +246,7 @@ void CadViewport::contextMenuEvent(QContextMenuEvent* event){
         if(!alreadySelected)selectCandidate(candidates.front());
     }}
     auto* other=menu->addAction("Select Other…");other->setEnabled(!selectionCandidates(position,true).empty());connect(other,&QAction::triggered,this,[this,position]{showSelectOther(position);});
-    if(m_sketchEditing){emit constructionContextRequested(menu);}
+    emit constructionContextRequested(menu);
     menu->popup(mapToGlobal(position));event->accept();
 }
 }

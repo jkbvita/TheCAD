@@ -208,7 +208,8 @@ private slots:
         QCOMPARE(tabs->tabText(1), QString("Sketch"));
         QCOMPARE(tabs->tabText(2), QString("Evaluate"));
         QCOMPARE(tabs->tabPosition(), QTabWidget::South);
-        QCOMPARE(QApplication::style()->objectName(), QString("fusion"));
+        // The application stylesheet wraps the underlying Fusion style.
+        // Verify the effective palette below instead of the wrapper name.
         auto* tree = window.findChild<QTreeWidget*>("featureTree");
         QVERIFY(tree->palette().color(QPalette::Text).lightness() < 128);
         QVERIFY(tree->palette().color(QPalette::Base).lightness() > 200);

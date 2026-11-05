@@ -549,7 +549,7 @@ PartDocument PartDocument::load(const QString& path)
     if (root.value("format") != QJsonValue("TheCAD.Part")) fail("Unsupported document format; expected TheCAD.Part.");
     if (root.value("units") != QJsonValue("mm")) fail("Unsupported units; this prototype supports millimeters only.");
     const auto versionValue = root.value("version");
-    if (!versionValue.isDouble() || versionValue.toDouble()<1 || versionValue.toDouble()>14 || versionValue.toDouble()!=std::floor(versionValue.toDouble())) fail("Unsupported part document version; expected versions 1 through 14.");
+    if (!versionValue.isDouble() || versionValue.toDouble()<1 || versionValue.toDouble()>15 || versionValue.toDouble()!=std::floor(versionValue.toDouble())) fail("Unsupported part document version; expected versions 1 through 15.");
     const int version = versionValue.toInt();
     if (!root.value("features").isArray()) fail("Part features must be an ordered array.");
     const auto array = root.value("features").toArray();
@@ -578,7 +578,7 @@ PartDocument PartDocument::load(const QString& path)
                 if(version>=14){expected.insert("visible");if(!object.value("visible").isBool())fail("Reference visibility must be boolean.");feature.referenceVisible=object.value("visible").toBool();}
                 fields(object,expected,"Reference geometry feature");
                 if(!object.value("definition").isObject())fail("Invalid reference geometry definition.");
-                feature.kind=FeatureKind::ReferenceGeometry;feature.reference=readDatumDefinition(object.value("definition").toObject());
+                feature.kind=FeatureKind::ReferenceGeometry;feature.reference=readDatumDefinition(object.value("definition").toObject());if(version<15)for(const auto& r:feature.reference.references)if(r.source==modeling::ReferenceSource::BodyCircleCenter)fail("Circular-edge center references require schema 15.");
             } else if (type == "sketch") {
                 QSet<QString> expected{"id", "name", "type", "plane", "entities", "dependencies"};
                 if (version >= 3) expected.insert("relations");
@@ -708,7 +708,7 @@ void PartDocument::save(const QString& path) const
         if (isSolidFeature(feature.kind)) resultId = feature.id;
         features.append(object);
     }
-    const QJsonObject root{{"format", "TheCAD.Part"}, {"version", 14}, {"units", "mm"}, {"features", features}, {"resultFeature", q(resultId)}};
+    const QJsonObject root{{"format", "TheCAD.Part"}, {"version", 15}, {"units", "mm"}, {"features", features}, {"resultFeature", q(resultId)}};
     const auto bytes = QJsonDocument(root).toJson(QJsonDocument::Indented);
     if (bytes.size() > maximumDocumentBytes) fail("Part document exceeds the 1 MiB prototype size limit.");
     QSaveFile file(path);

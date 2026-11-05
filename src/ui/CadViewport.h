@@ -86,6 +86,7 @@ public:
     bool smartDimensionActive() const { return m_smartDimensionPicking; }
     void fitAll();
     void resetView();
+    void applyTheme();
     void setDatums(const std::vector<DatumVisual>& datums);
     void setSelectedDatum(const std::string& id);
     std::string datumAt(const QPointF& position,std::optional<modeling::DatumKind> kind={});
@@ -148,6 +149,7 @@ private:
     friend class ModelingWorkflowTest;
     friend class GraphicalPlaneWorkflowTest;
     friend class SelectionWorkflowTest;
+    friend class ReferenceManagerTest;
     struct PickCandidate {modeling::SelectionCandidate value;TopoDS_Shape shape;Handle(SelectMgr_EntityOwner) owner;};
     std::vector<PickCandidate> selectionCandidates(const QPointF&,bool includeOccluded=false);
     void selectCandidate(const PickCandidate&,bool toggle=false);
