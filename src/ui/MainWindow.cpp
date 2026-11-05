@@ -748,12 +748,26 @@ void MainWindow::openDocument()
 {
     const QString path = chooseOpenPath();
     if (path.isEmpty()) return;
+    (void)openPartFileImpl(path,true);
+}
+
+bool MainWindow::openPartFile(const QString& path){return openPartFileImpl(path,false);}
+
+bool MainWindow::openPartFileImpl(const QString& path,bool promptForEmptyDocument)
+{
+    if(path.isEmpty())return false;
+    if(m_operation || m_referenceDraft || m_selectingPlane || m_constraints || (m_smartDimension && m_smartDimension->editor)){reportError("Confirm or cancel the active operation before opening another part.");return false;}
     try {
         auto candidate = document::PartDocument::load(path);
-        if (!maybeSave()) return;
+        // A file supplied at launch replaces only the pristine empty startup
+        // document without prompting. Existing work still uses normal Save/Cancel.
+        const bool pristine=m_path.isEmpty()&&m_document.features().empty()&&!m_editSketch;
+        if((promptForEmptyDocument || !pristine) && !maybeSave())return false;
         candidate = document::PartDocument::load(path);
-        if (replaceDocument(std::move(candidate), QFileInfo(path).absoluteFilePath())) setWindowModified(false);
-    } catch (const std::exception& error) { reportError(QString::fromUtf8(error.what())); }
+        if(!replaceDocument(std::move(candidate), QFileInfo(path).absoluteFilePath()))return false;
+        setWindowModified(false);return true;
+    } catch (const std::exception& error) { reportError(QString("Cannot open %1:\n%2").arg(QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath()),QString::fromUtf8(error.what()))); }
+    return false;
 }
 
 bool MainWindow::saveDocument()

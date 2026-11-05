@@ -138,6 +138,12 @@ if(BUILD_TESTING)
 
     if(THECAD_GUI_TESTS)
         find_package(Qt6 REQUIRED COMPONENTS Test)
+        add_executable(thecad_startup_launch_tests tests/StartupLaunchTests.cpp)
+        target_compile_definitions(thecad_startup_launch_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+        target_link_libraries(thecad_startup_launch_tests PRIVATE thecad_document Qt6::Test user32)
+        add_dependencies(thecad_startup_launch_tests TheCAD)
+        add_test(NAME ui.startup-file-launch COMMAND thecad_startup_launch_tests -o "${CMAKE_BINARY_DIR}/startup-launch-results.txt,txt")
+        set_tests_properties(ui.startup-file-launch PROPERTIES TIMEOUT 60 LABELS "gui;documents;startup" RUN_SERIAL TRUE)
         add_executable(thecad_viewport_tests tests/CadViewportTests.cpp)
         target_compile_definitions(thecad_viewport_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
         target_link_libraries(thecad_viewport_tests PRIVATE

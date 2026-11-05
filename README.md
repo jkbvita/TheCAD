@@ -63,10 +63,15 @@ With dependencies installed, run from the repository root:
 
 ## Launch from Windows Explorer
 
-For the current 3D reference-geometry build, use the updated desktop **TheCAD**
-shortcut or `build/package/TheCAD-Reference-Geometry/TheCAD.exe` in the isolated
+For the current saved-file launch build, use the updated desktop **TheCAD**
+shortcut or `build/package/TheCAD-Saved-File-Open/TheCAD.exe` in the isolated
 worktree. The older package is retained to protect an open sketch; see the
 [repair checks](docs/verification/sketch-relations-system.md).
+
+Drop one saved **.thepart** onto the desktop shortcut or `TheCAD.exe` to reopen
+that model. Launching with a file path also works from a shell, including paths
+with spaces or non-ASCII characters. Launching without a file starts a new part.
+Missing/damaged files report an error. See [startup file checks](docs/verification/saved-part-startup-open.md).
 
 Extrude/Cut selects the depth text automatically when opened and after selecting
 a region in the viewport. Type a depth immediately, including decimals; Enter

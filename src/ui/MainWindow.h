@@ -38,6 +38,7 @@ public:
 
     const document::PartDocument& document() const;
     QString currentPath() const;
+    bool openPartFile(const QString& path);
 
 protected:
     enum class UnsavedChoice { Save, Discard, Cancel };
@@ -98,6 +99,7 @@ private:
     bool maybeSave();
     void newDocument();
     void openDocument();
+    bool openPartFileImpl(const QString& path,bool promptForEmptyDocument);
     bool saveDocument();
     bool saveDocumentAs();
     bool saveToPath(const QString& path);

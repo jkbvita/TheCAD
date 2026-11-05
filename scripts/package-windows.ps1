@@ -114,6 +114,10 @@ Double-click TheCAD.exe. No Codex session, development shell, compiler or
 modified system PATH is required. Keep all DLLs, plugins, resources and qt.conf
 together. This folder may be moved as a unit on Windows x64.
 
+Drop one saved .thepart onto TheCAD.exe or its desktop shortcut to open it.
+You can also run TheCAD.exe "C:\path to\model.thepart". Legacy .tcpart input
+is supported. Launching without a file starts a new part.
+
 An OpenGL-capable Windows graphics driver is required. Runtime DLLs remain
 separate and replaceable. Third-party package versions, source package URLs
 and supplied license notices are in licenses/. The repository's existing

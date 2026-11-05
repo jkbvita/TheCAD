@@ -559,6 +559,11 @@ private slots:
         QCOMPARE(window.document().features().size(),std::size_t(4));QCOMPARE(window.document().features()[0].sketch.relations.size(),active.relations.size());
         QVERIFY(BRepCheck_Analyzer(window.document().shape()).IsValid());QVERIFY(window.errors.isEmpty());QVERIFY(window.close());
     }
+    void startupFileLoadsBeforeViewportPaintAndDisplaysSavedSolid() {
+        QTemporaryDir directory;const auto path=directory.filePath("startup solid.thepart");auto part=document::PartDocument::createEmpty();modeling::Sketch sketch;sketch.entities={{modeling::EntityKind::Rectangle,{10,20},{60,50},1,"profile"}};const auto profile=part.addSketch(sketch);part.addExtrude(profile,{"profile"},25,modeling::Direction::Positive);part.save(path);
+        WorkflowWindow window;auto* viewport=window.findChild<CadViewport*>();QVERIFY(!viewport->isReady());QVERIFY(window.openPartFile(path));QCOMPARE(window.document().features().size(),std::size_t(2));QCOMPARE(window.currentPath(),path);QVERIFY(!window.isWindowModified());
+        window.show();QVERIFY(QTest::qWaitForWindowExposed(&window));QTRY_VERIFY(viewport->isReady());QVERIFY(!viewport->m_presentation.IsNull());QVERIFY(viewport->m_context->IsDisplayed(viewport->m_presentation));QVERIFY(std::abs(volume(viewport->m_presentation->Shape())-50*30*25)<1e-6);QVERIFY(window.errors.isEmpty());QVERIFY(window.close());
+    }
     void referenceGeometryXYZPickingSketchRegenerationAndPersistence() {
         using namespace modeling;WorkflowWindow window;window.show();QVERIFY(QTest::qWaitForWindowExposed(&window));auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());
         const auto project=[&](const gp_Pnt& p){int x,y;viewport->m_view->Convert(p.X(),p.Y(),p.Z(),x,y);return QPoint(qRound(x/viewport->devicePixelRatioF()),qRound(y/viewport->devicePixelRatioF()));};

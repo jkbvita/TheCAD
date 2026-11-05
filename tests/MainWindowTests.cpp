@@ -55,6 +55,26 @@ class MainWindowTest final : public QObject {
     Q_OBJECT
 
 private slots:
+    void filePathOpenLoadsSavedPartWithoutPromptingForPristineStartup()
+    {
+        QTemporaryDir directory;QVERIFY(directory.isValid());
+        const auto path=directory.filePath(QString::fromUtf8("saved model díl.thepart"));document::PartDocument::createBox({17,19,23}).save(path);
+        QFile source(path);QVERIFY(source.open(QIODevice::ReadOnly));const auto bytes=source.readAll();source.close();
+        TestWindow window;window.choice=TestWindow::Choice::Cancel;
+        QVERIFY(window.openPartFile(path));QCOMPARE(window.promptCount,0);QVERIFY(window.errors.isEmpty());QCOMPARE(window.currentPath(),path);QVERIFY(!window.isWindowModified());QVERIFY(!window.document().shape().IsNull());QCOMPARE(window.document().parameters().width,17.0);
+        window.show();QVERIFY(QTest::qWaitForWindowExposed(&window));auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());QVERIFY(!viewport->displayedShape().IsNull());
+        QVERIFY(source.open(QIODevice::ReadOnly));QCOMPARE(source.readAll(),bytes);source.close();QVERIFY(window.close());
+    }
+    void filePathOpenRespectsDirtyWorkAndReportsFailedLoads()
+    {
+        QTemporaryDir directory;const auto first=directory.filePath("first.thepart"),second=directory.filePath("second.thepart");document::PartDocument::createBox({3,4,5}).save(first);document::PartDocument::createBox({10,20,30}).save(second);
+        TestWindow window;QVERIFY(window.openPartFile(first));window.setWindowModified(true);window.choice=TestWindow::Choice::Cancel;
+        QVERIFY(!window.openPartFile(second));QCOMPARE(window.promptCount,1);QCOMPARE(window.currentPath(),first);QCOMPARE(window.document().parameters().width,3.0);QVERIFY(window.isWindowModified());
+        const auto shape=window.document().shape();QVERIFY(!window.openPartFile(directory.filePath("missing.thepart")));QCOMPARE(window.promptCount,1);QCOMPARE(window.errors.size(),1);QVERIFY(window.document().shape().IsSame(shape));QCOMPARE(window.currentPath(),first);
+        const auto invalid=directory.filePath("damaged.thepart");QFile file(invalid);QVERIFY(file.open(QIODevice::WriteOnly));file.write("invalid part");file.close();QVERIFY(!window.openPartFile(invalid));QCOMPARE(window.errors.size(),2);QVERIFY(window.document().shape().IsSame(shape));QVERIFY(window.errors.back().contains("damaged.thepart"));
+        const auto wrongSuffix=directory.filePath("model.theprt");QVERIFY(QFile::copy(first,wrongSuffix));QVERIFY(!window.openPartFile(wrongSuffix));QCOMPARE(window.errors.size(),3);QVERIFY(window.errors.back().contains(".thepart"));QCOMPARE(window.currentPath(),first);
+        window.choice=TestWindow::Choice::Save;QVERIFY(window.openPartFile(second));QVERIFY(!window.isWindowModified());QCOMPARE(window.currentPath(),second);QCOMPARE(document::PartDocument::load(first).parameters().width,3.0);
+    }
     void consumedSketchIsSharedByEveryFeatureAndRemainsEditable()
     {
         QTemporaryDir directory;

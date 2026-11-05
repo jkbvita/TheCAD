@@ -15,6 +15,24 @@ For a completely independent runtime, double-click:
 Keep the whole `TheCAD` package folder together. The executable cannot be moved
 away from its DLLs, Qt plugins, `qt.conf`, and OCCT resources.
 
+## Open a saved model from Explorer
+
+Drop a single `.thepart` onto the TheCAD desktop shortcut or executable. Windows
+passes the filename to the application; TheCAD loads it as the initial document.
+Spaces and Unicode names are supported. The equivalent command is:
+
+```powershell
+& 'C:\path to\TheCAD.exe' 'C:\path to\saved model.thepart'
+```
+
+The executable path must identify the current package. The general desktop
+shortcut without a file starts a new empty part; it does not restore a prior file
+automatically. Legacy `.tcpart` files can be opened, with conversion requiring a
+separate `.thepart` save as before. A missing, corrupt or unsupported file displays
+an error; failed startup does not silently continue as an empty model.
+
+See [startup file verification](verification/saved-part-startup-open.md).
+
 ## Create the package
 
 Build Release first, then run from the repository root:
