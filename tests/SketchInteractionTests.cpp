@@ -10,6 +10,8 @@
 #include <Graphic3d_RenderingParams.hxx>
 #include <Graphic3d_GraphicDriver.hxx>
 #include <Graphic3d_TypeOfLimit.hxx>
+#include <Image_PixMap.hxx>
+#include <Prs3d_PointAspect.hxx>
 #include <QDir>
 #include <QImage>
 #include <set>
@@ -47,6 +49,30 @@ private slots:
         QVERIFY(QTest::qWaitForWindowExposed(host.get())); QTRY_VERIFY(viewport->isReady());
     }
     void init() { viewport->beginSketch({}); QApplication::processEvents(); }
+    void independentlyDefinedGeometryColorsAndDragging() {
+        using namespace modeling;
+        Sketch sketch;sketch.entities={{EntityKind::Line,{-40,20},{20,20},1,"horizontal"},{EntityKind::Circle,{25,-25},{},8,"circle"},{EntityKind::Point,{-25,-25},{},1,"fixed"}};
+        sketch.relations={{"axis",RelationKind::Horizontal,{"horizontal",PointRole::First},{"horizontal",PointRole::Second}},{"pin",RelationKind::FixedPoint,{"fixed",PointRole::First},{},{-25,-25}}};
+        viewport->beginSketch(sketch);viewport->selectSketchTool();hover({60,60});
+        QVERIFY(viewport->m_definition.valid);QVERIFY(!viewport->m_sketchFullyDefined);
+        bool black=false,blue=false;for(const auto& batch:viewport->m_sketchBatches){Quantity_Color color;batch->Color(color);black|=color.Distance(Quantity_Color(Quantity_NOC_BLACK))<1e-6;blue|=color.Distance(Quantity_Color(0.1,0.22,0.60,Quantity_TOC_RGB))<1e-6;}
+        QVERIFY(black&&blue);
+        // Inspect the actual marker sprite colors, without screenshot comparisons.
+        QCOMPARE(viewport->m_pointPresentations.size(),std::size_t(5));
+        const auto markerColor=[&](std::size_t index){const auto image=viewport->m_pointPresentations[index]->Attributes()->PointAspect()->Aspect()->MarkerImage()->GetImage();return image->PixelColor(image->SizeX()/2,image->SizeY()/2).GetRGB();};
+        QVERIFY(markerColor(1).Distance(Quantity_Color(Quantity_NOC_BLUE))<0.01);
+        QVERIFY(markerColor(2).Distance(Quantity_Color(Quantity_NOC_BLUE))<0.01);
+        QVERIFY(markerColor(3).Distance(Quantity_Color(Quantity_NOC_BLUE))<0.01);
+        QVERIFY(markerColor(4).Distance(Quantity_Color(Quantity_NOC_BLACK))<0.01);
+        QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,pixel({20,20}));QVERIFY(viewport->m_pointDrag);
+        const auto target=pixel({40,35});QMouseEvent move(QEvent::MouseMove,target,viewport->mapToGlobal(target),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);QApplication::sendEvent(viewport,&move);QVERIFY(viewport->m_pointDrag->candidate);
+        QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,target);
+        QVERIFY(viewport->m_sketch->entities[0].second.x>30);QVERIFY(std::abs(viewport->m_sketch->entities[0].first.y-viewport->m_sketch->entities[0].second.y)<1e-6);
+        QCOMPARE(viewport->m_sketch->relations.size(),std::size_t(2));
+        QVERIFY(std::find(viewport->m_definition.definedCurves.begin(),viewport->m_definition.definedCurves.end(),"horizontal")!=viewport->m_definition.definedCurves.end());
+        viewport->setSketch(removeSketchRelation(*viewport->m_sketch,"axis"));
+        QVERIFY(viewport->m_definition.definedCurves.empty());
+    }
     void midpointCuesCreationAndPersistentDragging() {
         using namespace modeling;
         for(const auto plane:{SketchPlane::XY,SketchPlane::XZ,SketchPlane::YZ}){

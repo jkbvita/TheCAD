@@ -1,6 +1,7 @@
 #pragma once
 
 #include "modeling/Sketch.h"
+#include "modeling/ConstraintSolver.h"
 #include "modeling/ReferencePlanes.h"
 #include <array>
 #include <AIS_TextLabel.hxx>
@@ -39,6 +40,8 @@ public:
     void cancelPlaneSelection();
     void showReferencePlanes(bool visible);
     void setSelectedReferencePlane(std::optional<modeling::SketchPlane> plane);
+    void setSelectedSolidFace(int index);
+    int selectedSolidFace() const {return m_selectedSolidFace;}
     void beginSketch(const modeling::Sketch& sketch);
     void endSketch();
     void setSketchTool(modeling::EntityKind kind,bool construction=false);
@@ -137,6 +140,7 @@ private:
     std::vector<std::string> m_dimensionEntities;
     std::vector<modeling::SketchPointRef> m_dimensionPoints;
     bool m_sketchFullyDefined = false;
+    modeling::SketchDefinition m_definition;
     std::vector<std::string> m_constraintErrors;
     void updateSketchAxes();
     void updateGlobalAxes();
@@ -183,6 +187,8 @@ private:
     Handle(AIS_Shape) m_presentation;
     Handle(AIS_Shape) m_sketchPresentation;
     Handle(AIS_Shape) m_constructionPresentation;
+    std::vector<Handle(AIS_Shape)> m_sketchBatches;
+    int m_selectedSolidFace=0;
     std::optional<modeling::Sketch> m_sketch;
     std::optional<modeling::EntityKind> m_sketchTool;
     bool m_constructionTool=false;

@@ -63,8 +63,8 @@ With dependencies installed, run from the repository root:
 
 ## Launch from Windows Explorer
 
-For the current intersection-region build, use the updated desktop **TheCAD**
-shortcut or `build/package/TheCAD-Intersection-Regions/TheCAD.exe` in the isolated
+For the current definition-color and face-selection build, use the updated desktop **TheCAD**
+shortcut or `build/package/TheCAD-Definition-Colors/TheCAD.exe` in the isolated
 worktree. The older package is retained to protect an open sketch; see the
 [repair checks](docs/verification/sketch-relations-system.md).
 
@@ -173,8 +173,11 @@ also removes its attached dimensions; selecting/deleting only a dimension leaves
 its geometry intact. See [history and deletion checks](docs/verification/edit-history-sketch-deletion.md).
 
 See [current behavior and limits](docs/requirements/parametric-constraints.md) and
-[verification](docs/verification/parametric-constraints.md). Whole-sketch DOF=0 is
-required for black fully-defined geometry; mixed sketches remain blue.
+[verification](docs/verification/parametric-constraints.md). Definition colors are
+per entity: constrained line direction and circle size render black independently
+of positional freedom. Fixed points render black; movable points remain blue.
+Selected planar body faces fill light blue; click empty space to clear selection.
+See [definition and selection checks](docs/verification/definition-colors-face-selection.md).
 
 ## Source layout
 

@@ -567,9 +567,10 @@ MainWindow::MainWindow(QWidget* parent)
         m_selectedFace=0;m_selectedPlane.reset();m_selectedId.clear();
         {const QSignalBlocker blocker(m_tree);m_tree->clearSelection();}
         m_viewport->setSelectedReferencePlane({});updateActions();
-        if(index==0)return;
-        try {(void)m_document.sketchOnFace(index);}catch(const std::exception& error){m_selectedFace=0;reportError(QString::fromUtf8(error.what()));return;}
+        if(index==0){m_viewport->setSelectedSolidFace(0);return;}
+        try {(void)m_document.sketchOnFace(index);}catch(const std::exception& error){m_selectedFace=0;m_viewport->setSelectedSolidFace(0);reportError(QString::fromUtf8(error.what()));return;}
         m_selectedPlane.reset();m_selectedFace=index;m_viewport->setSelectedReferencePlane({});
+        m_viewport->setSelectedSolidFace(index);
         if(m_selectingPlane)createSketchOnFace(index);
         else statusBar()->showMessage("Planar face selected. Click Sketch to create an attached sketch.");
     });
@@ -827,6 +828,7 @@ void MainWindow::selectFeature(const std::string& id)
 void MainWindow::selectionChanged()
 {
     m_selectedFace=0;
+    m_viewport->setSelectedSolidFace(0);
     const auto* item = m_tree->currentItem();
     const QString selection = item ? item->data(0, Qt::UserRole).toString() : QString{};
     if (!m_editSketch && !m_operation && selection.startsWith("origin:")) {
@@ -1042,6 +1044,7 @@ void MainWindow::createSketchOnPlane(modeling::SketchPlane plane)
 void MainWindow::referencePlaneSelected(modeling::SketchPlane plane)
 {
     m_selectedFace=0;
+    m_viewport->setSelectedSolidFace(0);
     if (m_editSketch || m_operation) return;
     if (m_selectingPlane) {
         createSketchOnPlane(plane);
@@ -1225,6 +1228,7 @@ void MainWindow::extrude(bool cut)
 void MainWindow::startOperation(document::Feature feature, bool editing)
 {
     if(m_operation || m_selectingPlane) return;
+    m_selectedFace=0;m_viewport->setSelectedSolidFace(0);
     auto sourceDocument=m_document;
     if(m_editSketch) {
         m_viewport->selectSketchTool();

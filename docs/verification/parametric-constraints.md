@@ -71,7 +71,7 @@ SolidWorks-equivalence testing is made. The owner remains the primary manual tes
    floating editor. Enter confirms; Escape cancels. Repeat without leaving the tool.
    Create a rectangle on each origin plane. Add H/V width/height dimensions,
    anchor a corner and edit a width annotation. Check the expected geometry and
-   blue/black whole-sketch status. Cancel a pending edit and confirm no change.
+   independent blue/black point and stroke colors. Cancel a pending edit and confirm no change.
 2. Dimension a diagonal line, drag its free endpoint, and verify the specified
    length. Fix a point and check that it cannot move. Dimension a circle by radius
    or diameter and try an incompatible second driving dimension; inspect the

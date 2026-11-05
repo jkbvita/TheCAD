@@ -27,6 +27,14 @@ struct SketchSolveResult {
 // Owns a candidate copy; failure returns the input unchanged. No GCS/Qt types leak.
 SketchSolveResult solvePlanarSketch(const Sketch& sketch,const SolveOptions& options = {});
 Sketch requireSolvedSketch(const SketchSolveResult& result);
+struct SketchDefinition {
+    bool valid=false;
+    int degreesOfFreedom=-1;
+    std::vector<SketchPointRef> fixedPoints;
+    std::vector<std::string> definedCurves; // Fixed line direction, circle radius, or rectangle axes.
+};
+// Read-only local mobility diagnosis. Does not create constraints or fix geometry.
+SketchDefinition analyzeSketchDefinition(const Sketch& sketch);
 const char* solveStateName(SolveState state);
 Sketch setSketchDimension(const Sketch& sketch,const SketchDimension& dimension);
 Sketch removeSketchDimension(const Sketch& sketch,const std::string& id);

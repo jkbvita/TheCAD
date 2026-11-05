@@ -11,6 +11,8 @@
 #include <TopoDS_Compound.hxx>
 #include <Quantity_ColorRGBA.hxx>
 #include <StdSelect_BRepOwner.hxx>
+#include <SelectMgr_IndexedMapOfOwner.hxx>
+#include <Prs3d_TypeOfHighlight.hxx>
 #include <TopExp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
@@ -148,6 +150,11 @@ void CadViewport::initialize()
         m_viewer->SetDefaultLights();
         m_viewer->SetLightOn();
         m_context = new AIS_InteractiveContext(m_viewer);
+        for(const auto type:{Prs3d_TypeOfHighlight_Selected,Prs3d_TypeOfHighlight_LocalSelected}){
+            const auto& style=m_context->HighlightStyle(type);style->SetColor(Quantity_Color(0.55,0.80,1.0,Quantity_TOC_RGB));
+            style->SetMethod(Aspect_TOHM_COLOR);style->SetDisplayMode(AIS_Shaded);style->SetTransparency(0.0);
+        }
+        m_context->SetToHilightSelected(Standard_False);
         m_view = m_viewer->CreateView();
         Handle(WNT_Window) window = new WNT_Window(reinterpret_cast<Aspect_Handle>(winId()));
         m_view->SetWindow(window);
@@ -206,6 +213,7 @@ void CadViewport::releaseViewer()
     m_hoveredEntityPresentation.Nullify();
     m_previewPresentation.Nullify();
     m_sketchPresentation.Nullify();m_constructionPresentation.Nullify();
+    m_sketchBatches.clear();m_selectedSolidFace=0;
     m_presentation.Nullify();
     m_context.Nullify();
     m_renderSize = {};
@@ -264,6 +272,7 @@ void CadViewport::synchronizeSurface()
 
 bool CadViewport::setShape(const TopoDS_Shape& shape)
 {
+    setSelectedSolidFace(0);
     if (shape.IsNull()) {
         if (isReady() && !m_presentation.IsNull()) {
             m_context->Remove(m_presentation, Standard_False);
@@ -338,8 +347,26 @@ void CadViewport::showReferencePlanes(bool visible)
 
 void CadViewport::setSelectedReferencePlane(std::optional<modeling::SketchPlane> plane)
 {
+    if(plane)setSelectedSolidFace(0);
     m_selectedPlane = plane;
     updatePlaneStyles();
+}
+
+void CadViewport::setSelectedSolidFace(int index){
+    if(index==m_selectedSolidFace)return;
+    m_selectedSolidFace=0;if(!isReady())return;
+    m_context->ClearSelected(Standard_False);
+    if(index>0 && !m_presentation.IsNull()){
+        TopTools_IndexedMapOfShape faces;TopExp::MapShapes(m_shape,TopAbs_FACE,faces);
+        if(index<=faces.Extent()){
+            Handle(SelectMgr_IndexedMapOfOwner) owners;m_context->EntityOwners(owners,m_presentation,AIS_Shape::SelectionMode(TopAbs_FACE));
+            if(!owners.IsNull())for(int i=1;i<=owners->Extent();++i){
+                const auto owner=Handle(StdSelect_BRepOwner)::DownCast(owners->FindKey(i));
+                if(!owner.IsNull() && owner->HasShape() && owner->Shape().IsSame(faces(index))){m_context->SetSelected(owner,Standard_False);m_selectedSolidFace=index;break;}
+            }
+        }
+    }
+    update();
 }
 
 void CadViewport::updateReferencePlanes()
@@ -502,6 +529,7 @@ void CadViewport::updateSketchAxes()
 }
 void CadViewport::beginSketch(const modeling::Sketch& sketch)
 {
+    setSelectedSolidFace(0);
     cancelDimensionDrag();cancelPointDrag(); resetSketchInference();
     m_selectingPlane = false;
     showReferencePlanes(false);
@@ -823,12 +851,9 @@ void CadViewport::orientSketch()
 void CadViewport::updateSketchPresentation(const std::optional<modeling::SketchEntity>& preview)
 {
     if (!isReady()) { return; }
-    if (!m_sketchPresentation.IsNull()) {
-        m_context->Remove(m_sketchPresentation, Standard_False);
-        m_sketchPresentation.Nullify();
-    }
-    if(!m_constructionPresentation.IsNull()){m_context->Remove(m_constructionPresentation,Standard_False);m_constructionPresentation.Nullify();}
-    if(m_sketch)m_sketchFullyDefined=modeling::solvePlanarSketch(*m_sketch).diagnostics.state==modeling::SolveState::FullyConstrained;
+    for(auto& batch:m_sketchBatches)m_context->Remove(batch,Standard_False);m_sketchBatches.clear();m_sketchPresentation.Nullify();m_constructionPresentation.Nullify();
+    m_definition=m_sketch?modeling::analyzeSketchDefinition(*m_sketch):modeling::SketchDefinition{};
+    m_sketchFullyDefined=m_definition.valid && m_definition.degreesOfFreedom==0;
     if (m_sketch) {
         try {
             auto visible = *m_sketch;
@@ -837,28 +862,18 @@ void CadViewport::updateSketchPresentation(const std::optional<modeling::SketchE
                     visible=modeling::addRegularPolygon(visible,"preview-polygon",{preview->first,preview->radius,std::atan2(preview->second.y-preview->first.y,preview->second.x-preview->first.x),6});
                 else if(preview->kind!=modeling::EntityKind::Polygon)visible.entities.push_back(*preview);
             }
-            auto construction=visible;
-            construction.entities.erase(std::remove_if(construction.entities.begin(),construction.entities.end(),[](const auto& e){return !e.construction || e.kind==modeling::EntityKind::Point;}),construction.entities.end());
-            construction.relations.clear();construction.dimensions.clear();construction.polygons.clear();
-            if(!construction.entities.empty()){
-                m_constructionPresentation=new AIS_Shape(modeling::sketchShape(construction));
-                const Quantity_Color color(0.30,0.40,0.62,Quantity_TOC_RGB);
-                const Handle(Prs3d_LineAspect) aspect=new Prs3d_LineAspect(color,Aspect_TOL_DOTDASH,1.5*devicePixelRatioF());
-                m_constructionPresentation->Attributes()->SetWireAspect(aspect);m_constructionPresentation->Attributes()->SetLineAspect(aspect);
-                m_constructionPresentation->SetZLayer(Graphic3d_ZLayerId_Topmost);m_context->Display(m_constructionPresentation,AIS_WireFrame,-1,Standard_False);
-            }
-            visible.entities.erase(std::remove_if(visible.entities.begin(),visible.entities.end(),[](const auto& e){return e.construction || e.kind==modeling::EntityKind::Point;}),visible.entities.end());
-            visible.relations.clear();visible.dimensions.clear();visible.polygons.clear();
-            const auto shape = modeling::sketchShape(visible);
-            if (!shape.IsNull()) {
-                m_sketchPresentation = new AIS_Shape(shape);
-                m_sketchPresentation->SetZLayer(Graphic3d_ZLayerId_Topmost);
-                m_sketchPresentation->SetColor(m_sketchFullyDefined?Quantity_Color(Quantity_NOC_BLACK):Quantity_Color(0.10, 0.22, 0.60, Quantity_TOC_RGB));
-                m_sketchPresentation->SetWidth(2.0 * devicePixelRatioF());
-                m_sketchPresentation->Attributes()->SetDeviationCoefficient(1e-5);
-                m_sketchPresentation->Attributes()->SetDeviationAngle(0.015);
-                m_context->Display(m_sketchPresentation, AIS_WireFrame, -1, Standard_False);
-                m_context->SetDisplayPriority(m_sketchPresentation, Graphic3d_DisplayPriority_Topmost);
+            for(const bool construction:{false,true})for(const bool defined:{false,true}){
+                auto group=visible;group.relations.clear();group.dimensions.clear();group.polygons.clear();
+                group.entities.erase(std::remove_if(group.entities.begin(),group.entities.end(),[&](const auto& e){const bool fixed=std::find(m_definition.definedCurves.begin(),m_definition.definedCurves.end(),e.id)!=m_definition.definedCurves.end();return e.kind==modeling::EntityKind::Point || e.construction!=construction || fixed!=defined;}),group.entities.end());
+                if(group.entities.empty())continue;
+                Handle(AIS_Shape) batch=new AIS_Shape(modeling::sketchShape(group));
+                const Quantity_Color color=defined?Quantity_Color(Quantity_NOC_BLACK):construction?Quantity_Color(0.30,0.40,0.62,Quantity_TOC_RGB):Quantity_Color(0.10,0.22,0.60,Quantity_TOC_RGB);
+                batch->SetColor(color);batch->SetWidth((construction?1.5:2.0)*devicePixelRatioF());
+                if(construction){const Handle(Prs3d_LineAspect) aspect=new Prs3d_LineAspect(color,Aspect_TOL_DOTDASH,1.5*devicePixelRatioF());batch->Attributes()->SetWireAspect(aspect);batch->Attributes()->SetLineAspect(aspect);}
+                batch->Attributes()->SetDeviationCoefficient(1e-5);batch->Attributes()->SetDeviationAngle(0.015);batch->SetZLayer(Graphic3d_ZLayerId_Topmost);
+                m_context->Display(batch,AIS_WireFrame,-1,Standard_False);m_context->SetDisplayPriority(batch,Graphic3d_DisplayPriority_Topmost);m_sketchBatches.push_back(batch);
+                if(construction && m_constructionPresentation.IsNull())m_constructionPresentation=batch;
+                if(!construction && m_sketchPresentation.IsNull())m_sketchPresentation=batch;
             }
         } catch (const std::exception&) {
             // A zero-size pointer preview is transient, never stored as model data.
@@ -1041,7 +1056,8 @@ void CadViewport::updatePointPresentation()
             const bool circleCenter=entry.first.role==modeling::PointRole::Center;
             if(!origin && !hovered && !selected && !lineEndpoint && !standalone && !circleCenter && entry.first.entityId!=m_selectedEntity) continue;
             Handle(AIS_Point) marker=new AIS_Point(new Geom_CartesianPoint(modeling::sketchPoint(*m_sketch,entry.second)));
-            Quantity_Color color(hovered ? Quantity_NOC_ORANGE : origin ? Quantity_NOC_RED3 : m_sketchFullyDefined ? Quantity_NOC_BLACK : Quantity_NOC_BLUE);
+            const bool fixed=std::any_of(m_definition.fixedPoints.begin(),m_definition.fixedPoints.end(),[&](const auto& p){return sameReference(p,entry.first);});
+            Quantity_Color color(hovered ? Quantity_NOC_ORANGE : origin ? Quantity_NOC_RED3 : fixed ? Quantity_NOC_BLACK : Quantity_NOC_BLUE);
             if(selected && !origin)color=Quantity_Color(0.25,0.72,1.0,Quantity_TOC_RGB);
             marker->SetZLayer(Graphic3d_ZLayerId_Topmost);
             marker->Attributes()->SetPointAspect(filledPoint(color,(hovered ? 9.0 : selected ? 9.0 : origin ? 4.0 : 7.0)*devicePixelRatioF()));
@@ -1471,8 +1487,8 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* event)
             const auto point=sketchPosition(event->position());if(point) emit sketchRegionClicked(*point);
         } else if (click) {
             const int face=faceAt(event->position());
-            if(face) {m_context->SelectDetected();emit solidFaceSelected(face);update();event->accept();return;}
-            m_context->ClearSelected(Standard_False);
+            if(face) {setSelectedSolidFace(face);emit solidFaceSelected(face);update();event->accept();return;}
+            setSelectedSolidFace(0);
             emit solidFaceSelected(0);
             const auto hit = planeAt(event->position());
             if (hit) {
@@ -1525,6 +1541,7 @@ void CadViewport::wheelEvent(QWheelEvent* event)
 
 void CadViewport::keyPressEvent(QKeyEvent* event)
 {
+    if(event->key()==Qt::Key_Escape && !m_sketchEditing && !m_selectingPlane && m_selectedSolidFace){setSelectedSolidFace(0);emit solidFaceSelected(0);event->accept();return;}
     if(event->key()==Qt::Key_Delete && !m_selectedRelation.empty()){emit sketchRelationDeleteRequested(QString::fromStdString(m_selectedRelation));event->accept();return;}
     const bool selected=!m_selectedEntities.empty() || !m_selectedDimensions.empty();
     const bool deletionMode=m_sketchEditing && !m_sketchTool && !m_pointDrag && !m_dimensionDrag

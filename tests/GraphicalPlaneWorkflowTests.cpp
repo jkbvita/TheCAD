@@ -2,6 +2,7 @@
 #include "ui/MainWindow.h"
 #include "ui/CadViewport.h"
 #include <Graphic3d_Camera.hxx>
+#include <Prs3d_TypeOfHighlight.hxx>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QPushButton>
@@ -105,7 +106,25 @@ private slots:
             viewport->m_view->Redraw();const auto pixel=project(viewport,axes.Location());
             QCOMPARE(viewport->faceAt(pixel),selected);
             QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,pixel);
-            if(!sketchFirst)command(window,"actionCreateSketch");
+            if(!sketchFirst){
+                QCOMPARE(viewport->selectedSolidFace(),selected);QCOMPARE(viewport->m_context->NbSelected(),1);
+                for(const auto type:{Prs3d_TypeOfHighlight_Selected,Prs3d_TypeOfHighlight_LocalSelected}){
+                    const auto style=viewport->m_context->HighlightStyle(type);
+                    QVERIFY(style->Color().Distance(Quantity_Color(0.55,0.80,1.0,Quantity_TOC_RGB))<1e-6);
+                    QCOMPARE(style->DisplayMode(),int(AIS_Shaded));QCOMPARE(style->Transparency(),0.0);
+                }
+                const auto featureCount=window.document().features().size();const bool dirty=window.isWindowModified();
+                QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,pixel);
+                QCOMPARE(viewport->selectedSolidFace(),selected);QCOMPARE(viewport->m_context->NbSelected(),1);
+                std::optional<QPoint> blank;
+                for(const auto p:{QPoint(5,5),QPoint(viewport->width()-5,5),QPoint(5,viewport->height()-5)})if(!viewport->faceAt(p)&&!viewport->planeAt(p)){blank=p;break;}
+                QVERIFY(blank);QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,*blank);
+                QCOMPARE(viewport->selectedSolidFace(),0);QCOMPARE(viewport->m_context->NbSelected(),0);
+                QCOMPARE(window.document().features().size(),featureCount);QCOMPARE(window.isWindowModified(),dirty);
+                QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,pixel);
+                QCOMPARE(viewport->selectedSolidFace(),selected);command(window,"actionCreateSketch");
+            }
+            QCOMPARE(viewport->selectedSolidFace(),0);QCOMPARE(viewport->m_context->NbSelected(),0);
             QVERIFY(viewport->m_sketchEditing);QVERIFY(viewport->m_sketch->attachment);
             QCOMPARE(viewport->m_sketch->attachment->faceIndex,selected);
             QVERIFY(viewport->m_view->Camera()->Direction().Dot(axes.Direction())< -0.999);

@@ -46,9 +46,11 @@ history retains ten completed edits with Ctrl+Z/Ctrl+Y; see the
 Numeric property edits are exact requests and reject
 incompatible driving dimensions rather than changing their targets silently.
 
-Blue means under-defined; black requires a successful whole-sketch DOF=0 result.
-This conservative prototype does not yet classify individual entities in a mixed
-sketch. Relation indicators and selected entity constraint IDs aid inspection.
+Blue means the relevant freedom remains: direction for line strokes, size for
+circle outlines, and position for points. Those aspects turn black independently
+when constrained, including in a mixed sketch. A horizontal black line can still
+have draggable blue endpoints. See [decision 0019](../decisions/0019-definition-colors-face-selection.md).
+Relation indicators and selected entity constraint IDs aid inspection.
 Red diagnostic text and involved saved constraint labels indicate rejected edits;
 the geometry shown remains the last valid geometry. It is not a complete
 SolidWorks diagnostic visualization or minimal-conflict explainer.

@@ -203,7 +203,9 @@ spacing, two nonparallel lines angle, two points H/V/aligned distance. Placement
 chooses orientation/sector. Double-click a label to edit. No dimension form is
 required on the left. Display/Delete Relations opens relation controls separately.
 
-Fully defined color is based on whole-sketch DOF=0, not per-entity inference.
+Definition color is diagnosed per entity. A constrained direction gives a black
+line stroke while its movable endpoints remain blue. Circle size and center
+position are independent, and fixed points turn black even in a mixed sketch.
 The adapter is Qt independent. Only the isolated PlaneGCS DLL compiles as C++20;
 other code stays C++17. Its Eigen/Boost header prefix defaults to
 %LOCALAPPDATA%/TheCAD/dev/sketch-solver; override with CMake
