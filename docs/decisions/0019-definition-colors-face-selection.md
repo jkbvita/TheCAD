@@ -1,5 +1,8 @@
 # 0019 — Independent sketch definition colors and planar face selection
 
+The coloring rules below are superseded by [0024](0024-full-definition-and-sketch-camera.md)
+following the owner's correction. The planar face selection behavior is unchanged.
+
 Status: owner-approved behavior, 2026-11-05. The owner requested black defined
 geometry, explicitly including horizontal line strokes whose endpoints can still
 move, and a light-blue selected planar body face cleared by an empty-space click.

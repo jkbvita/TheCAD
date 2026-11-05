@@ -31,7 +31,7 @@ struct SketchDefinition {
     bool valid=false;
     int degreesOfFreedom=-1;
     std::vector<SketchPointRef> fixedPoints;
-    std::vector<std::string> definedCurves; // Fixed line direction, circle radius, or rectangle axes.
+    std::vector<std::string> definedCurves; // No remaining size, position or direction freedom.
 };
 // Read-only local mobility diagnosis. Does not create constraints or fix geometry.
 SketchDefinition analyzeSketchDefinition(const Sketch& sketch);

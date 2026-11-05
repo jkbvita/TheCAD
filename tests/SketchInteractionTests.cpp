@@ -57,7 +57,7 @@ private slots:
         viewport->beginSketch(sketch);viewport->selectSketchTool();hover({60,60});
         QVERIFY(viewport->m_definition.valid);QVERIFY(!viewport->m_sketchFullyDefined);
         bool black=false,blue=false;for(const auto& batch:viewport->m_sketchBatches){Quantity_Color color;batch->Color(color);black|=color.Distance(Quantity_Color(Quantity_NOC_BLACK))<1e-6;blue|=color.Distance(Quantity_Color(0.1,0.22,0.60,Quantity_TOC_RGB))<1e-6;}
-        QVERIFY(black&&blue);
+        QVERIFY(!black&&blue);
         // Inspect the actual marker sprite colors, without screenshot comparisons.
         QCOMPARE(viewport->m_pointPresentations.size(),std::size_t(5));
         const auto markerColor=[&](std::size_t index){const auto image=viewport->m_pointPresentations[index]->Attributes()->PointAspect()->Aspect()->MarkerImage()->GetImage();return image->PixelColor(image->SizeX()/2,image->SizeY()/2).GetRGB();};
@@ -70,8 +70,15 @@ private slots:
         QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,target);
         QVERIFY(viewport->m_sketch->entities[0].second.x>30);QVERIFY(std::abs(viewport->m_sketch->entities[0].first.y-viewport->m_sketch->entities[0].second.y)<1e-6);
         QCOMPARE(viewport->m_sketch->relations.size(),std::size_t(2));
-        QVERIFY(std::find(viewport->m_definition.definedCurves.begin(),viewport->m_definition.definedCurves.end(),"horizontal")!=viewport->m_definition.definedCurves.end());
-        viewport->setSketch(removeSketchRelation(*viewport->m_sketch,"axis"));
+        QVERIFY(viewport->m_definition.definedCurves.empty());
+        auto anchored=*viewport->m_sketch;const auto& line=anchored.entities[0];
+        anchored.relations.push_back({"anchor",RelationKind::FixedPoint,{"horizontal",PointRole::First},{},line.first});
+        SketchDimension length;length.id="length";length.kind=DimensionKind::LineLength;length.first={"horizontal",PointRole::First};length.second={"horizontal",PointRole::Second};length.value=line.second.x-line.first.x;
+        viewport->setSketch(setSketchDimension(anchored,length));
+        QCOMPARE(viewport->m_definition.definedCurves,std::vector<std::string>{"horizontal"});
+        black=false;blue=false;for(const auto& batch:viewport->m_sketchBatches){Quantity_Color color;batch->Color(color);black|=color.Distance(Quantity_Color(Quantity_NOC_BLACK))<1e-6;blue|=color.Distance(Quantity_Color(0.1,0.22,0.60,Quantity_TOC_RGB))<1e-6;}
+        QVERIFY(black&&blue);
+        viewport->setSketch(removeSketchDimension(*viewport->m_sketch,"length"));
         QVERIFY(viewport->m_definition.definedCurves.empty());
     }
     void definedCirclesAndConstructionGeometryRenderBlack() {

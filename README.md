@@ -63,8 +63,8 @@ With dependencies installed, run from the repository root:
 
 ## Launch from Windows Explorer
 
-For the current saved-file launch build, use the updated desktop **TheCAD**
-shortcut or `build/package/TheCAD-Saved-File-Open/TheCAD.exe` in the isolated
+For the current sketch repair build, use the updated desktop **TheCAD**
+shortcut or `build/package/TheCAD-Sketch-Definition-Camera/TheCAD.exe` in the isolated
 worktree. The older package is retained to protect an open sketch; see the
 [repair checks](docs/verification/sketch-relations-system.md).
 
@@ -189,8 +189,10 @@ its geometry intact. See [history and deletion checks](docs/verification/edit-hi
 
 See [current behavior and limits](docs/requirements/parametric-constraints.md) and
 [verification](docs/verification/parametric-constraints.md). Definition colors are
-per entity: constrained line direction and circle size render black independently
-of positional freedom. Fixed points render black; movable points remain blue.
+per entity: curves turn black only when their size, position and direction are
+fully defined. Horizontal/Vertical alone leaves a line blue. Fixed points render
+black; movable points remain blue, even in a sketch containing defined geometry.
+Drawing and dragging in a body-face sketch preserve the current zoom and pan.
 Selected planar body faces fill light blue; click empty space to clear selection.
 See [definition and selection checks](docs/verification/definition-colors-face-selection.md).
 

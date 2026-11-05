@@ -275,26 +275,21 @@ SketchDefinition analyzeSketchDefinition(const Sketch& sketch){
         validateSketchConstraintReferences(sketch);
         (void)sketchShape(sketch);WorkingSketch work(sketch);GCS::System system;system.debugMode=GCS::NoDebug;
         work.addRelations(system);work.addPolygons(system);work.addDimensions(system);
-        std::map<std::string,double*> angles;
-        GCS::Line axis;axis.p1=GCS::Point(work.constant(0),work.constant(0));axis.p2=GCS::Point(work.constant(1),work.constant(0));
-        for(auto& entry:work.lines){
-            auto& line=entry.second;work.auxiliaries.push_back(std::atan2(*line.p2.y-*line.p1.y,*line.p2.x-*line.p1.x));
-            auto* angle=&work.auxiliaries.back();work.unknowns.push_back(angle);angles.emplace(entry.first,angle);
-            // One free observer variable and one equation leave the geometry's
-            // DOFs unchanged. Its mobility tells whether line direction can vary,
-            // including coupled Parallel/Perpendicular and dimensional relations.
-            system.addConstraintL2LAngle(axis,line,angle,work.tag("definition:"+entry.first));
-        }
         system.declareUnknowns(work.unknowns);system.diagnose();
         GCS::VEC_I conflicts,redundant;system.getConflicting(conflicts);system.getRedundant(redundant);
         if(!conflicts.empty() || !redundant.empty())return result;
         GCS::VEC_pD dependent;system.getDependentParams(dependent);std::set<double*> movable(dependent.begin(),dependent.end());
         if(system.isEmptyDiagnoseMatrix())movable.insert(work.unknowns.begin(),work.unknowns.end());
-        for(const auto& point:sketchPoints(sketch)){auto& p=work.point(point.first);if(!movable.count(p.x) && !movable.count(p.y))result.fixedPoints.push_back(point.first);}
+        const auto fixedPoint=[&](SketchPointRef ref){const auto& p=work.point(ref);return !movable.count(p.x) && !movable.count(p.y);};
+        for(const auto& point:sketchPoints(sketch))if(fixedPoint(point.first))result.fixedPoints.push_back(point.first);
         for(const auto& e:sketch.entities){
-            bool defined=e.kind==EntityKind::Rectangle;
-            if(e.kind==EntityKind::Line)defined=!movable.count(angles.at(e.id));
-            if(e.kind==EntityKind::Circle)defined=!movable.count(work.circles.at(e.id).rad);
+            // A fixed orientation or size alone does not define a curve. All of
+            // its geometric parameters, including position, must be immobile.
+            bool defined=false;
+            if(e.kind==EntityKind::Line || e.kind==EntityKind::Rectangle)
+                defined=fixedPoint({e.id,PointRole::First}) && fixedPoint({e.id,PointRole::Second});
+            if(e.kind==EntityKind::Circle)
+                defined=fixedPoint({e.id,PointRole::Center}) && !movable.count(work.circles.at(e.id).rad);
             if(defined)result.definedCurves.push_back(e.id);
         }
         result.degreesOfFreedom=system.dofsNumber();result.valid=true;

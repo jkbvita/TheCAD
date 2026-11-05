@@ -131,6 +131,37 @@ private slots:
             const auto origin=viewport->screenPoint({0,0});const auto local=viewport->sketchPosition(origin);
             QVERIFY(local && std::abs(local->x)<0.2 && std::abs(local->y)<0.2);
             for(const auto& axis:viewport->m_globalAxes)QVERIFY(axis.IsNull());
+            // Reproduce drawing after zooming/panning on top and side body
+            // faces through the real MainWindow sketchChanged/regeneration path.
+            viewport->m_view->SetZoom(4.0);viewport->m_view->Pan(25,-15);
+            const auto camera=viewport->m_view->Camera();
+            const auto eye=camera->Eye(),center=camera->Center();const auto up=camera->Up();const auto direction=camera->Direction();const double scale=camera->Scale();
+            const auto cameraUnchanged=[&]{const auto current=viewport->m_view->Camera();return std::abs(current->Scale()-scale)<1e-7 && current->Eye().Distance(eye)<1e-7 && current->Center().Distance(center)<1e-7 && current->Up().Angle(up)<1e-7 && current->Direction().Angle(direction)<1e-7;};
+            const auto draw=[&](const char* tool,modeling::Point2 first,modeling::Point2 second){
+                command(window,tool);
+                QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,project(viewport,modeling::sketchPoint(support,first)));
+                const auto pixel=project(viewport,modeling::sketchPoint(support,second));
+                QMouseEvent hover(QEvent::MouseMove,pixel,viewport->mapToGlobal(pixel),Qt::NoButton,Qt::NoButton,Qt::NoModifier);QApplication::sendEvent(viewport,&hover);
+                QVERIFY(cameraUnchanged());
+                QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,pixel);
+                QVERIFY(cameraUnchanged());
+            };
+            draw("actionLine",{-8,6},{5,6});
+            QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(1));QVERIFY(cameraUnchanged());
+            draw("actionCircle",{0,-6},{3,-6});
+            QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(2));QVERIFY(cameraUnchanged());
+            command(window,"actionSelectSketchEntity");
+            // Drag the line endpoint and check live updates as well as release.
+            const auto end=project(viewport,modeling::sketchPoint(support,viewport->m_sketch->entities[0].second));
+            const auto target=end+QPoint(12,0);
+            QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,end);
+            QMouseEvent move(QEvent::MouseMove,target,viewport->mapToGlobal(target),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);QApplication::sendEvent(viewport,&move);
+            QVERIFY(viewport->m_pointDrag && viewport->m_pointDrag->candidate);QVERIFY(cameraUnchanged());
+            QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,target);QVERIFY(cameraUnchanged());
+            for(int i=0;i<3;++i){command(window,"actionUndo");QVERIFY(cameraUnchanged());}
+            QVERIFY(viewport->m_sketch->entities.empty());
+            command(window,"actionRedo");QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(1));QVERIFY(cameraUnchanged());
+            command(window,"actionUndo");QVERIFY(viewport->m_sketch->entities.empty());QVERIFY(cameraUnchanged());
             command(window,"actionRectangle");
             QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,project(viewport,modeling::sketchPoint(support,{-4,-3})));
             QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,project(viewport,modeling::sketchPoint(support,{4,3})));

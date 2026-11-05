@@ -46,10 +46,11 @@ history retains ten completed edits with Ctrl+Z/Ctrl+Y; see the
 Numeric property edits are exact requests and reject
 incompatible driving dimensions rather than changing their targets silently.
 
-Blue means the relevant freedom remains: direction for line strokes, size for
-circle outlines, and position for points. Those aspects turn black independently
-when constrained, including in a mixed sketch. A horizontal black line can still
-have draggable blue endpoints. See [decision 0019](../decisions/0019-definition-colors-face-selection.md).
+Blue means geometry still has a size, position or direction freedom. A curve turns
+black only when all its geometric parameters are fixed by the solver. Horizontal
+alone does not define a line; a radius alone does not define a circle's center.
+Points are diagnosed independently and turn black when both coordinates are fixed,
+including in a mixed sketch. See [decision 0024](../decisions/0024-full-definition-and-sketch-camera.md).
 Relation indicators and selected entity constraint IDs aid inspection.
 Red diagnostic text and involved saved constraint labels indicate rejected edits;
 the geometry shown remains the last valid geometry. It is not a complete

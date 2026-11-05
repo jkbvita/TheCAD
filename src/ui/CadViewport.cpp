@@ -301,7 +301,9 @@ bool CadViewport::setShape(const TopoDS_Shape& shape)
         if (!m_presentation.IsNull()) {
             m_context->Erase(m_presentation, Standard_False);
         }
-        resetView();
+        // Live sketch edits regenerate the support body too. Redisplay it
+        // without discarding the user's current sketch zoom and pan.
+        if (!m_sketchEditing) { resetView(); }
     } catch (const Standard_Failure& failure) {
         m_context->Remove(candidate, Standard_False);
         if (!m_presentation.IsNull()) {
