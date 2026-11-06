@@ -1,7 +1,10 @@
 #include <Image_PixMap.hxx>
+#include <Geom_Point.hxx>
 #include <Prs3d_LineAspect.hxx>
 #include "ui/MainWindow.h"
 #include "modeling/Box.h"
+#include "modeling/DimensionInference.h"
+#include <QElapsedTimer>
 #include "ui/CadViewport.h"
 #include "ui/SelectionAppearance.h"
 #include <Graphic3d_Camera.hxx>
@@ -33,6 +36,31 @@ class PlaneNavigationTest:public QObject {
     void select(PlaneWindow& w,const QString& id){auto* tree=w.findChild<QTreeWidget*>("featureTree");for(QTreeWidgetItemIterator i(tree);*i;++i)if((*i)->data(0,Qt::UserRole).toString()==id){tree->setCurrentItem(*i,0,QItemSelectionModel::ClearAndSelect);return;}QFAIL("Missing feature");}
     void confirm(PlaneWindow& w){auto* buttons=w.findChild<QDialogButtonBox*>("referenceGeometryButtons");QVERIFY(buttons->button(QDialogButtonBox::Ok)->isEnabled());QTest::mouseClick(buttons->button(QDialogButtonBox::Ok),Qt::LeftButton);QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);}
 private slots:
+    void navigationAnnotationWork(){
+        PlaneWindow w;w.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&w));auto* v=w.findChild<CadViewport*>();QTRY_VERIFY(v->isReady());
+        Sketch sketch;for(int i=0;i<24;++i){const auto id="line-"+std::to_string(i);const double x=(i%4)*28.0-55,y=(i/4)*18.0-45;sketch.entities.push_back({EntityKind::Line,{x,y},{x+20,y},1,id});sketch.relations.push_back({"relation-"+std::to_string(i),RelationKind::Horizontal,{id,PointRole::First},{id,PointRole::Second}});if(i%3==0){auto d=inferDimension(sketch,{}, {id},{x+10,y+6});d.id="dimension-"+std::to_string(i);sketch.dimensions.push_back(d);}}
+        v->beginSketch(sketch);v->selectSketchTool();QApplication::processEvents();QVERIFY(!v->m_relationMarkers.empty());QVERIFY(!v->m_dimensionGuides.empty());
+        QVERIFY(!v->m_view->SetImmediateUpdate(Standard_False));
+        QSignalSpy changed(v,&CadViewport::sketchChanged);const auto frame=sketchAxes(*v->m_sketch);
+        const QPoint start(400,300);QTest::mousePress(v,Qt::MiddleButton,Qt::NoModifier,start);
+        const auto marker=v->m_relationMarkers.front();const auto guide=v->m_dimensionGuides.front();int churn=0;QElapsedTimer elapsed;elapsed.start();
+        for(int i=1;i<=40;++i){const QPoint point=start+QPoint(i,i/2);QMouseEvent move(QEvent::MouseMove,point,v->mapToGlobal(point),Qt::NoButton,Qt::MiddleButton,Qt::NoModifier);QApplication::sendEvent(v,&move);if(v->m_relationMarkers.empty()||v->m_relationMarkers.front()!=marker)++churn;}
+        qInfo("Navigation input: %lld us for 40 moves; annotation replacements: %d",elapsed.nsecsElapsed()/1000,churn);
+        QCOMPARE(churn,0);QCOMPARE(v->m_dimensionGuides.front(),guide);QVERIFY(v->m_cameraAnnotationsDirty);
+        v->repaint();QVERIFY(!v->m_cameraAnnotationsDirty);QCOMPARE(v->m_relationMarkers.front(),marker);QCOMPARE(v->m_dimensionGuides.front(),guide);
+        const auto markerPixel=project(v,marker->Component()->Pnt());QVERIFY((markerPixel-v->m_relationHits.front().bounds.center().toPoint()).manhattanLength()<3);
+        QTest::mouseRelease(v,Qt::MiddleButton,Qt::NoModifier,start+QPoint(40,20));QApplication::processEvents();
+        // Wheel events also coalesce, but a zoom frame must resize annotation arrows.
+        const auto zoomGuide=v->m_dimensionGuides.front();const auto zoomMarker=v->m_relationMarkers.front();
+        for(int i=0;i<8;++i){QWheelEvent wheel(start,v->mapToGlobal(start),{},QPoint(0,15),Qt::NoButton,Qt::NoModifier,Qt::NoScrollPhase,false);QApplication::sendEvent(v,&wheel);}
+        QCOMPARE(v->m_dimensionGuides.front(),zoomGuide);QVERIFY(v->m_cameraAnnotationsDirty);v->repaint();QVERIFY(!v->m_cameraAnnotationsDirty);QVERIFY(v->m_dimensionGuides.front()!=zoomGuide);QCOMPARE(v->m_relationMarkers.front(),zoomMarker);
+        QTest::mousePress(v,Qt::MiddleButton,Qt::ControlModifier,start);const auto panGuide=v->m_dimensionGuides.front();const auto panMarker=v->m_relationMarkers.front();
+        const QPoint panEnd=start+QPoint(25,10);QMouseEvent pan(QEvent::MouseMove,panEnd,v->mapToGlobal(panEnd),Qt::NoButton,Qt::MiddleButton,Qt::ControlModifier);QApplication::sendEvent(v,&pan);v->repaint();QCOMPARE(v->m_dimensionGuides.front(),panGuide);QCOMPARE(v->m_relationMarkers.front(),panMarker);
+        // Losing the mouse grab must finish the deferred layout too.
+        QEvent lostGrab(QEvent::UngrabMouse);QApplication::sendEvent(v,&lostGrab);v->releaseMouse();QApplication::processEvents();QCOMPARE(v->m_navigation,CadViewport::Navigation::None);QVERIFY(!v->m_cameraAnnotationsDirty);
+        for(const auto& hit:v->m_relationHits)QVERIFY(v->relationAt(hit.bounds.center())==std::optional<std::string>(hit.id));
+        QCOMPARE(changed.count(),0);QVERIFY(frame.Location().Distance(sketchAxes(*v->m_sketch).Location())<1e-12);QVERIFY(frame.Direction().IsEqual(sketchAxes(*v->m_sketch).Direction(),1e-12));QVERIFY(!v->m_relationMarkers.empty());QVERIFY(!v->m_dimensionGuides.empty());w.setWindowModified(false);w.close();
+    }
     void navigationAndSketchPlaneStayIndependent(){
         PlaneWindow w;w.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&w));auto* v=w.findChild<CadViewport*>();QTRY_VERIFY(v->isReady());Sketch s;s.entities={{EntityKind::Line,{-25,0},{25,0},1,"line"}};v->beginSketch(s);v->selectSketchTool();const auto frame=sketchAxes(*v->m_sketch);const auto before=v->m_view->Camera()->Direction();QSignalSpy changed(v,&CadViewport::sketchChanged);
         drag(v,Qt::MiddleButton,Qt::NoModifier,{420,260},{560,330});QVERIFY(before.Angle(v->m_view->Camera()->Direction())>0.05);QCOMPARE(v->m_sketch->entities.size(),std::size_t(1));QVERIFY(frame.Location().Distance(sketchAxes(*v->m_sketch).Location())<1e-10);QVERIFY(frame.Direction().IsEqual(sketchAxes(*v->m_sketch).Direction(),1e-12));QCOMPARE(changed.count(),0);
@@ -46,6 +74,12 @@ private slots:
     void cursorZoomAndPickedPivot(){
         PlaneWindow w;w.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&w));auto* v=w.findChild<CadViewport*>();QTRY_VERIFY(v->isReady());v->setShape(makeBox(60,40,20));v->resetView();const gp_Pnt vertex(60,0,20);const auto pixel=project(v,vertex);QTest::mouseClick(v,Qt::MiddleButton,Qt::NoModifier,pixel);QVERIFY(v->m_rotationAnchor);QVERIFY(v->m_rotationAnchor->Distance(vertex)<1e-6);const auto anchor=project(v,vertex);drag(v,Qt::MiddleButton,Qt::NoModifier,{8,8},{70,45});QVERIFY((project(v,vertex)-anchor).manhattanLength()<3);
         v->m_view->SetAt(0,0,0);v->m_view->SetProj(0,0,1);v->m_view->SetUp(0,1,0);v->m_view->Camera()->SetScale(150);const gp_Pnt fixed(15,12,0);const auto cursor=project(v,fixed);QWheelEvent wheel(cursor,v->mapToGlobal(cursor),{},QPoint(0,120),Qt::NoButton,Qt::NoModifier,Qt::NoScrollPhase,false);QApplication::sendEvent(v,&wheel);QVERIFY((project(v,fixed)-cursor).manhattanLength()<3);w.setWindowModified(false);w.close();
+    }
+    void perspectiveZoomKeepsCursorAnchor(){
+        PlaneWindow w;w.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&w));auto* v=w.findChild<CadViewport*>();QTRY_VERIFY(v->isReady());
+        v->setShape(makeBox(60,40,20));v->resetView();v->m_view->Camera()->SetProjectionType(Graphic3d_Camera::Projection_Perspective);const gp_Pnt point(25,15,20);const auto cursor=project(v,point);
+        QWheelEvent wheel(cursor,v->mapToGlobal(cursor),{},QPoint(0,120),Qt::NoButton,Qt::NoModifier,Qt::NoScrollPhase,false);QApplication::sendEvent(v,&wheel);QVERIFY((project(v,point)-cursor).manhattanLength()<3);
+        drag(v,Qt::MiddleButton,Qt::ShiftModifier,cursor,cursor-QPoint(0,30));QVERIFY((project(v,point)-cursor).manhattanLength()<3);QCOMPARE(v->m_view->Camera()->ProjectionType(),Graphic3d_Camera::Projection_Perspective);w.setWindowModified(false);w.close();
     }
     void hoverOutlineAndBlueFillOnGrayModel(){
         PlaneWindow w;w.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&w));

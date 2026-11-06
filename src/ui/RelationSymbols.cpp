@@ -41,7 +41,7 @@ void CadViewport::updateRelationSymbols(){
         const auto entities=perEntity?group.entityIds:std::vector<std::string>{relation.first.entityId};
         for(const auto& entityId:entities){
         auto r=relation;if(perEntity){const auto e=std::find_if(m_sketch->entities.begin(),m_sketch->entities.end(),[&](const auto& e){return e.id==entityId;});r.first={entityId,e->kind==modeling::EntityKind::Circle?modeling::PointRole::Center:modeling::PointRole::First};}
-        const auto origin=screenPoint(anchor(*m_sketch,r));if(!rect().adjusted(-20,-20,20,20).contains(origin.toPoint()))continue;
+        const auto localAnchor=anchor(*m_sketch,r);const auto origin=screenPoint(localAnchor);if(!rect().adjusted(-20,-20,20,20).contains(origin.toPoint()))continue;
         QRectF area;bool found=false;
         for(int attempt=0;attempt<120;++attempt){
             const int column=attempt%8,row=attempt/8;const double dx=16+column*21,dy=-16-row*21;
@@ -53,8 +53,28 @@ void CadViewport::updateRelationSymbols(){
         if(!found)continue;const auto model=sketchPosition(area.center());if(!model)continue;
         Handle(AIS_Point) marker=new AIS_Point(new Geom_CartesianPoint(modeling::sketchPoint(*m_sketch,*model)));
         marker->Attributes()->SetPointAspect(sprite(r.kind,pixels,r.id==m_hoveredRelation,r.id==m_selectedRelation));marker->SetZLayer(Graphic3d_ZLayerId_Topmost);marker->SetInfiniteState(Standard_True);
-        m_context->Display(marker,0,-1,Standard_False);m_context->SetDisplayPriority(marker,Graphic3d_DisplayPriority_Topmost);m_relationMarkers.push_back(marker);m_relationHits.push_back({group.id,area,entityId});placed.push_back(area);
+        m_context->Display(marker,0,-1,Standard_False);m_context->SetDisplayPriority(marker,Graphic3d_DisplayPriority_Topmost);m_relationMarkers.push_back(marker);m_relationHits.push_back({group.id,area,entityId,localAnchor,area.center()-origin});placed.push_back(area);
         }
+    }
+}
+void CadViewport::updateRelationPositions(){
+    if(!isReady()||!m_sketchEditing||!m_sketch)return;
+    // Keep sprites and their collision-free screen offsets while navigating.
+    // Repack against entities/dimensions only when the gesture ends.
+    for(std::size_t i=0;i<m_relationMarkers.size();++i){
+        auto& hit=m_relationHits[i];auto marker=m_relationMarkers[i];
+        const auto origin=screenPoint(hit.anchor);
+        auto center=origin+hit.offset;
+        center.setX(std::clamp(center.x(),11.0,std::max(11.0,width()-11.0)));
+        center.setY(std::clamp(center.y(),11.0,std::max(11.0,height()-11.0)));
+        const auto point=sketchPosition(center);
+        if(!rect().adjusted(-20,-20,20,20).contains(origin.toPoint())||!point){
+            hit.bounds={};m_context->Erase(marker,Standard_False);continue;
+        }
+        hit.bounds=QRectF(center-QPointF(9,9),QSizeF(18,18));
+        marker->SetComponent(new Geom_CartesianPoint(modeling::sketchPoint(*m_sketch,*point)));
+        m_context->Redisplay(marker,Standard_False);
+        if(!m_context->IsDisplayed(marker))m_context->Display(marker,0,-1,Standard_False);
     }
 }
 std::optional<std::string> CadViewport::relationAt(const QPointF& position) const {

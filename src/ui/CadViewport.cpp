@@ -169,6 +169,8 @@ void CadViewport::initialize()
         }
         m_context->SetToHilightSelected(Standard_False);m_context->SetAutomaticHilight(Standard_False);
         m_view = m_viewer->CreateView();
+        // Qt owns frame scheduling; camera setters must not render each input event.
+        m_view->SetImmediateUpdate(Standard_False);
         Handle(WNT_Window) window = new WNT_Window(reinterpret_cast<Aspect_Handle>(winId()));
         m_view->SetWindow(window);
         const int maximumSamples = driver->InquireLimit(Graphic3d_TypeOfLimit_MaxMsaa);
@@ -254,6 +256,7 @@ void CadViewport::paintEvent(QPaintEvent*)
     }
     if (isReady()) {
         synchronizeSurface();
+        updateCameraAnnotations();
         m_view->Redraw();
     }
 }
@@ -741,13 +744,15 @@ void CadViewport::mouseDoubleClickEvent(QMouseEvent* event) {
     }
     QWidget::mouseDoubleClickEvent(event);
 }
-void CadViewport::updateConstraintPresentation() {
+void CadViewport::updateConstraintPresentation(bool layoutRelations) {
     if(!isReady())return;
     for(auto& label:m_constraintLabels)m_context->Remove(label,Standard_False);m_constraintLabels.clear();
     for(auto& guide:m_dimensionGuides)m_context->Remove(guide,Standard_False);m_dimensionGuides.clear();
-    updateRelationSymbols();
+    m_cameraAnnotationsDirty=false;
+    if(layoutRelations)updateRelationSymbols();
     if(!m_sketch)return;
     const double unit=m_view->Camera()->Scale()/std::max(1,height());
+    m_annotationUnit=unit;
     const auto label=[&](modeling::Point2 position,const QString& text,const Quantity_Color& color,double size) {
         Handle(AIS_TextLabel) item=new AIS_TextLabel;item->SetText(TCollection_ExtendedString(text.toStdWString().c_str()));
         item->SetFont("Arial");item->SetHJustification(Graphic3d_HTA_LEFT);item->SetVJustification(Graphic3d_VTA_BOTTOM);
@@ -1497,7 +1502,7 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* event)
         updateConstraintPresentation();update();event->accept();return;
     }
     if(event->button()==Qt::LeftButton && m_pointDrag) { updatePointDrag(event->position()); finishPointDrag(); event->accept(); return; }
-    if(event->button()==m_navigationButton&&m_navigation!=Navigation::None){m_navigation=Navigation::None;m_navigationButton=Qt::NoButton;unsetCursor();if(QWidget::mouseGrabber()==this)releaseMouse();event->accept();return;}
+    if(event->button()==m_navigationButton&&m_navigation!=Navigation::None){m_navigation=Navigation::None;m_navigationButton=Qt::NoButton;updateConstraintPresentation();update();unsetCursor();if(QWidget::mouseGrabber()==this)releaseMouse();event->accept();return;}
     if (event->button() == Qt::LeftButton) {
         const bool regionClick=m_regionClickCandidate && event->button()==Qt::LeftButton
             && (event->position()-m_regionPressPosition).manhattanLength()<=QApplication::startDragDistance();
@@ -1542,6 +1547,7 @@ bool CadViewport::event(QEvent* event)
     }
     if (event->type() == QEvent::UngrabMouse || event->type() == QEvent::WindowDeactivate) {
         m_deleteSequence.invalidate();cancelPointDrag();cancelDimensionDrag();
+        if(m_navigation!=Navigation::None){updateConstraintPresentation();update();}
         m_navigation = Navigation::None;
         m_navigationButton = Qt::NoButton;
         m_planeClickCandidate = false;m_regionClickCandidate=false;
@@ -1560,7 +1566,7 @@ void CadViewport::wheelEvent(QWheelEvent* event)
         ? event->angleDelta().y() / 120.0 : event->pixelDelta().y() / 40.0;
     const double factor = std::pow(1.15, std::clamp(steps, -10.0, 10.0));
     zoomToward(event->position(),factor);
-    updateConstraintPresentation();
+    m_cameraAnnotationsDirty=true;
     update();
     event->accept();
 }

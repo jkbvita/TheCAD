@@ -184,7 +184,7 @@ private:
     void moveNavigation(QMouseEvent*);
     void zoomToward(const QPointF&,double);
     gp_Pnt navigationPivot(const QPointF&);
-    gp_Pnt m_orbitPivot;
+    gp_Pnt m_orbitPivot,m_zoomDepth;
     std::optional<gp_Pnt> m_rotationAnchor;
     QPointF m_navigationLogical;
     void initialize();
@@ -193,10 +193,14 @@ private:
     void orientSketch();
     void updateReferencePlanes();
     void updatePlaneStyles();
-    void updateConstraintPresentation();
+    void updateConstraintPresentation(bool layoutRelations=true);
+    void updateCameraAnnotations();
+    bool m_cameraAnnotationsDirty=false;
+    double m_annotationUnit=0;
     void updateRelationSymbols();
+    void updateRelationPositions();
     std::optional<std::string> relationAt(const QPointF& position) const;
-    struct RelationHit {std::string id;QRectF bounds;std::string entityId;};
+    struct RelationHit {std::string id;QRectF bounds;std::string entityId;modeling::Point2 anchor;QPointF offset;};
     std::vector<RelationHit> m_relationHits;
     std::vector<Handle(AIS_Point)> m_relationMarkers;
     bool m_showRelations=true;
