@@ -54,6 +54,12 @@ $shaderSource = Join-Path $library 'share\opencascade\resources\Shaders'
 $resourceDirectory = Join-Path $packageRoot 'resources'
 New-Item -ItemType Directory -Path $resourceDirectory -Force | Out-Null
 Copy-Item -LiteralPath $shaderSource -Destination $resourceDirectory -Recurse
+# STEP transfer/units need their OCCT resource dictionaries in standalone packages.
+foreach ($resourceName in @('XSMessage', 'SHMessage', 'XSTEPResource', 'UnitsAPI')) {
+    $source = Join-Path $library "share\opencascade\resources\$resourceName"
+    if (-not (Test-Path -LiteralPath $source)) { throw "Required exchange resource missing: $source" }
+    Copy-Item -LiteralPath $source -Destination $resourceDirectory -Recurse
+}
 @"
 [Paths]
 Prefix=.

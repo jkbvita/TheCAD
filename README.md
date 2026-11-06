@@ -12,6 +12,15 @@ services also build with `-DTHECAD_BUILD_GUI=OFF`. See the
 [architecture guide](docs/architecture.md) for component ownership, dependency
 rules, build options and extension guidelines.
 
+## Save and export
+
+Use **File → Save As** in the standard Windows dialog. Choose **TheCAD Part**,
+**STEP (.step/.stp)** or **STL Mesh (.stl)** in the file-type dropdown. STEP/STL
+export the final solid bodies; keep .thepart for editable features and constraints.
+Exporting preserves the current native file path and unsaved marker. STL uses
+millimeter coordinates; STEP includes millimeter units. See the
+[export checks and limitations](docs/testing/stl-step-export.md).
+
 ## Current sketch-creation workflow
 
 Click **Sketch** in the SKETCH tab, hover a labeled Front, Top, or Right plane

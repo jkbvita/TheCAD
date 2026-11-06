@@ -45,7 +45,7 @@ public:
 protected:
     enum class UnsavedChoice { Save, Discard, Cancel };
     virtual QString chooseOpenPath();
-    virtual QString chooseSavePath();
+    virtual QString chooseSavePath(bool allowExport);
     virtual UnsavedChoice confirmUnsaved();
     virtual void reportError(const QString& message);
     virtual bool confirmReferenceDeletion(const std::vector<std::string>& ids,const std::vector<document::Feature>& dependents);
@@ -115,7 +115,7 @@ private:
     void openDocument();
     bool openPartFileImpl(const QString& path,bool promptForEmptyDocument);
     bool saveDocument();
-    bool saveDocumentAs();
+    bool saveDocumentAs(bool allowExport=true);
     bool saveToPath(const QString& path);
     bool replaceDocument(document::PartDocument candidate, const QString& path);
     bool applyModel(document::PartDocument candidate, const std::string& selectedId,bool record=true);

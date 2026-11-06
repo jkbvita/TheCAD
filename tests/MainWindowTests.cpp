@@ -1,4 +1,6 @@
 #include "ui/MainWindow.h"
+#include "ui/files/NativeFileDialogs.h"
+#include <QFileDialog>
 #include <QStackedWidget>
 #include "ui/CadViewport.h"
 #include "document/PartDocument.h"
@@ -33,6 +35,7 @@ public:
     QString savePath;
     Choice choice = Choice::Discard;
     int saveDialogCount = 0;
+    bool exportFormatsOffered=false;
     int promptCount = 0;
     QStringList errors;
 
@@ -46,7 +49,7 @@ public:
 
 protected:
     QString chooseOpenPath() override { return openPath; }
-    QString chooseSavePath() override { ++saveDialogCount; return savePath; }
+    QString chooseSavePath(bool allowExport) override { ++saveDialogCount; exportFormatsOffered=allowExport; return savePath; }
     UnsavedChoice confirmUnsaved() override { ++promptCount; return choice; }
     void reportError(const QString& message) override { errors.append(message); }
 };
@@ -55,6 +58,26 @@ class MainWindowTest final : public QObject {
     Q_OBJECT
 
 private slots:
+    void nativeSaveDialogConfigurationAndExtensions(){
+        QTemporaryDir directory;QFileDialog dialog;NativeFileDialogs::configureSave(dialog,directory.filePath("old.tcpart"),true);
+        QVERIFY(!dialog.testOption(QFileDialog::DontUseNativeDialog));QVERIFY(!dialog.testOption(QFileDialog::DontConfirmOverwrite));QVERIFY(!qApp->testAttribute(Qt::AA_DontUseNativeDialogs));QCOMPARE(dialog.acceptMode(),QFileDialog::AcceptSave);QCOMPARE(dialog.fileMode(),QFileDialog::AnyFile);QCOMPARE(dialog.defaultSuffix(),QString("thepart"));
+        const auto filters=dialog.nameFilters();QCOMPARE(filters.size(),3);QVERIFY(filters[1].contains("*.step")&&filters[1].contains("*.stp"));QVERIFY(filters[2].contains("*.stl"));
+        QCOMPARE(NativeFileDialogs::normalizedSavePath("part",filters[2]),QString("part.stl"));QCOMPARE(NativeFileDialogs::normalizedSavePath("part.thepart",filters[1]),QString("part.step"));QCOMPARE(NativeFileDialogs::normalizedSavePath("part.STP",filters[1]),QString("part.STP"));QCOMPARE(NativeFileDialogs::normalizedSavePath("part.v2",filters[1]),QString("part.v2.step"));QCOMPARE(NativeFileDialogs::normalizedSavePath("",filters[0]),QString());
+        QFileDialog nativeOnly;NativeFileDialogs::configureSave(nativeOnly,{},false);QCOMPARE(nativeOnly.nameFilters().size(),1);QVERIFY(nativeOnly.nameFilters().front().contains("*.thepart"));
+    }
+    void saveAsRequiresConfirmedFeature(){
+        QTemporaryDir directory;const auto native=directory.filePath("source.thepart");document::PartDocument::createBox({10,20,30}).save(native);TestWindow window;QVERIFY(window.openPartFile(native));window.trigger("actionReferencePlane");const int dialogs=window.saveDialogCount;window.savePath=directory.filePath("draft.stl");QVERIFY(!window.findChild<QAction*>("actionSaveAs")->isEnabled());window.trigger("actionSaveAs");QVERIFY(window.errors.isEmpty());QCOMPARE(window.saveDialogCount,dialogs);QVERIFY(!QFileInfo::exists(window.savePath));QCOMPARE(window.currentPath(),native);QCOMPARE(window.document().features().size(),std::size_t(1));window.trigger("actionCancelFeature");
+    }
+    void exportCopiesPreserveEditablePartAndDirtyState(){
+        QTemporaryDir directory;const auto native=directory.filePath("original.thepart");document::PartDocument::createBox({17,19,23}).save(native);QFile file(native);QVERIFY(file.open(QIODevice::ReadOnly));const auto bytes=file.readAll();file.close();
+        TestWindow window;QVERIFY(window.openPartFile(native));window.setWindowModified(true);const auto shape=window.document().shape();
+        for(const auto& extension:{QString("stl"),QString("STEP"),QString("stp")}){window.savePath=directory.filePath("export."+extension);window.trigger("actionSaveAs");QVERIFY(window.errors.isEmpty());QVERIFY(window.exportFormatsOffered);QVERIFY(QFileInfo(window.savePath).size()>84);QCOMPARE(window.currentPath(),native);QVERIFY(window.isWindowModified());QVERIFY(window.document().shape().IsSame(shape));QCOMPARE(window.document().features().size(),std::size_t(1));}
+        QVERIFY(file.open(QIODevice::ReadOnly));QCOMPARE(file.readAll(),bytes);file.close();window.trigger("actionSave");QVERIFY(!window.isWindowModified());QCOMPARE(window.currentPath(),native);
+    }
+    void invalidExportAndNativeSaveIntentStaySafe(){
+        QTemporaryDir directory;TestWindow window;window.savePath=directory.filePath("empty.stl");window.trigger("actionSaveAs");QCOMPARE(window.errors.size(),1);QVERIFY(window.exportFormatsOffered);QVERIFY(!QFileInfo::exists(window.savePath));QVERIFY(window.currentPath().isEmpty());QVERIFY(window.isWindowModified());
+        window.choice=TestWindow::Choice::Save;window.trigger("actionNew");QCOMPARE(window.errors.size(),2);QVERIFY(!window.exportFormatsOffered);QVERIFY(window.isWindowModified());QVERIFY(window.currentPath().isEmpty());QVERIFY(!QFileInfo::exists(window.savePath));
+    }
     void filePathOpenLoadsSavedPartWithoutPromptingForPristineStartup()
     {
         QTemporaryDir directory;QVERIFY(directory.isValid());

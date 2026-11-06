@@ -4,6 +4,8 @@
 #include "modeling/DimensionAnnotation.h"
 #include <QInputDialog>
 #include "ui/MainWindow.h"
+#include "ui/files/NativeFileDialogs.h"
+#include "exchange/ShapeExporter.h"
 #include "ui/widgets/FeatureTreePresenter.h"
 #include "ui/widgets/CommandBar.h"
 #include "application/FeatureOperation.h"
@@ -520,22 +522,12 @@ QString MainWindow::currentPath() const { return m_session.path(); }
 QString MainWindow::chooseOpenPath()
 {
     return QFileDialog::getOpenFileName(this, "Open TheCAD part", m_session.path(),
-        "TheCAD Part (*.thepart *.tcpart);;TheCAD Part (*.thepart);;Legacy TheCAD Part (*.tcpart)",nullptr,QFileDialog::DontUseNativeDialog);
+        "TheCAD Part (*.thepart *.tcpart);;TheCAD Part (*.thepart);;Legacy TheCAD Part (*.tcpart)");
 }
 
-QString MainWindow::chooseSavePath()
+QString MainWindow::chooseSavePath(bool allowExport)
 {
-    QString suggestion = m_session.path().isEmpty() ? "Untitled.thepart" : m_session.path();
-    if (legacyPath(suggestion)) {
-        suggestion = QFileInfo(suggestion).absolutePath() + "/" + QFileInfo(suggestion).completeBaseName() + ".thepart";
-    }
-    QFileDialog dialog(this, "Save TheCAD part", suggestion, "TheCAD Part (*.thepart)");
-    dialog.setOption(QFileDialog::DontUseNativeDialog);
-    dialog.setAcceptMode(QFileDialog::AcceptSave);
-    dialog.setFileMode(QFileDialog::AnyFile);
-    dialog.setDefaultSuffix("thepart");
-    if (dialog.exec() != QDialog::Accepted || dialog.selectedFiles().isEmpty()) return {};
-    return dialog.selectedFiles().first();
+    return NativeFileDialogs::chooseSave(this,m_session.path(),allowExport);
 }
 
 MainWindow::UnsavedChoice MainWindow::confirmUnsaved()
@@ -666,17 +658,25 @@ bool MainWindow::openPartFileImpl(const QString& path,bool promptForEmptyDocumen
 bool MainWindow::saveDocument()
 {
     if (!finishSketch()) return false;
-    return m_session.path().isEmpty() || legacyPath(m_session.path()) ? saveDocumentAs() : saveToPath(m_session.path());
+    return m_session.path().isEmpty() || legacyPath(m_session.path()) ? saveDocumentAs(false) : saveToPath(m_session.path());
 }
 
-bool MainWindow::saveDocumentAs()
+bool MainWindow::saveDocumentAs(bool allowExport)
 {
+    if(m_operation||m_referenceDraft||m_selectingPlane){reportError("Confirm or cancel the active feature before Save As.");return false;}
     if (!finishSketch()) return false;
-    QString path = chooseSavePath();
+    QString path = chooseSavePath(allowExport);
     if (path.isEmpty()) return false;
     if (QFileInfo(path).suffix().isEmpty()) path += ".thepart";
+    if(allowExport&&exchange::ShapeExporter::formatForPath(path)){
+        try{
+            exchange::ShapeExporter::write(m_session.document().shape(),path);
+            statusBar()->showMessage("Exported "+QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath()),4000);
+            return true;
+        }catch(const std::exception& error){reportError(QString("Cannot export %1:\n%2").arg(QDir::toNativeSeparators(path),QString::fromUtf8(error.what())));return false;}
+    }
     if (QFileInfo(path).suffix().compare("thepart", Qt::CaseInsensitive) != 0) {
-        reportError("Save parts as .thepart. Legacy .tcpart files are read-only inputs; assemblies and drawings are not implemented.");
+        reportError(allowExport?"Save as .thepart, .stl, .step or .stp. Legacy .tcpart files are read-only inputs; assemblies and drawings are not implemented.":"Save the editable part as .thepart. Legacy .tcpart files are read-only inputs.");
         return false;
     }
     return saveToPath(path);

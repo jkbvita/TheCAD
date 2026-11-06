@@ -2,13 +2,16 @@
 
 This is the owner-approved modular refactor of the accepted desktop application.
 The modeling results, PlaneGCS solver, interactions, undo depth, schema 16 and
-legacy-file compatibility remain the baseline. No new runtime dependencies.
+legacy-file compatibility remain the baseline. The modular refactor retained the
+existing SDKs; STL/STEP export additionally uses their OCCT exchange toolkits.
 
 ```mermaid
 flowchart TD
     Shell[Qt UI shell] --> App[Application services]
     Shell --> Adapter[Viewport QWidget adapter]
     Shell --> Widgets[Shared widgets and tree presenter]
+    Shell --> Exchange[STL and STEP exchange]
+    Exchange --> Kernel
     Adapter --> App
     Adapter --> Graphics[Graphics and interaction components]
     Adapter --> Widgets
@@ -27,6 +30,7 @@ flowchart TD
 | `modeling` | Sketch data/algorithms, constraints, dimensions, profiles, Booleans, reference math, persistent names, selection policy | Windows, widgets, document sessions |
 | `document::PartDocument` | Ordered features, dependencies and transactional regeneration | Dialogs, GPU objects |
 | `document::PartFileStore` | Existing JSON serialization, legacy migration and atomic saves | Active UI selection or editing commands |
+| `exchange::ShapeExporter` | Geometry-only copies, STEP/STL translation and atomic target replacement | Widgets, active document/session mutation |
 | `application::DocumentSession` | Document, editing draft, path, revision tracking, ten-action undo/redo | Widgets, renderer objects |
 | `application::FeatureOperation` | Transactional extrusion/cut candidates and material-change results | PropertyManager controls |
 | `application::SketchToolController` | Select/draw/dimension/relation activation | Mouse capture, cursors, drawing presentations |
@@ -67,8 +71,9 @@ cmake --build build/headless --config Release
 ctest --test-dir build/headless -C Release --output-on-failure
 ```
 
-This build does not configure or link Qt Widgets, Qt Gui or OCCT visualization
-components. Windows remains the supported platform. The optional installed
+The GUI-free core build excludes exchange and does not configure or link Qt
+Widgets, Qt Gui or OCCT visualization components. The desktop exchange module
+uses additional toolkits/resources from the pinned OCCT SDK; see decision 0030. Windows remains the supported platform. The optional installed
 `clang-format` tool can apply the repository's `.clang-format` to new components;
 it is not an application runtime dependency.
 

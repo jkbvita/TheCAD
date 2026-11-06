@@ -30,7 +30,7 @@ public:
     bool realDeletionDialog=false;
     std::vector<document::Feature> askedDependents;
 protected:
-    QString chooseSavePath() override{return savePath;}
+    QString chooseSavePath(bool) override{return savePath;}
     UnsavedChoice confirmUnsaved() override{return UnsavedChoice::Discard;}
     void reportError(const QString& error) override{errors<<error;}
     bool confirmReferenceDeletion(const std::vector<std::string>& ids,const std::vector<document::Feature>& dependents) override{askedDependents=dependents;if(realDeletionDialog)return MainWindow::confirmReferenceDeletion(ids,dependents);return allowDeletion;}

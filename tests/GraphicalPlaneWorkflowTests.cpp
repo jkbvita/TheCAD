@@ -29,7 +29,7 @@ public:
     QString path;
     QStringList errors;
 protected:
-    QString chooseSavePath() override { return path; }
+    QString chooseSavePath(bool) override { return path; }
     QString chooseOpenPath() override { return path; }
     UnsavedChoice confirmUnsaved() override { return UnsavedChoice::Discard; }
     void reportError(const QString& message) override { errors.append(message); }

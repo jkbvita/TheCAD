@@ -1,4 +1,5 @@
 #include "ui/MainWindow.h"
+#include "exchange/ShapeExporter.h"
 
 #include <QApplication>
 #include <QCommandLineParser>
@@ -26,6 +27,7 @@ int main(int argc, char* argv[])
     if (QDir(shaderDirectory).exists()) {
         qputenv("CSF_ShadersDirectory", QDir::toNativeSeparators(shaderDirectory).toUtf8());
     }
+    thecad::exchange::configureResources(QCoreApplication::applicationDirPath()+"/resources");
     try {
         thecad::ui::MainWindow window;
         window.showMaximized();

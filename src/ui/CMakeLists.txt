@@ -11,8 +11,8 @@ target_include_directories(thecad_viewport_widget PUBLIC "${PROJECT_SOURCE_DIR}/
 target_link_libraries(thecad_viewport_widget PUBLIC Qt6::Widgets thecad_application thecad_graphics thecad_widgets)
 
 add_library(thecad_ui STATIC
-    MainWindow.cpp MainWindow.h EditHistory.cpp
+    MainWindow.cpp MainWindow.h EditHistory.cpp files/NativeFileDialogs.cpp
     SelectionUi.cpp ReferenceGeometryUi.cpp SketchConstraintsUi.cpp
     SmartDimensionUi.cpp SketchToolsUi.cpp RelationsContextUi.cpp)
 target_include_directories(thecad_ui PUBLIC "${PROJECT_SOURCE_DIR}/src")
-target_link_libraries(thecad_ui PUBLIC thecad_viewport_widget thecad_widgets thecad_application)
+target_link_libraries(thecad_ui PUBLIC thecad_viewport_widget thecad_widgets thecad_application thecad_exchange)

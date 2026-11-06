@@ -50,6 +50,8 @@ approved scope do not need repeated approval.
 
 - [0029: Wheel direction and asymmetric zoom anchoring](0029-directional-wheel-zoom.md) — owner-requested wheel-up/out, wheel-down/in and centered zoom-out.
 
+- [0030: STL/STEP export and standard Windows file dialogs](0030-stl-step-and-windows-file-dialogs.md) — geometry export copies and native Windows Save As.
+
 ## Pending owner decisions
 
 - Resilient face references beyond the approved conservative planar-face strategy.
