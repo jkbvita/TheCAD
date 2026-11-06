@@ -99,6 +99,7 @@ public:
     void setSelectedDatum(const std::string& id);
     std::string datumAt(const QPointF& position,std::optional<modeling::DatumKind> kind={});
     void setReferenceCandidates(const std::vector<ReferencePickItem>& candidates,std::optional<modeling::DatumKind> kind);
+    void setFeatureReferenceShapes(const std::vector<TopoDS_Shape>&);
     int referenceCandidateAt(const QPointF& position);
     std::vector<modeling::SelectionRef> selection() const;
     const modeling::SelectionPolicy& selectionPolicy() const {return m_selectionPolicy;}
@@ -159,6 +160,7 @@ private:
     friend class SelectionWorkflowTest;
     friend class ReferenceManagerTest;
     friend class PlaneNavigationTest;
+    friend class SolidFeaturesWorkflowTest;
     struct PickCandidate {modeling::SelectionCandidate value;TopoDS_Shape shape;Handle(SelectMgr_EntityOwner) owner;
         std::optional<gp_Pnt> hit;};
     std::vector<PickCandidate> selectionCandidates(const QPointF&,bool includeOccluded=false);
@@ -178,6 +180,7 @@ private:
     std::string m_bodyFeatureId,m_sketchFeatureId;
     std::vector<PickCandidate> m_nativeSelections;
     Handle(AIS_Shape) m_selectionHover;
+    std::vector<Handle(AIS_Shape)> m_featureReferenceShapes;
     std::vector<Handle(AIS_Shape)> m_selectionPresentations;
     bool m_treeBodySelected=false;
     QPointer<QMenu> m_selectOtherMenu;

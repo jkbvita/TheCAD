@@ -32,6 +32,7 @@ namespace thecad::ui {
 
 class CadViewport;
 class FeatureTreePresenter;
+class SolidFeaturePanel;
 
 class MainWindow : public QMainWindow {
 public:
@@ -150,6 +151,15 @@ private:
     void deleteSketchEntity();
     void toggleConstruction();
     void extrude(bool cut);
+    bool featureDraftActive() const {return bool(m_operation)||bool(m_referenceDraft)||m_solidFeature;}
+    void startSolidFeature(document::FeatureKind kind,const document::Feature* editing=nullptr);
+    void finishSolidFeature(bool accepted);
+    void syncSolidFeaturePicking();
+    void syncSolidFeaturePreview();
+    bool solidFeatureEvent(QObject*,QEvent*);
+    SolidFeaturePanel* m_solidFeature=nullptr; // Owned by the PropertyManager stack.
+    bool m_solidFromSketch=false;
+    QAction *m_revolve=nullptr,*m_revolvedCut=nullptr,*m_fillet=nullptr,*m_chamfer=nullptr;
     void startOperation(document::Feature feature, bool editing);
     void finishOperation(bool accepted);
     void operationSketchChanged();

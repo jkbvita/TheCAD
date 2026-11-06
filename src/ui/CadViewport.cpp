@@ -196,7 +196,7 @@ void CadViewport::releaseViewer()
     m_sketchOrigin.Nullify();
     for(auto& axis:m_globalAxes) axis.Nullify();
     m_pointPresentations.clear();
-    m_datumPresentations.clear();m_referenceCandidatePresentations.clear();m_referenceHover.Nullify();
+    m_datumPresentations.clear();m_referenceCandidatePresentations.clear();m_referenceHover.Nullify();m_featureReferenceShapes.clear();
     m_dimensions.clear();m_relationMarkers.clear();m_relationHits.clear();
     m_interactionLabel.Nullify();
     m_inferenceGuides.clear();

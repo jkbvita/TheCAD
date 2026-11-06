@@ -1,7 +1,7 @@
 # TheCAD architecture
 
 This is the owner-approved modular refactor of the accepted desktop application.
-The modeling results, PlaneGCS solver, interactions, undo depth, schema 16 and
+The PlaneGCS solver, existing interactions, undo depth, schema-16 compatibility and
 legacy-file compatibility remain the baseline. The modular refactor retained the
 existing SDKs; STL/STEP export additionally uses their OCCT exchange toolkits.
 
@@ -32,7 +32,7 @@ flowchart TD
 | `document::PartFileStore` | Existing JSON serialization, legacy migration and atomic saves | Active UI selection or editing commands |
 | `exchange::ShapeExporter` | Geometry-only copies, STEP/STL translation and atomic target replacement | Widgets, active document/session mutation |
 | `application::DocumentSession` | Document, editing draft, path, revision tracking, ten-action undo/redo | Widgets, renderer objects |
-| `application::FeatureOperation` | Transactional extrusion/cut candidates and material-change results | PropertyManager controls |
+| `application::FeatureOperation` | Transactional solid-feature candidates and material-change results | PropertyManager controls |
 | `application::SketchToolController` | Select/draw/dimension/relation activation | Mouse capture, cursors, drawing presentations |
 | `viewport::GraphicsScene` | OCCT viewer, interactive context, native view lifetime and physical surface size | MainWindow, sketch edits |
 | `viewport::CameraNavigation` | Gesture state, retained pivot, orbit/pan/zoom math | Entity selection, sketch mutation |
@@ -47,6 +47,12 @@ tool-specific event wiring and PropertyManager composition remain in UI adapters
 this is not a claim that every UI responsibility has become a separate class.
 The tree remains the existing QTreeWidget view for interaction compatibility;
 the feature document remains its authoritative data source.
+
+New solid features follow these boundaries: `modeling/SolidFeatures` owns OCCT
+algorithms, the document owns typed parameters/named supports and regeneration,
+and `ui::SolidFeaturePanel` owns uncommitted forms and selections. The shell
+connects preview values to rendering and commits candidates through the session.
+See [decision 0031](decisions/0031-basic-revolve-and-edge-features.md).
 
 ## Build boundaries
 

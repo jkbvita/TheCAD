@@ -60,6 +60,10 @@ const char* typeName(FeatureKind kind)
         return "cut";
     case FeatureKind::ReferenceGeometry:
         return "reference";
+    case FeatureKind::Revolve: return "revolve";
+    case FeatureKind::RevolvedCut: return "revolved-cut";
+    case FeatureKind::Fillet: return "fillet";
+    case FeatureKind::Chamfer: return "chamfer";
     }
     fail("Unsupported feature kind.");
 }

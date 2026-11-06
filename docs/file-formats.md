@@ -6,12 +6,12 @@ inputs: conversion saves to a separate .thepart path, retaining the original fil
 No assembly/drawing reader or placeholder is implemented. Internal serialization
 is provisional and versioned; filename conventions are permanent.
 
-## Version 13 part structure
+## Current part structure (versions 16/17)
 
-The UTF-8 JSON root contains exactly format: "TheCAD.Part", version: 13, units:
+The UTF-8 JSON root contains exactly format: "TheCAD.Part", version: 16 or 17, units:
 "mm", features (ordered array) and resultFeature (last solid feature ID, or empty
-for empty/sketch/reference-only documents). Writers always emit version 13. Readers accept
-versions 1–13 and reject unknown versions, fields, units and unsupported features.
+for empty/sketch/reference-only documents). Writers emit version 17 when the document contains revolve/fillet/chamfer
+features and version 16 otherwise. Readers accept versions 1–17 and reject unknown versions, fields, units and unsupported features.
 
 Every feature has stable id, printable name, type and explicit dependencies.
 Types and additional fields:
@@ -23,6 +23,8 @@ Types and additional fields:
 | reference | definition: method, references, position, direction, value |
 | extrude | sketch ID, contour OR contours, length, direction: positive/negative |
 | cut | Extrude fields plus Boolean throughAll; specified length retained |
+| revolve / revolved-cut | sketch ID, contour OR contours, angle in degrees, direction, axis GeometryReference (schema 17) |
+| fillet / chamfer | positive size in mm (radius / equal distance), explicit edges array of named BodyEdge GeometryReferences (schema 17) |
 
 An initial sketch can be empty. A solid operation references an earlier sketch and
 the previous solid result, in that order. Face-attached sketches depend on their

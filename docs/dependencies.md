@@ -30,6 +30,11 @@ excluded except for the corresponding solver/Eigen source bundle described below
 The root [LICENSE](../LICENSE) is unchanged. Dependency license information does
 not select or change TheCAD's application license.
 
+The approved revolve/edge-feature batch also links OCCT TKFillet from this same
+7.9.3 SDK for fillets and chamfers. It has the existing OCCT LGPL 2.1/exception
+license; no new package/version is introduced. The package script discovers the
+additional runtime DLL and retains its notices.
+
 ## Standalone sketch solver
 
 PlaneGCS is a provisional owner-approved dependency, independently extracted from

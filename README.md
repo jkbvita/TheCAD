@@ -12,6 +12,15 @@ services also build with `-DTHECAD_BUILD_GUI=OFF`. See the
 [architecture guide](docs/architecture.md) for component ownership, dependency
 rules, build options and extension guidelines.
 
+## Solid features
+
+The Features toolbar includes Extrude, Extruded Cut, Revolved Boss/Base, Revolved
+Cut, constant-radius edge Fillet and equal-distance Chamfer. Each opens a docked
+PropertyManager with selection, preview, numeric parameters and Confirm/Cancel.
+New features support editing, ten-action undo/redo and .thepart persistence.
+See the [manual checklist](docs/testing/revolve-fillet-chamfer.md) for the initial
+feature limits and verification steps.
+
 ## Save and export
 
 Use **File → Save As** in the standard Windows dialog. Choose **TheCAD Part**,

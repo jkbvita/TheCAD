@@ -64,8 +64,42 @@ void bindGeometryReference(GeometryReference& ref,const std::map<std::string,Top
     if(int(ref.source)<6)return;const auto body=bodies.find(ref.featureId);if(body==bodies.end())return;if(!ref.topologyName.empty()){const auto type=ref.source==ReferenceSource::BodyVertex?TopAbs_VERTEX:(ref.source==ReferenceSource::BodyEdge||ref.source==ReferenceSource::BodyCircleCenter)?TopAbs_EDGE:TopAbs_FACE;const auto shape=names.at(ref.featureId).resolve(ref.topologyName,type);TopTools_IndexedMapOfShape current;TopExp::MapShapes(body->second,type,current);ref.index=current.FindIndex(shape);ref.signature=referenceBodySignature(body->second);return;}if(referenceBodySignature(body->second)!=ref.signature)return;
     TopTools_IndexedMapOfShape shapes;TopExp::MapShapes(body->second,ref.source==ReferenceSource::BodyVertex?TopAbs_VERTEX:(ref.source==ReferenceSource::BodyEdge||ref.source==ReferenceSource::BodyCircleCenter)?TopAbs_EDGE:TopAbs_FACE,shapes);const auto named=names.find(ref.featureId);if(named!=names.end()&&ref.index>0&&ref.index<=shapes.Extent())ref.topologyName=named->second.nameOf(shapes(ref.index));
 }
-QJsonObject writeDatumDefinition(const DatumDefinition& d){QJsonArray refs;for(const auto& r:d.references)refs.append(QJsonObject{{"source",int(r.source)},{"feature",QString::fromStdString(r.featureId)},{"entity",QString::fromStdString(r.entityId)},{"role",int(r.role)},{"index",r.index},{"signature",QString::fromStdString(r.signature)},{"topology",QString::fromStdString(r.topologyName)}});return {{"method",datumMethodKey(d.method)},{"references",refs},{"position",QJsonArray{d.position.X(),d.position.Y(),d.position.Z()}},{"direction",QJsonArray{d.direction.X(),d.direction.Y(),d.direction.Z()}},{"value",d.value}};}
-DatumDefinition readDatumDefinition(const QJsonObject& o,int version){fields(o,{"method","references","position","direction","value"});DatumDefinition d;d.method=datumMethodFromKey(text(o["method"]));require(version>=16||int(d.method)<15,"This plane method requires schema 16.");d.position=vectorValue(o["position"]);d.direction=gp_Vec(vectorValue(o["direction"]).XYZ());d.value=number(o["value"]);require(o["references"].isArray()&&o["references"].toArray().size()<=3,"Invalid reference list.");for(const auto& value:o["references"].toArray()){require(value.isObject(),"Invalid geometry reference.");const auto r=value.toObject();auto expected=QSet<QString>{"source","feature","entity","role","index","signature"};if(version>=16)expected.insert("topology");fields(r,expected);GeometryReference ref;ref.source=ReferenceSource(integer(r["source"],9));ref.featureId=text(r["feature"]);ref.entityId=text(r["entity"]);ref.role=PointRole(integer(r["role"],int(PointRole::Midpoint)));ref.index=integer(r["index"],1000000);ref.signature=text(r["signature"]);if(version>=16){require(r["topology"].isString()&&r["topology"].toString().size()<=8192,"Invalid topology name.");ref.topologyName=r["topology"].toString().toStdString();}d.references.push_back(ref);}return d;}
+QJsonObject writeGeometryReference(const GeometryReference& r)
+{
+    return {{"source",int(r.source)},{"feature",QString::fromStdString(r.featureId)},
+            {"entity",QString::fromStdString(r.entityId)},{"role",int(r.role)},
+            {"index",r.index},{"signature",QString::fromStdString(r.signature)},
+            {"topology",QString::fromStdString(r.topologyName)}};
+}
+GeometryReference readGeometryReference(const QJsonObject& r,int version)
+{
+    auto expected=QSet<QString>{"source","feature","entity","role","index","signature"};
+    if(version>=16)expected.insert("topology");
+    fields(r,expected);
+    GeometryReference ref;
+    ref.source=ReferenceSource(integer(r["source"],9));ref.featureId=text(r["feature"]);
+    ref.entityId=text(r["entity"]);ref.role=PointRole(integer(r["role"],int(PointRole::Midpoint)));
+    ref.index=integer(r["index"],1000000);ref.signature=text(r["signature"]);
+    if(version>=16){require(r["topology"].isString()&&r["topology"].toString().size()<=8192,"Invalid topology name.");ref.topologyName=r["topology"].toString().toStdString();}
+    return ref;
+}
+QJsonObject writeDatumDefinition(const DatumDefinition& d)
+{
+    QJsonArray refs;for(const auto& r:d.references)refs.append(writeGeometryReference(r));
+    return {{"method",datumMethodKey(d.method)},{"references",refs},
+            {"position",QJsonArray{d.position.X(),d.position.Y(),d.position.Z()}},
+            {"direction",QJsonArray{d.direction.X(),d.direction.Y(),d.direction.Z()}},{"value",d.value}};
+}
+DatumDefinition readDatumDefinition(const QJsonObject& o,int version)
+{
+    fields(o,{"method","references","position","direction","value"});
+    DatumDefinition d;d.method=datumMethodFromKey(text(o["method"]));
+    require(version>=16||int(d.method)<15,"This plane method requires schema 16.");
+    d.position=vectorValue(o["position"]);d.direction=gp_Vec(vectorValue(o["direction"]).XYZ());d.value=number(o["value"]);
+    require(o["references"].isArray()&&o["references"].toArray().size()<=3,"Invalid reference list.");
+    for(const auto& value:o["references"].toArray()){require(value.isObject(),"Invalid geometry reference.");d.references.push_back(readGeometryReference(value.toObject(),version));}
+    return d;
+}
 DatumGeometry PartDocument::resolveReference(const GeometryReference& ref) const{std::map<std::string,DatumGeometry> datums;std::map<std::string,Sketch> sketches;for(const auto& feature:m_features){if(feature.kind==FeatureKind::ReferenceGeometry)datums.emplace(feature.id,feature.datum);if(feature.kind==FeatureKind::Sketch)sketches.emplace(feature.id,feature.sketch);}return resolveGeometryReference(ref,datums,sketches,m_bodies,m_namedBodies);}
 std::string PartDocument::addReferenceGeometry(const DatumDefinition& definition){Feature feature;feature.kind=FeatureKind::ReferenceGeometry;feature.id=nextId(feature.kind);feature.reference=definition;const auto kind=datumKind(definition.method);const auto count=std::count_if(m_features.begin(),m_features.end(),[&](const auto& f){return f.kind==FeatureKind::ReferenceGeometry&&f.datum.kind==kind;});feature.name=std::string(kind==DatumKind::Point?"Point":kind==DatumKind::Axis?"Axis":"Plane")+std::to_string(count+1);auto features=m_features;features.push_back(feature);apply(std::move(features));return feature.id;}
 Sketch PartDocument::sketchOnReferencePlane(const std::string& id) const{GeometryReference ref;ref.source=ReferenceSource::Datum;ref.featureId=id;const auto datum=resolveReference(ref);require(datum.kind==DatumKind::Plane,"Sketch support must be a reference plane.");Sketch sketch;sketch.referencePlaneId=id;sketch.referencePlaneFrame=datum.frame;return sketch;}

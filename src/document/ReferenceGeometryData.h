@@ -10,4 +10,6 @@ modeling::DatumGeometry resolveGeometryReference(const modeling::GeometryReferen
 void bindGeometryReference(modeling::GeometryReference&,const std::map<std::string,TopoDS_Shape>&,const std::map<std::string,modeling::TopologyNames>&);
 QJsonObject writeDatumDefinition(const modeling::DatumDefinition&);
 modeling::DatumDefinition readDatumDefinition(const QJsonObject&,int version=16);
+QJsonObject writeGeometryReference(const modeling::GeometryReference&);
+modeling::GeometryReference readGeometryReference(const QJsonObject&,int version=17);
 }

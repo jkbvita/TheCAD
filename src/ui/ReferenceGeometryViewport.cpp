@@ -7,6 +7,7 @@
 #include <Prs3d_PointAspect.hxx>
 #include <Prs3d_LineAspect.hxx>
 #include <BRepAdaptor_Curve.hxx>
+#include <GCPnts_QuasiUniformDeflection.hxx>
 #include <IntCurvesFace_ShapeIntersector.hxx>
 #include <Graphic3d_Camera.hxx>
 #include <Graphic3d_ZLayerId.hxx>
@@ -29,7 +30,15 @@ int pick(const std::vector<ReferencePickItem>& items,std::optional<modeling::Dat
                 // Lines use their exact projected segment. Circular edges are
                 // sampled finely in screen space, including the closed seam.
                 int segments=1;if(curve.GetType()==GeomAbs_Circle){const auto c=project(curve.Circle().Location());double radius=1;for(int k=0;k<4;++k){const auto r=project(curve.Value(first+(last-first)*k/4));radius=std::max(radius,std::hypot(r.x()-c.x(),r.y()-c.y()));}segments=std::clamp(int(std::ceil(6.284*std::sqrt(std::max(1.0,radius)))),64,4096);}
-                distance=1e100;auto p=curve.Value(first);for(int j=1;j<=segments;++j){const auto q=curve.Value(first+(last-first)*j/segments);const auto a=project(p),v=project(q)-a;const double square=QPointF::dotProduct(v,v),t=square>1e-12?std::clamp(QPointF::dotProduct(position-a,v)/square,0.0,1.0):0;const auto delta=position-a-v*t;const double d=std::hypot(delta.x(),delta.y());if(d<distance){distance=d;depth=p.Translated(gp_Vec(p,q)*t).Distance(view->Camera()->Eye());}p=q;}
+                std::vector<gp_Pnt> points;
+                if(curve.GetType()!=GeomAbs_Line&&curve.GetType()!=GeomAbs_Circle){
+                    int windowWidth,windowHeight;view->Window()->Size(windowWidth,windowHeight);
+                    const double deflection=std::max(1e-8,view->Camera()->Scale()/std::max(1,windowHeight)*ratio*0.25);
+                    GCPnts_QuasiUniformDeflection sampled(curve,deflection,first,last,GeomAbs_C0);
+                    if(!sampled.IsDone())continue;
+                    for(int j=1;j<=sampled.NbPoints();++j)points.push_back(sampled.Value(j));
+                }else for(int j=0;j<=segments;++j)points.push_back(curve.Value(first+(last-first)*j/segments));
+                distance=1e100;auto p=points.front();for(std::size_t j=1;j<points.size();++j){const auto q=points[j];const auto a=project(p),v=project(q)-a;const double square=QPointF::dotProduct(v,v),t=square>1e-12?std::clamp(QPointF::dotProduct(position-a,v)/square,0.0,1.0):0;const auto delta=position-a-v*t;const double d=std::hypot(delta.x(),delta.y());if(d<distance){distance=d;depth=p.Translated(gp_Vec(p,q)*t).Distance(view->Camera()->Eye());}p=q;}
                 if(item.geometry.kind==modeling::DatumKind::Point){const auto delta=project(center)-position;const double d=std::hypot(delta.x(),delta.y());if(d<distance){distance=d;depth=center.Distance(view->Camera()->Eye());}}if(distance>tolerance)continue;
             }
             else{IntCurvesFace_ShapeIntersector intersector;intersector.Load(item.shape,1e-7);intersector.Perform(ray,0,1e15);if(!intersector.IsDone()||intersector.NbPnt()==0)continue;depth=1e100;for(int p=1;p<=intersector.NbPnt();++p)depth=std::min(depth,intersector.Pnt(p).Distance(view->Camera()->Eye()));}
@@ -75,6 +84,16 @@ void CadViewport::setReferenceCandidates(const std::vector<ReferencePickItem>& c
         if(item.geometry.kind==modeling::DatumKind::Point){auto marker=new AIS_Point(new Geom_CartesianPoint(item.geometry.frame.Location()));marker->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_POINT,viewportColor(ThemeColor::Reference),6*devicePixelRatioF()));presentation=marker;m_graphics.context()->Display(marker,0,-1,Standard_False);}
         else{presentation=new AIS_Shape(item.shape);presentation->SetColor(viewportColor(ThemeColor::Reference));m_graphics.context()->Display(presentation,AIS_WireFrame,-1,Standard_False);}
         presentation->SetZLayer(Graphic3d_ZLayerId_Topmost);m_referenceCandidatePresentations.push_back(presentation);
+    }
+    update();
+}
+void CadViewport::setFeatureReferenceShapes(const std::vector<TopoDS_Shape>& shapes){
+    if(!isReady())return;
+    for(auto& item:m_featureReferenceShapes)m_graphics.context()->Remove(item,Standard_False);
+    m_featureReferenceShapes.clear();
+    for(const auto& shape:shapes){if(shape.IsNull())continue;Handle(AIS_Shape) item=new AIS_Shape(shape);
+        item->SetColor(selectionBlue());item->SetWidth(3*devicePixelRatioF());item->SetZLayer(Graphic3d_ZLayerId_Topmost);
+        m_graphics.context()->Display(item,AIS_WireFrame,-1,Standard_False);m_featureReferenceShapes.push_back(item);
     }
     update();
 }

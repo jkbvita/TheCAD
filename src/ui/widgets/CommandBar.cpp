@@ -83,6 +83,18 @@ QIcon commandIcon(const QString& name)
         painter.drawPolygon(
             QPolygonF{QPointF(4, 11), QPointF(23, 5), QPointF(28, 23), QPointF(9, 28)});
     }
+    else if(name.contains("Revol"))
+    {
+        painter.drawEllipse(QRectF(7,6,17,20));painter.drawArc(QRectF(3,9,25,14),30*16,290*16);
+        painter.drawLine(16,3,16,29);painter.drawLine(27,15,25,10);painter.drawLine(27,15,22,16);
+        if(name.contains("Cut")){painter.setPen(QPen(QColor("#b83b42"),2));painter.drawLine(8,9,23,23);}
+    }
+    else if(name=="Fillet"||name=="Chamfer")
+    {
+        painter.drawLine(5,27,5,7);painter.drawLine(5,7,26,7);painter.drawLine(26,7,26,27);
+        if(name=="Fillet")painter.drawArc(QRectF(5,7,20,20),0,90*16);
+        else painter.drawLine(5,22,20,7);
+    }
     else if (name.contains("Extrude") || name.contains("Part"))
     {
         painter.drawPolygon(

@@ -487,9 +487,9 @@ PartDocument PartFileStore::load(const QString& path)
     if (root.value("units") != QJsonValue("mm"))
         fail("Unsupported units; this prototype supports millimeters only.");
     const auto versionValue = root.value("version");
-    if (!versionValue.isDouble() || versionValue.toDouble() < 1 || versionValue.toDouble() > 16 ||
+    if (!versionValue.isDouble() || versionValue.toDouble() < 1 || versionValue.toDouble() > 17 ||
         versionValue.toDouble() != std::floor(versionValue.toDouble()))
-        fail("Unsupported part document version; expected versions 1 through 16.");
+        fail("Unsupported part document version; expected versions 1 through 17.");
     const int version = versionValue.toInt();
     if (!root.value("features").isArray())
         fail("Part features must be an ordered array.");
@@ -663,19 +663,33 @@ PartDocument PartFileStore::load(const QString& path)
                         feature.sketch.relations.push_back(readRelation(relation, version));
                 }
             }
-            else if (type == "extrude" || type == "cut")
+            else if (version >= 17 && (type == "fillet" || type == "chamfer"))
+            {
+                fields(object,{"id","name","type","size","edges","dependencies"},"Edge treatment");
+                feature.kind=type=="fillet"?FeatureKind::Fillet:FeatureKind::Chamfer;
+                feature.size=number(object["size"],"Radius/distance");
+                if(!object["edges"].isArray()||object["edges"].toArray().isEmpty()||object["edges"].toArray().size()>1000)
+                    fail("Select between 1 and 1000 persistent edges.");
+                for(const auto& edgeValue:object["edges"].toArray()){
+                    if(!edgeValue.isObject())fail("Invalid edge reference.");
+                    feature.edges.push_back(readGeometryReference(edgeValue.toObject(),version));
+                }
+            }
+            else if (type == "extrude" || type == "cut" || (version >= 17 && (type=="revolve"||type=="revolved-cut")))
             {
                 QSet<QString> expected{"id",      "name",   "type",      "sketch",
                                        "contour", "length", "direction", "dependencies"};
                 if (type == "cut")
                     expected.insert("throughAll");
+                const bool revolve=type=="revolve"||type=="revolved-cut";
+                if(revolve){expected.remove("length");expected.insert("angle");expected.insert("axis");}
                 if (version >= 5 && object.contains("contours"))
                 {
                     expected.remove("contour");
                     expected.insert("contours");
                 }
                 fields(object, expected, "Extrusion feature");
-                feature.kind = type == "cut" ? FeatureKind::Cut : FeatureKind::Extrude;
+                feature.kind = type == "cut" ? FeatureKind::Cut : type=="revolve"?FeatureKind::Revolve:type=="revolved-cut"?FeatureKind::RevolvedCut:FeatureKind::Extrude;
                 feature.sketchId =
                     stringValue(object.value("sketch"), "Source sketch").toStdString();
                 if (object.contains("contours"))
@@ -715,7 +729,11 @@ PartDocument PartFileStore::load(const QString& path)
                         feature.contour.push_back(reference);
                     }
                 }
-                feature.length = number(object.value("length"), "Extrusion length");
+                if(revolve){
+                    feature.angle=number(object["angle"],"Revolve angle");
+                    if(!object["axis"].isObject())fail("A revolution requires an axis reference.");
+                    feature.axis=readGeometryReference(object["axis"].toObject(),version);
+                }else feature.length = number(object.value("length"), "Extrusion length");
                 feature.direction = readDirection(object.value("direction"));
                 if (type == "cut")
                 {
@@ -814,6 +832,12 @@ void PartFileStore::save(const PartDocument& document, const QString& path)
                 relations.append(writeRelation(relation));
             object["relations"] = relations;
         }
+        else if(isEdgeFeature(feature.kind))
+        {
+            object["size"]=feature.size;
+            QJsonArray edges;for(const auto& edge:feature.edges)edges.append(writeGeometryReference(edge));
+            object["edges"]=edges;
+        }
         else
         {
             object["sketch"] = q(feature.sketchId);
@@ -834,7 +858,10 @@ void PartFileStore::save(const PartDocument& document, const QString& path)
                 }
                 object["contours"] = regions;
             }
-            object["length"] = feature.length;
+            if(isRevolveFeature(feature.kind)){
+                if(!feature.axis)fail("Missing revolution axis.");
+                object["angle"]=feature.angle;object["axis"]=writeGeometryReference(*feature.axis);
+            }else object["length"] = feature.length;
             object["direction"] = directionName(feature.direction);
             if (feature.kind == FeatureKind::Cut)
                 object["throughAll"] = feature.throughAll;
@@ -844,7 +871,7 @@ void PartFileStore::save(const PartDocument& document, const QString& path)
         features.append(object);
     }
     const QJsonObject root{{"format", "TheCAD.Part"},
-                           {"version", 16},
+                           {"version", std::any_of(document.features().begin(),document.features().end(),[](const auto& f){return isRevolveFeature(f.kind)||isEdgeFeature(f.kind);})?17:16},
                            {"units", "mm"},
                            {"features", features},
                            {"resultFeature", q(resultId)}};

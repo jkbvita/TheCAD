@@ -18,7 +18,7 @@ void MainWindow::rememberSketchChange(EditState previous) {
 }
 void MainWindow::updateHistoryActions() {
     if(!m_undo || !m_redo)return;
-    const bool ready=!m_operation && !m_referenceDraft && !m_selectingPlane && !(m_smartDimension && m_smartDimension->editor);
+    const bool ready=!featureDraftActive() && !m_selectingPlane && !(m_smartDimension && m_smartDimension->editor);
     m_undo->setEnabled(ready && m_session.canUndo());m_redo->setEnabled(ready && m_session.canRedo());
 }
 void MainWindow::traverseHistory(bool redo) {

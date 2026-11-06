@@ -12,6 +12,7 @@
 #include "ui/CadViewport.h"
 #include "ui/PropertyManagerPage.h"
 #include "ui/ReferenceGeometryUi.h"
+#include "ui/features/SolidFeaturePanel.h"
 #include "modeling/Sketch.h"
 #include "modeling/ConstraintSolver.h"
 #include "modeling/ReferencePlanes.h"
@@ -220,6 +221,13 @@ MainWindow::MainWindow(QWidget* parent)
     m_cut = action("Extruded Cut", "actionExtrudedCut", [this] { extrude(true); });
     commandButton(m_extrude, featureGrid, 0, 0, true);
     commandButton(m_cut, featureGrid, 0, 1, true);
+    m_revolve=action("Revolved Boss/Base","actionRevolve",[this]{startSolidFeature(document::FeatureKind::Revolve);});
+    m_revolvedCut=action("Revolved Cut","actionRevolvedCut",[this]{startSolidFeature(document::FeatureKind::RevolvedCut);});
+    commandButton(m_revolve,featureGrid,0,2,true);commandButton(m_revolvedCut,featureGrid,0,3,true);
+    QGridLayout* finishGrid=nullptr;commandGroup(featureButtons,"Edge features",finishGrid);
+    m_fillet=action("Fillet","actionFillet",[this]{startSolidFeature(document::FeatureKind::Fillet);});
+    m_chamfer=action("Chamfer","actionChamfer",[this]{startSolidFeature(document::FeatureKind::Chamfer);});
+    commandButton(m_fillet,finishGrid,0,0,true);commandButton(m_chamfer,finishGrid,0,1,true);
     QGridLayout* referenceGrid=nullptr;commandGroup(featureButtons,"Reference Geometry",referenceGrid);
     m_referencePlane=action("Reference Plane","actionReferencePlane",[this]{startReferenceGeometry(modeling::DatumKind::Plane);});
     m_referenceAxis=action("Reference Axis","actionReferenceAxis",[this]{startReferenceGeometry(modeling::DatumKind::Axis);});
@@ -465,10 +473,10 @@ MainWindow::MainWindow(QWidget* parent)
             reportError(QString::fromUtf8(error.what()));
         }
     });
-    connect(m_viewport, &CadViewport::sketchRegionClicked, this, [this](modeling::Point2 point) { operationRegionClicked(point); });
+    connect(m_viewport, &CadViewport::sketchRegionClicked, this, [this](modeling::Point2 point) { if(m_solidFeature)m_solidFeature->pickRegion(point);else operationRegionClicked(point); });
     connect(m_viewport, &CadViewport::referencePlaneSelected, this, [this](modeling::SketchPlane plane) { referencePlaneSelected(plane); });
     connect(m_viewport,&CadViewport::solidFaceSelected,this,[this](int index){
-        if(m_session.editingSketch() || m_operation || m_referenceDraft)return;
+        if(m_session.editingSketch() || featureDraftActive())return;
         m_selectedFace=0;m_selectedPlane.reset();m_session.selectedFeatureId().clear();
         {const QSignalBlocker blocker(m_tree);m_tree->clearSelection();}
         m_viewport->setSelectedReferencePlane({});updateActions();
@@ -480,9 +488,9 @@ MainWindow::MainWindow(QWidget* parent)
         else statusBar()->showMessage("Planar face selected. Click Sketch to create an attached sketch.");
     });
     connect(m_viewport, &CadViewport::planeSelectionCanceled, this, [this] { planeSelectionCanceled(); });
-    connect(m_viewport,&CadViewport::referenceGeometryPicked,this,&MainWindow::referenceGeometryPicked);
+    connect(m_viewport,&CadViewport::referenceGeometryPicked,this,[this](int option){if(m_solidFeature)m_solidFeature->pickReference(option);else referenceGeometryPicked(option);});
     connect(m_viewport,&CadViewport::datumSelected,this,[this](const QString& id){
-        if(m_referenceDraft||m_session.editingSketch()||m_operation)return;
+        if(featureDraftActive()||m_session.editingSketch())return;
         if(id.isEmpty()){m_session.selectedFeatureId().clear();{const QSignalBlocker blocker(m_tree);m_tree->clearSelection();m_tree->setCurrentItem(nullptr);}updateActions();return;}
         if(m_selectingPlane){createSketchOnReferencePlane(id.toStdString());return;}
         selectFeature(id.toStdString());
@@ -490,7 +498,7 @@ MainWindow::MainWindow(QWidget* parent)
 
     auto* cancelFeature = new QAction("Cancel feature", this);
     cancelFeature->setObjectName("actionCancelFeature");cancelFeature->setShortcut(QKeySequence(Qt::Key_Escape));
-    addAction(cancelFeature);connect(cancelFeature,&QAction::triggered,this,[this]{if(m_referenceDraft)finishReferenceGeometry(false);else finishOperation(false);});
+    addAction(cancelFeature);connect(cancelFeature,&QAction::triggered,this,[this]{if(m_solidFeature)finishSolidFeature(false);else if(m_referenceDraft)finishReferenceGeometry(false);else finishOperation(false);});
     statusBar()->showMessage("Orbit: middle drag | Pan: Ctrl + middle | Zoom: Shift + middle / wheel | Normal To: Ctrl+8 | Fit: F");
     m_dimensions = new QLabel(this);
     statusBar()->addPermanentWidget(m_dimensions);
@@ -506,6 +514,7 @@ MainWindow::~MainWindow()
 {
     qApp->removeEventFilter(this);
     closeSmartDimension();
+    if(m_solidFeature){delete m_solidFeature;m_solidFeature=nullptr;}
     if(m_referenceDraft){auto* page=m_referenceDraft->page;m_referenceDraft.reset();delete page;}
     if (m_operation) {
         auto* panel = m_operation->panel;
@@ -641,7 +650,7 @@ bool MainWindow::openPartFile(const QString& path){return openPartFileImpl(path,
 bool MainWindow::openPartFileImpl(const QString& path,bool promptForEmptyDocument)
 {
     if(path.isEmpty())return false;
-    if(m_operation || m_referenceDraft || m_selectingPlane || m_constraints || (m_smartDimension && m_smartDimension->editor)){reportError("Confirm or cancel the active operation before opening another part.");return false;}
+    if(featureDraftActive() || m_selectingPlane || m_constraints || (m_smartDimension && m_smartDimension->editor)){reportError("Confirm or cancel the active operation before opening another part.");return false;}
     try {
         auto candidate = document::PartDocument::load(path);
         // A file supplied at launch replaces only the pristine empty startup
@@ -663,7 +672,7 @@ bool MainWindow::saveDocument()
 
 bool MainWindow::saveDocumentAs(bool allowExport)
 {
-    if(m_operation||m_referenceDraft||m_selectingPlane){reportError("Confirm or cancel the active feature before Save As.");return false;}
+    if(featureDraftActive()||m_selectingPlane){reportError("Confirm or cancel the active feature before Save As.");return false;}
     if (!finishSketch()) return false;
     QString path = chooseSavePath(allowExport);
     if (path.isEmpty()) return false;
@@ -755,6 +764,7 @@ void MainWindow::selectFeature(const std::string& id)
 
 void MainWindow::selectionChanged()
 {
+    if(m_solidFeature){const auto* item=m_tree->currentItem();if(item)m_solidFeature->pickTree(item->data(0,Qt::UserRole).toString());return;}
     if(m_referenceDraft){const auto* item=m_tree->currentItem();if(item)referenceGeometryTreePicked(item->data(0,Qt::UserRole).toString());return;}
     m_viewport->beginTreeSelection();
     m_selectedFace=0;
@@ -838,7 +848,7 @@ void MainWindow::updateSketchToolActions()
 void MainWindow::updateActions()
 {
     updateSketchToolActions();updateHistoryActions();
-    const bool operation = bool(m_operation)||bool(m_referenceDraft);
+    const bool operation = featureDraftActive();
     const bool editing = m_mode == WorkspaceMode::EditingSketch && !m_constraints;
     findChild<QAction*>("actionSmartDimension")->setEnabled(editing && !operation);
     findChild<QAction*>("actionDisplayDeleteRelations")->setEnabled(editing && !operation);
@@ -846,7 +856,7 @@ void MainWindow::updateActions()
     for(auto* reference:{m_referencePoint,m_referenceAxis,m_referencePlane})reference->setEnabled(!operation&&!m_session.editingSketch()&&!selecting);
     m_tabs->setEnabled(!operation);
     findChild<QAction*>("actionCancelFeature")->setEnabled(operation);
-    m_tree->setEnabled(!operation && !editing && !selecting);
+    m_tree->setEnabled((!operation || m_solidFeature) && !editing && !selecting);
     for (const auto* name : {"actionNew", "actionOpen", "actionSave", "actionSaveAs"}) {
         if (auto* action = findChild<QAction*>(name)) action->setEnabled(!operation && !selecting && !m_constraints);
     }
@@ -879,10 +889,14 @@ void MainWindow::updateActions()
     }
     m_extrude->setEnabled(profile && !m_constraints && !m_smartDimension);
     m_cut->setEnabled(profile && !m_constraints && !m_smartDimension && !m_session.document().shape().IsNull());
+    m_revolve->setEnabled(profile&&!m_constraints&&!m_smartDimension);
+    m_revolvedCut->setEnabled(m_revolve->isEnabled()&&!m_session.document().shape().IsNull());
+    const bool edges=!operation&&!selecting&&!m_session.editingSketch()&&!m_session.document().shape().IsNull();
+    m_fillet->setEnabled(edges);m_chamfer->setEnabled(edges);
 }
 void MainWindow::createSketch()
 {
-    if (m_session.editingSketch() || m_operation || m_referenceDraft || m_selectingPlane) return;
+    if (m_session.editingSketch() || featureDraftActive() || m_selectingPlane) return;
     if(const auto* feature=selectedFeature();feature&&feature->kind==document::FeatureKind::ReferenceGeometry&&feature->datum.kind==modeling::DatumKind::Plane){createSketchOnReferencePlane(feature->id);return;}
     if(m_selectedFace) {createSketchOnFace(m_selectedFace);return;}
     if (m_selectedPlane) {
@@ -1079,6 +1093,7 @@ void MainWindow::editSelectedFeature()
 {
     const auto* selected = selectedFeature();
     if (!selected || m_session.editingSketch()) return;
+    if(document::isRevolveFeature(selected->kind)||document::isEdgeFeature(selected->kind)){startSolidFeature(selected->kind,selected);return;}
     if (selected->kind == document::FeatureKind::Sketch) { startSketchEditing(*selected); return; }
     if(selected->kind==document::FeatureKind::ReferenceGeometry){startReferenceGeometry(selected->datum.kind,selected);return;}
     auto feature = *selected;
@@ -1096,7 +1111,7 @@ void MainWindow::editSelectedFeature()
 
 void MainWindow::extrude(bool cut)
 {
-    if (m_operation || m_selectingPlane) return;
+    if (featureDraftActive() || m_selectingPlane) return;
     document::Feature feature;
     feature.kind = cut ? document::FeatureKind::Cut : document::FeatureKind::Extrude;
     const auto* selected = selectedFeature();
@@ -1107,7 +1122,7 @@ void MainWindow::extrude(bool cut)
 
 void MainWindow::startOperation(document::Feature feature, bool editing)
 {
-    if(m_operation || m_selectingPlane) return;
+    if(featureDraftActive() || m_selectingPlane) return;
     m_selectedFace=0;m_viewport->setSelectedSolidFace(0);
     auto sourceDocument=m_session.document();
     if(m_session.editingSketch()) {
@@ -1367,7 +1382,7 @@ bool MainWindow::operationKeyEvent(QObject* watched,QEvent* event){
 }
 void MainWindow::closeEvent(QCloseEvent* event)
 {
-    if (m_operation || m_referenceDraft) {
+    if (featureDraftActive()) {
         reportError("Confirm or cancel the feature preview before closing this part.");
         event->ignore();
         return;

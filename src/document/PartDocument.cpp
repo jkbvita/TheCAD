@@ -7,6 +7,7 @@
 #include "modeling/Box.h"
 #include "modeling/ConstraintSolver.h"
 #include "modeling/PlanarRegions.h"
+#include "modeling/SolidFeatures.h"
 
 #include <BRepCheck_Analyzer.hxx>
 #include <Standard_Failure.hxx>
@@ -124,6 +125,37 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
                 feature.sketch=modeling::requireSolvedSketch(modeling::solvePlanarSketch(feature.sketch));
                 validSketch(feature.sketch);
                 sketches.emplace(feature.id, feature.sketch);
+            } else if (isRevolveFeature(feature.kind)) {
+                const auto source = sketches.find(feature.sketchId);
+                if(source==sketches.end()) fail("Revolve must reference an earlier sketch.");
+                if(!feature.axis) fail("Select an axis of revolution.");
+                auto& ref=*feature.axis;
+                using Ref=modeling::ReferenceSource;
+                if(ref.source!=Ref::BaseAxis&&ref.source!=Ref::Datum&&ref.source!=Ref::SketchLine&&ref.source!=Ref::BodyEdge)
+                    fail("Select a straight sketch line, solid edge or reference axis for revolution.");
+                bindGeometryReference(ref,bodies,namedBodies);
+                const auto axis=resolveGeometryReference(ref,datums,sketches,bodies,namedBodies);
+                if(axis.kind!=modeling::DatumKind::Axis) fail("Revolution requires a straight line or reference axis.");
+                expected.push_back(feature.sketchId);
+                if(!bodyId.empty()) expected.push_back(bodyId);
+                if(!ref.featureId.empty()&&std::find(expected.begin(),expected.end(),ref.featureId)==expected.end())expected.push_back(ref.featureId);
+                if(!feature.contour.empty()&&!feature.contours.empty())fail("Feature cannot contain both a single contour and multiple regions.");
+                (void)directionName(feature.direction);
+                body=modeling::makeRevolutions(body,source->second,feature.contours.empty()?modeling::RegionReferences{feature.contour}:feature.contours,
+                    gp_Ax1(axis.frame.Location(),axis.frame.Direction()),feature.angle,feature.direction,feature.kind==FeatureKind::RevolvedCut,bodyNames,feature.id);
+                bodyId=feature.id;
+            } else if (isEdgeFeature(feature.kind)) {
+                if(bodyId.empty())fail("Fillet and Chamfer require an earlier solid.");
+                expected.push_back(bodyId);
+                std::vector<TopoDS_Shape> edges;
+                for(auto& ref:feature.edges){
+                    if(ref.source!=modeling::ReferenceSource::BodyEdge||ref.featureId!=bodyId||ref.topologyName.empty()||!ref.entityId.empty()||ref.role!=modeling::PointRole::First)
+                        fail("Edge treatments require persistent edges of the immediately preceding solid.");
+                    bindGeometryReference(ref,bodies,namedBodies);
+                    edges.push_back(bodyNames.resolve(ref.topologyName,TopAbs_EDGE));
+                }
+                body=modeling::makeEdgeTreatment(body,edges,feature.size,feature.kind==FeatureKind::Chamfer,bodyNames,feature.id);
+                bodyId=feature.id;
             } else if (feature.kind == FeatureKind::Extrude || feature.kind == FeatureKind::Cut) {
                 const auto source = sketches.find(feature.sketchId);
                 if (source == sketches.end()) fail("Feature must reference an earlier sketch: " + q(feature.sketchId));
@@ -242,6 +274,30 @@ std::string PartDocument::addCutRegions(const std::string& sketchId,const modeli
     feature.name="ExtrudedCut"+feature.id.substr(feature.id.find('-')+1);feature.sketchId=sketchId;
     feature.contours=contours;feature.length=depth;feature.direction=direction;feature.throughAll=throughAll;
     auto candidate=m_features;candidate.push_back(feature);apply(std::move(candidate));return feature.id;
+}
+
+std::string PartDocument::addSolidFeature(Feature feature)
+{
+    if(!isRevolveFeature(feature.kind)&&!isEdgeFeature(feature.kind))fail("Use the matching feature operation.");
+    feature.id=nextId(feature.kind);
+    const char* label=feature.kind==FeatureKind::Revolve?"Revolve":feature.kind==FeatureKind::RevolvedCut?"RevolvedCut":feature.kind==FeatureKind::Fillet?"Fillet":"Chamfer";
+    feature.name=std::string(label)+feature.id.substr(feature.id.find('-')+1);
+    auto candidate=m_features;candidate.push_back(feature);apply(std::move(candidate));return feature.id;
+}
+
+std::vector<ReferenceOption> PartDocument::edgeOptions() const
+{
+    std::string bodyId;for(const auto& f:m_features)if(isSolidFeature(f.kind))bodyId=f.id;
+    if(bodyId.empty())return {};
+    const auto& body=m_bodies.at(bodyId);const auto& names=m_namedBodies.at(bodyId);
+    const auto signature=referenceBodySignature(body);
+    TopTools_IndexedMapOfShape edges;TopExp::MapShapes(body,TopAbs_EDGE,edges);
+    std::vector<ReferenceOption> result;
+    for(int i=1;i<=edges.Extent();++i){const auto name=names.nameOf(edges(i));if(name.empty())continue;
+        modeling::GeometryReference ref;ref.source=modeling::ReferenceSource::BodyEdge;ref.featureId=bodyId;ref.index=i;ref.signature=signature;ref.topologyName=name;
+        result.push_back({"Edge "+std::to_string(i),ref,{modeling::DatumKind::Axis,{}},edges(i)});
+    }
+    return result;
 }
 
 void PartDocument::replaceFeature(const Feature& feature)

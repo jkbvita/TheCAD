@@ -11,8 +11,11 @@
 namespace thecad::document {
 
 struct BoxParameters { double width = 100.0, depth = 70.0, height = 40.0; };
-enum class FeatureKind { Box, Sketch, Extrude, Cut, ReferenceGeometry };
-inline bool isSolidFeature(FeatureKind kind){return kind==FeatureKind::Box||kind==FeatureKind::Extrude||kind==FeatureKind::Cut;}
+enum class FeatureKind { Box, Sketch, Extrude, Cut, ReferenceGeometry, Revolve, RevolvedCut, Fillet, Chamfer };
+inline bool isRevolveFeature(FeatureKind kind){return kind==FeatureKind::Revolve||kind==FeatureKind::RevolvedCut;}
+inline bool isEdgeFeature(FeatureKind kind){return kind==FeatureKind::Fillet||kind==FeatureKind::Chamfer;}
+inline bool usesProfile(FeatureKind kind){return kind==FeatureKind::Extrude||kind==FeatureKind::Cut||isRevolveFeature(kind);}
+inline bool isSolidFeature(FeatureKind kind){return kind==FeatureKind::Box||usesProfile(kind)||isEdgeFeature(kind);}
 struct Feature {
     std::string id;
     std::string name;
@@ -25,6 +28,10 @@ struct Feature {
     double length = 10.0;
     modeling::Direction direction = modeling::Direction::Positive;
     bool throughAll = false;
+    double angle = 360.0;
+    double size = 2.0; // Constant fillet radius / equal chamfer distance, in mm.
+    std::optional<modeling::GeometryReference> axis;
+    std::vector<modeling::GeometryReference> edges;
     std::vector<std::string> dependencies;
     modeling::DatumDefinition reference;
     modeling::DatumGeometry datum; // Derived by regeneration, not persisted.
@@ -50,12 +57,16 @@ public:
     std::string addReferenceGeometry(const modeling::DatumDefinition& definition);
     modeling::DatumGeometry resolveReference(const modeling::GeometryReference& reference) const;
     std::vector<ReferenceOption> referenceOptions() const;
+    // Includes curved edges, unlike axis-only referenceOptions(). No index-only
+    // fallback is permitted for new edge treatments.
+    std::vector<ReferenceOption> edgeOptions() const;
     PartDocument beforeFeature(const std::string& id) const;
     std::string addSketch(const modeling::Sketch& sketch);
     std::string addExtrude(const std::string& sketchId, const std::vector<std::string>& contour, double length, modeling::Direction direction);
     std::string addCut(const std::string& sketchId, const std::vector<std::string>& contour, double depth, bool throughAll, modeling::Direction direction);
     std::string addExtrudeRegions(const std::string& sketchId,const modeling::RegionReferences& contours,double length,modeling::Direction direction);
     std::string addCutRegions(const std::string& sketchId,const modeling::RegionReferences& contours,double depth,bool throughAll,modeling::Direction direction);
+    std::string addSolidFeature(Feature feature);
     void replaceFeature(const Feature& feature);
     // Ordered transitive closure, excluding explicitly selected references.
     std::vector<Feature> referenceDeletionDependents(const std::vector<std::string>& ids) const;

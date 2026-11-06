@@ -52,6 +52,8 @@ approved scope do not need repeated approval.
 
 - [0030: STL/STEP export and standard Windows file dialogs](0030-stl-step-and-windows-file-dialogs.md) — geometry export copies and native Windows Save As.
 
+- [0031: Basic revolve and edge features](0031-basic-revolve-and-edge-features.md) — approved Revolve, Revolved Cut, Fillet and Chamfer batch.
+
 ## Pending owner decisions
 
 - Resilient face references beyond the approved conservative planar-face strategy.

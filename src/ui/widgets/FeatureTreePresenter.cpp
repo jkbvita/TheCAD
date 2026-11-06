@@ -55,8 +55,7 @@ void FeatureTreePresenter::refresh(const document::PartDocument& document, const
         {
             if (feature.kind == document::FeatureKind::Sketch)
                 sketches.emplace(feature.id, &feature);
-            if (feature.kind == document::FeatureKind::Extrude ||
-                feature.kind == document::FeatureKind::Cut)
+            if (document::usesProfile(feature.kind))
                 usedSketches.insert(feature.sketchId);
         }
         QTreeWidgetItem* selectedItem = nullptr;
@@ -72,6 +71,10 @@ void FeatureTreePresenter::refresh(const document::PartDocument& document, const
                               : feature.datum.kind == modeling::DatumKind::Axis ? "Reference Axis"
                                                                                 : "Reference Plane")
                        : feature.kind == document::FeatureKind::Sketch ? "Sketch"
+                       : feature.kind == document::FeatureKind::Revolve ? "Revolved Boss/Base"
+                       : feature.kind == document::FeatureKind::RevolvedCut ? "Revolved Cut"
+                       : feature.kind == document::FeatureKind::Fillet ? "Fillet"
+                       : feature.kind == document::FeatureKind::Chamfer ? "Chamfer"
                        : feature.kind == document::FeatureKind::Cut    ? "Extruded Cut"
                                                                        : "Extrude"));
             if (feature.id == selectedId &&
@@ -85,8 +88,7 @@ void FeatureTreePresenter::refresh(const document::PartDocument& document, const
             if (feature.kind == document::FeatureKind::Sketch && usedSketches.count(feature.id))
                 continue;
             auto* item = addFeature(part, feature);
-            if (feature.kind == document::FeatureKind::Extrude ||
-                feature.kind == document::FeatureKind::Cut)
+            if (document::usesProfile(feature.kind))
             {
                 const auto source = sketches.find(feature.sketchId);
                 if (source != sketches.end())

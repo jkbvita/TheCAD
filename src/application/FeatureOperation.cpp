@@ -13,6 +13,8 @@ FeatureOperationResult FeatureOperation::preview(const document::PartDocument& s
         candidate.replaceFeature(feature);
         id = feature.id;
     }
+    else if (document::isRevolveFeature(feature.kind) || document::isEdgeFeature(feature.kind))
+        id = candidate.addSolidFeature(feature);
     else if (feature.kind == document::FeatureKind::Cut)
         id = candidate.addCutRegions(feature.sketchId, regions, feature.length, feature.throughAll,
                                      feature.direction);
