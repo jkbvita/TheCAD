@@ -1,4 +1,5 @@
 #pragma once
+#include "modeling/TopologyNames.h"
 
 #include <TopoDS_Shape.hxx>
 
@@ -6,6 +7,6 @@ namespace thecad::modeling {
 
 // Dimensions are in prototype model units (shown as millimeters in the demo).
 // Rejects non-finite lengths and lengths at or below OCCT's linear tolerance.
-TopoDS_Shape makeBox(double width, double depth, double height);
+TopoDS_Shape makeBox(double width, double depth, double height,TopologyNames* names=nullptr,const std::string& featureId={});
 
 } // namespace thecad::modeling

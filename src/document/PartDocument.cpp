@@ -322,6 +322,7 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
     std::string bodyId;
     std::map<std::string, modeling::Sketch> sketches;
     std::map<std::string,TopoDS_Shape> bodies;
+    std::map<std::string,modeling::TopologyNames> namedBodies;modeling::TopologyNames bodyNames;
     std::map<std::string,modeling::DatumGeometry> datums;
     std::set<std::string> ids;
     try {
@@ -336,13 +337,13 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
                 if (!body.IsNull()) fail("A legacy box cannot replace an existing solid in the history.");
                 for (const double length : {feature.box.width, feature.box.depth, feature.box.height})
                     if (!std::isfinite(length) || length > maximumLength) fail("Invalid box dimensions.");
-                body = modeling::makeBox(feature.box.width, feature.box.depth, feature.box.height);
+                body = modeling::makeBox(feature.box.width, feature.box.depth, feature.box.height,&bodyNames,feature.id);
                 if (!BRepCheck_Analyzer(body).IsValid()) fail("Box parameters do not generate a valid solid.");
                 bodyId = feature.id;
                 boxParameters = feature.box;
             } else if(feature.kind==FeatureKind::ReferenceGeometry){
                 std::vector<modeling::DatumGeometry> references;
-                for(const auto& ref:feature.reference.references){references.push_back(resolveGeometryReference(ref,datums,sketches,bodies));if(!ref.featureId.empty()&&std::find(expected.begin(),expected.end(),ref.featureId)==expected.end())expected.push_back(ref.featureId);}
+                for(auto& ref:feature.reference.references){bindGeometryReference(ref,bodies,namedBodies);references.push_back(resolveGeometryReference(ref,datums,sketches,bodies,namedBodies));if(!ref.featureId.empty()&&std::find(expected.begin(),expected.end(),ref.featureId)==expected.end())expected.push_back(ref.featureId);}
                 feature.datum=modeling::evaluateDatum(feature.reference,references);datums.emplace(feature.id,feature.datum);
             } else if (feature.kind == FeatureKind::Sketch) {
                 std::set<std::string> entityIds;
@@ -381,14 +382,10 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
                     feature.sketch.referencePlaneFrame=support->second.frame;expected.push_back(feature.sketch.referencePlaneId);
                 }
                 if(feature.sketch.attachment) {
-                    const auto& attachment=*feature.sketch.attachment;
-                    const auto source=bodies.find(attachment.sourceFeature);
-                    if(source==bodies.end() || bodySignature(source->second)!=attachment.sourceSignature)
-                        fail("Sketch face support changed or is missing. Automatic reattachment is disabled; undo the upstream change or recreate the sketch on the intended face.");
-                    const auto actual=faceFrame(source->second,attachment.faceIndex);
-                    if(actual.Location().Distance(attachment.frame.Location())>1e-7 ||
-                       !actual.Direction().IsEqual(attachment.frame.Direction(),1e-9) ||
-                       !actual.XDirection().IsEqual(attachment.frame.XDirection(),1e-9)) fail("Stored sketch frame does not match its supporting face.");
+                    auto& attachment=*feature.sketch.attachment;const auto source=bodies.find(attachment.sourceFeature);if(source==bodies.end())fail("Sketch face support is missing.");
+                    modeling::GeometryReference ref;ref.source=modeling::ReferenceSource::BodyFace;ref.featureId=attachment.sourceFeature;ref.index=attachment.faceIndex;ref.signature=attachment.sourceSignature;ref.topologyName=attachment.topologyName;bindGeometryReference(ref,bodies,namedBodies);const auto supportGeometry=resolveGeometryReference(ref,datums,sketches,bodies,namedBodies);if(supportGeometry.kind!=modeling::DatumKind::Plane)fail("Sketch support is no longer planar. Reselect the intended support.");const auto actual=supportGeometry.frame;
+                    if((validateDependencies||bodySignature(source->second)==attachment.sourceSignature)&&(actual.Location().Distance(attachment.frame.Location())>1e-7||!actual.Direction().IsEqual(attachment.frame.Direction(),1e-9)||!actual.XDirection().IsEqual(attachment.frame.XDirection(),1e-9)))fail("Stored sketch frame does not match its supporting face.");
+                    attachment.topologyName=ref.topologyName;attachment.frame=actual;attachment.sourceSignature=bodySignature(source->second);
                     expected.push_back(attachment.sourceFeature);
                 }
                 // Legacy equalities must already be internally consistent; dimensional
@@ -412,20 +409,20 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
                 if(!feature.contours.empty()) {
                     if(!feature.contour.empty())fail("Feature cannot contain both a single contour and multiple regions.");
                     body=feature.kind==FeatureKind::Cut
-                        ? modeling::makeCuts(body,source->second,feature.contours,feature.length,feature.throughAll,feature.direction)
-                        : modeling::makeExtrusions(source->second,feature.contours,feature.length,feature.direction,body);
+                        ? modeling::makeCuts(body,source->second,feature.contours,feature.length,feature.throughAll,feature.direction,&bodyNames,feature.id)
+                        : modeling::makeExtrusions(source->second,feature.contours,feature.length,feature.direction,body,&bodyNames,feature.id);
                 } else if (feature.kind == FeatureKind::Cut) {
                     if (body.IsNull()) fail("Extruded Cut requires an earlier solid.");
-                    body = modeling::makeCuts(body,source->second,{feature.contour},feature.length,feature.throughAll,feature.direction);
+                    body = modeling::makeCuts(body,source->second,{feature.contour},feature.length,feature.throughAll,feature.direction,&bodyNames,feature.id);
                 } else {
-                    body = modeling::makeExtrusions(source->second,{feature.contour},feature.length,feature.direction,body);
+                    body = modeling::makeExtrusions(source->second,{feature.contour},feature.length,feature.direction,body,&bodyNames,feature.id);
                 }
                 bodyId = feature.id;
             } else fail("Unsupported feature kind.");
             if (validateDependencies && feature.dependencies != expected)
                 fail("Invalid dependencies or feature order for " + q(feature.id));
             feature.dependencies = std::move(expected);
-            if(isSolidFeature(feature.kind)) bodies[feature.id]=body;
+            if(isSolidFeature(feature.kind)){bodies[feature.id]=body;namedBodies[feature.id]=bodyNames;}
         }
     } catch (const Standard_Failure& error) {
         fail("Cannot regenerate part geometry: " + QString::fromUtf8(error.GetMessageString()));
@@ -435,7 +432,7 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
     m_features = std::move(features);
     m_shape = body;
     m_parameters = boxParameters;
-    m_bodies=std::move(bodies);
+    m_bodies=std::move(bodies);m_namedBodies=std::move(namedBodies);
 }
 
 std::string PartDocument::nextId(FeatureKind kind) const
@@ -453,7 +450,7 @@ modeling::Sketch PartDocument::sketchOnFace(int index) const {
     modeling::Sketch sketch;modeling::FaceAttachment attachment;
     for(const auto& feature:m_features) if(isSolidFeature(feature.kind)) attachment.sourceFeature=feature.id;
     attachment.faceIndex=index;attachment.sourceSignature=bodySignature(m_shape);attachment.frame=faceFrame(m_shape,index);
-    sketch.attachment=attachment;return sketch;
+    TopTools_IndexedMapOfShape faces;TopExp::MapShapes(m_shape,TopAbs_FACE,faces);attachment.topologyName=m_namedBodies.at(attachment.sourceFeature).nameOf(faces(index));sketch.attachment=attachment;return sketch;
 }
 
 std::string PartDocument::addSketch(const modeling::Sketch& sketch)
@@ -549,7 +546,7 @@ PartDocument PartDocument::load(const QString& path)
     if (root.value("format") != QJsonValue("TheCAD.Part")) fail("Unsupported document format; expected TheCAD.Part.");
     if (root.value("units") != QJsonValue("mm")) fail("Unsupported units; this prototype supports millimeters only.");
     const auto versionValue = root.value("version");
-    if (!versionValue.isDouble() || versionValue.toDouble()<1 || versionValue.toDouble()>15 || versionValue.toDouble()!=std::floor(versionValue.toDouble())) fail("Unsupported part document version; expected versions 1 through 15.");
+    if (!versionValue.isDouble() || versionValue.toDouble()<1 || versionValue.toDouble()>16 || versionValue.toDouble()!=std::floor(versionValue.toDouble())) fail("Unsupported part document version; expected versions 1 through 16.");
     const int version = versionValue.toInt();
     if (!root.value("features").isArray()) fail("Part features must be an ordered array.");
     const auto array = root.value("features").toArray();
@@ -578,7 +575,7 @@ PartDocument PartDocument::load(const QString& path)
                 if(version>=14){expected.insert("visible");if(!object.value("visible").isBool())fail("Reference visibility must be boolean.");feature.referenceVisible=object.value("visible").toBool();}
                 fields(object,expected,"Reference geometry feature");
                 if(!object.value("definition").isObject())fail("Invalid reference geometry definition.");
-                feature.kind=FeatureKind::ReferenceGeometry;feature.reference=readDatumDefinition(object.value("definition").toObject());if(version<15)for(const auto& r:feature.reference.references)if(r.source==modeling::ReferenceSource::BodyCircleCenter)fail("Circular-edge center references require schema 15.");
+                feature.kind=FeatureKind::ReferenceGeometry;feature.reference=readDatumDefinition(object.value("definition").toObject(),version);if(version<15)for(const auto& r:feature.reference.references)if(r.source==modeling::ReferenceSource::BodyCircleCenter)fail("Circular-edge center references require schema 15.");
             } else if (type == "sketch") {
                 QSet<QString> expected{"id", "name", "type", "plane", "entities", "dependencies"};
                 if (version >= 3) expected.insert("relations");
@@ -598,10 +595,10 @@ PartDocument PartDocument::load(const QString& path)
                 }
                 if(object.contains("attachment")) {
                     if(!object.value("attachment").isObject()) fail("Invalid face attachment.");
-                    const auto a=object.value("attachment").toObject();fields(a,{"source","face","signature","frame"},"Face attachment");
+                    const auto a=object.value("attachment").toObject();auto attachmentFields=QSet<QString>{"source","face","signature","frame"};if(version>=16)attachmentFields.insert("topology");fields(a,attachmentFields,"Face attachment");
                     modeling::FaceAttachment attachment;attachment.sourceFeature=stringValue(a.value("source"),"Face source").toStdString();
                     const double index=number(a.value("face"),"Face index");if(index<1 || index>100000 || index!=std::floor(index))fail("Invalid face index.");attachment.faceIndex=int(index);
-                    attachment.sourceSignature=stringValue(a.value("signature"),"Support signature").toStdString();
+                    attachment.sourceSignature=stringValue(a.value("signature"),"Support signature").toStdString();if(version>=16){if(!a["topology"].isString()||a["topology"].toString().size()>8192)fail("Invalid support topology name.");attachment.topologyName=a["topology"].toString().toStdString();}
                     if(!a.value("frame").isArray() || a.value("frame").toArray().size()!=9)fail("Invalid face frame.");
                     auto frame=a.value("frame").toArray();double v[9];for(int i=0;i<9;++i)v[i]=number(frame[i],"Frame coordinate");
                     gp_Vec n(v[3],v[4],v[5]),x(v[6],v[7],v[8]);
@@ -686,7 +683,7 @@ void PartDocument::save(const QString& path) const
             QJsonArray dimensions;for(const auto& d:feature.sketch.dimensions)dimensions.append(writeDimension(feature.sketch,d));object["dimensions"]=dimensions;
             if(feature.sketch.attachment) {
                 const auto& a=*feature.sketch.attachment;const auto& f=a.frame;const auto p=f.Location();const auto n=f.Direction();const auto x=f.XDirection();
-                object["attachment"]=QJsonObject{{"source",q(a.sourceFeature)},{"face",a.faceIndex},{"signature",q(a.sourceSignature)},
+                object["attachment"]=QJsonObject{{"source",q(a.sourceFeature)},{"face",a.faceIndex},{"signature",q(a.sourceSignature)},{"topology",q(a.topologyName)},
                     {"frame",QJsonArray{p.X(),p.Y(),p.Z(),n.X(),n.Y(),n.Z(),x.X(),x.Y(),x.Z()}}};
             }
             QJsonArray entities;
@@ -708,7 +705,7 @@ void PartDocument::save(const QString& path) const
         if (isSolidFeature(feature.kind)) resultId = feature.id;
         features.append(object);
     }
-    const QJsonObject root{{"format", "TheCAD.Part"}, {"version", 15}, {"units", "mm"}, {"features", features}, {"resultFeature", q(resultId)}};
+    const QJsonObject root{{"format", "TheCAD.Part"}, {"version", 16}, {"units", "mm"}, {"features", features}, {"resultFeature", q(resultId)}};
     const auto bytes = QJsonDocument(root).toJson(QJsonDocument::Indented);
     if (bytes.size() > maximumDocumentBytes) fail("Part document exceeds the 1 MiB prototype size limit.");
     QSaveFile file(path);

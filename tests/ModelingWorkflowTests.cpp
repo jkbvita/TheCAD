@@ -519,9 +519,9 @@ private slots:
         depth->setValue(35);QVERIFY(std::abs(volume(viewport->m_previewPresentation->Shape())/before-35.0/20.0)<1e-8);
         const auto previousDirection=viewport->m_view->Camera()->Direction();
         const auto dragStart=viewport->rect().center(),dragEnd=dragStart+QPoint(80,50);
-        QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,dragStart);
-        QMouseEvent orbit(QEvent::MouseMove,dragEnd,viewport->mapToGlobal(dragEnd),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);
-        QApplication::sendEvent(viewport,&orbit);QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,dragEnd);
+        QTest::mousePress(viewport,Qt::MiddleButton,Qt::NoModifier,dragStart);
+        QMouseEvent orbit(QEvent::MouseMove,dragEnd,viewport->mapToGlobal(dragEnd),Qt::NoButton,Qt::MiddleButton,Qt::NoModifier);
+        QApplication::sendEvent(viewport,&orbit);QTest::mouseRelease(viewport,Qt::MiddleButton,Qt::NoModifier,dragEnd);
         QVERIFY(previousDirection.Angle(viewport->m_view->Camera()->Direction())>0.01);
         depth->findChild<QLineEdit*>()->setText("--");
         QVERIFY(!operation->findChild<QDialogButtonBox*>("operationButtons")->button(QDialogButtonBox::Ok)->isEnabled());

@@ -37,13 +37,13 @@ private:
                 - double(expected.width()) / expected.height()) < 0.01);
     }
 
-    void drag(Qt::MouseButton button, const QPoint& start, const QPoint& end)
+    void drag(Qt::MouseButton button, const QPoint& start, const QPoint& end,Qt::KeyboardModifiers modifiers=Qt::NoModifier)
     {
-        QTest::mousePress(viewport.get(), button, Qt::NoModifier, start);
+        QTest::mousePress(viewport.get(), button, modifiers, start);
         QMouseEvent move(QEvent::MouseMove, end, viewport->mapToGlobal(end),
-                         Qt::NoButton, button, Qt::NoModifier);
+                         Qt::NoButton, button, modifiers);
         QApplication::sendEvent(viewport.get(), &move);
-        QTest::mouseRelease(viewport.get(), button, Qt::NoModifier, end);
+        QTest::mouseRelease(viewport.get(), button, modifiers, end);
         QApplication::processEvents();
     }
 
@@ -140,7 +140,7 @@ private slots:
     {
         viewport->resetView();
         const auto before = viewport->m_view->Camera()->Direction();
-        drag(Qt::LeftButton, QPoint(350, 300), QPoint(450, 350));
+        drag(Qt::MiddleButton, QPoint(350, 300), QPoint(450, 350));
         QVERIFY(before.Angle(viewport->m_view->Camera()->Direction()) > 0.01);
         QCOMPARE(viewport->m_navigation, CadViewport::Navigation::None);
     }
@@ -149,7 +149,7 @@ private slots:
     {
         QTest::addColumn<int>("button");
         QTest::newRow("middle") << int(Qt::MiddleButton);
-        QTest::newRow("right") << int(Qt::RightButton);
+
     }
 
     void panMovesCenter()
@@ -158,7 +158,7 @@ private slots:
         viewport->resetView();
         const auto before = viewport->m_view->Camera()->Center();
         const auto direction = viewport->m_view->Camera()->Direction();
-        drag(static_cast<Qt::MouseButton>(button), QPoint(350, 300), QPoint(420, 350));
+        drag(static_cast<Qt::MouseButton>(button), QPoint(350, 300), QPoint(420, 350),Qt::ControlModifier);
         QVERIFY(before.Distance(viewport->m_view->Camera()->Center()) > 1.0);
         QVERIFY(direction.Angle(viewport->m_view->Camera()->Direction()) < 1e-10);
     }

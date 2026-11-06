@@ -67,6 +67,7 @@ private:
     TopoDS_Shape m_shape;
     std::vector<Feature> m_features;
     std::map<std::string,TopoDS_Shape> m_bodies;
+    std::map<std::string,modeling::TopologyNames> m_namedBodies;
 };
 
 } // namespace thecad::document

@@ -1,3 +1,4 @@
+#include "ui/SelectionAppearance.h"
 #include "ui/Theme.h"
 #include <QToolTip>
 #include "modeling/RelationCommands.h"
@@ -162,11 +163,11 @@ void CadViewport::initialize()
         m_viewer->SetLightOn();
         m_context = new AIS_InteractiveContext(m_viewer);
         for(const auto type:{Prs3d_TypeOfHighlight_Selected,Prs3d_TypeOfHighlight_LocalSelected}){
-            const auto& style=m_context->HighlightStyle(type);style->SetColor(Quantity_Color(0.55,0.80,1.0,Quantity_TOC_RGB));
-            style->SetMethod(Aspect_TOHM_COLOR);style->SetDisplayMode(AIS_Shaded);style->SetTransparency(0.0);
+            const auto& style=m_context->HighlightStyle(type);style->SetColor(selectionBlue());
+            style->SetMethod(Aspect_TOHM_COLOR);style->SetDisplayMode(AIS_Shaded);style->SetTransparency(0);
             style->SetZLayer(Graphic3d_ZLayerId_Topmost);
         }
-        m_context->SetToHilightSelected(Standard_False);
+        m_context->SetToHilightSelected(Standard_False);m_context->SetAutomaticHilight(Standard_False);
         m_view = m_viewer->CreateView();
         Handle(WNT_Window) window = new WNT_Window(reinterpret_cast<Aspect_Handle>(winId()));
         m_view->SetWindow(window);
@@ -286,7 +287,7 @@ void CadViewport::synchronizeSurface()
 
 bool CadViewport::setShape(const TopoDS_Shape& shape)
 {
-    invalidateBodySelection();
+    m_treeBodySelected=false;invalidateBodySelection();
     setSelectedSolidFace(0);
     if (shape.IsNull()) {
         if (isReady() && !m_presentation.IsNull()) {
@@ -304,7 +305,8 @@ bool CadViewport::setShape(const TopoDS_Shape& shape)
     }
     Handle(AIS_Shape) candidate = new AIS_Shape(shape);
     try {
-        candidate->SetColor(Quantity_Color(0.32, 0.62, 0.88, Quantity_TOC_RGB));
+        candidate->SetMaterial(Graphic3d_NOM_PLASTIC);
+        candidate->SetColor(modelGray());
         candidate->Attributes()->SetFaceBoundaryDraw(Standard_True);
         m_context->Display(candidate, Standard_False);
         m_context->Deactivate(candidate);
@@ -383,7 +385,7 @@ void CadViewport::setSelectedSolidFace(int index){
             }
         }
     }
-    update();
+    refreshNativeSelection();update();
 }
 
 void CadViewport::updateReferencePlanes()
@@ -405,16 +407,14 @@ void CadViewport::updateReferencePlanes()
             if (!bounds.IsVoid()) {
                 double x0, y0, z0, x1, y1, z1;
                 bounds.Get(x0, y0, z0, x1, y1, z1);
-                m_planeHalfExtent = std::max({std::abs(x0), std::abs(y0), std::abs(z0),
-                    std::abs(x1), std::abs(y1), std::abs(z1), 1.0}) * 1.15;
-                m_planeHalfExtent = std::min(m_planeHalfExtent, 1e9);
+                m_planeHalfExtent=std::clamp(std::hypot(std::hypot(x1-x0,y1-y0),z1-z0)*0.65,25.0,500.0);
             }
         }
         for (int i = 0; i < 3; ++i) {
             const auto type = static_cast<modeling::SketchPlane>(i);
             auto& plane = m_referencePlanes[std::size_t(i)];
             plane = new AIS_Shape(modeling::referencePlaneFace(type, m_planeHalfExtent));
-            plane->Attributes()->SetFaceBoundaryDraw(Standard_True);
+            styleReferencePlane(plane,false,false,i);
             m_context->Display(plane, AIS_Shaded, -1, Standard_False);
             auto& label = m_planeLabels[std::size_t(i)];
             label = new AIS_TextLabel;
@@ -456,11 +456,7 @@ void CadViewport::updatePlaneStyles()
         const auto type = static_cast<modeling::SketchPlane>(i);
         const bool selected = (m_selectedPlane && *m_selectedPlane == type) || std::any_of(m_selection.items().begin(),m_selection.items().end(),[&](const auto& r){return r.kind==modeling::SelectionKind::OriginPlane&&r.index==i;});
         const bool hovered = m_hoveredPlane && *m_hoveredPlane == type;
-        const Quantity_Color color = selected ? Quantity_Color(0.55,0.80,1.0,Quantity_TOC_RGB) : hovered ? Quantity_Color(1.0,0.42,0.02,Quantity_TOC_RGB)
-            : viewportColor(ThemeColor::Reference);
-        plane->SetColor(Quantity_Color(0.72,0.78,0.90,Quantity_TOC_RGB));
-        plane->SetTransparency(0.88);
-        plane->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(color,Aspect_TOL_SOLID,(selected||hovered?1.5:1.0)*devicePixelRatioF()));
+        styleReferencePlane(plane,selected,hovered,i);
         m_context->Redisplay(plane, Standard_False);
         if (!m_planeLabels[std::size_t(i)].IsNull()) {
             m_planeLabels[std::size_t(i)]->SetColor(viewportColor(ThemeColor::Reference));
@@ -615,7 +611,8 @@ void CadViewport::previewShape(const TopoDS_Shape& shape,const modeling::Materia
     if (!isReady() || shape.IsNull()) { return; }
     clearPreview();
     m_previewPresentation = new AIS_Shape(shape);
-    m_previewPresentation->SetColor(Quantity_Color(0.65,0.70,0.75,Quantity_TOC_RGB));
+    m_previewPresentation->SetMaterial(Graphic3d_NOM_PLASTIC);
+    m_previewPresentation->SetColor(modelGray());
     m_previewPresentation->Attributes()->SetFaceBoundaryDraw(Standard_True);
     if (!m_presentation.IsNull()) { m_context->Erase(m_presentation, Standard_False); }
     m_context->Display(m_previewPresentation,AIS_Shaded,-1,Standard_False);
@@ -767,8 +764,8 @@ void CadViewport::updateConstraintPresentation() {
         const bool selected=d.first.entityId==m_selectedEntity || d.second.entityId==m_selectedEntity;
         const bool error=std::find(m_constraintErrors.begin(),m_constraintErrors.end(),d.id)!=m_constraintErrors.end();
         const bool selectedAnnotation=std::find(m_selectedDimensions.begin(),m_selectedDimensions.end(),d.id)!=m_selectedDimensions.end();
-        Quantity_Color color=error?viewportColor(ThemeColor::Error):d.id==m_hoveredDimension?Quantity_Color(Quantity_NOC_ORANGE):d.id=="pending-dimension"?viewportColor(ThemeColor::Underdefined):viewportColor(ThemeColor::Defined);
-        if(!error && (selectedAnnotation || selected))color=Quantity_Color(0.25,0.72,1.0,Quantity_TOC_RGB);
+        Quantity_Color color=error?viewportColor(ThemeColor::Error):d.id==m_hoveredDimension?hoverOrange():d.id=="pending-dimension"?viewportColor(ThemeColor::Underdefined):viewportColor(ThemeColor::Defined);
+        if(!error && (selectedAnnotation || selected))color=selectionBlue();
         const auto graphics=modeling::dimensionGraphics(*m_sketch,d,unit);
         label(graphics.text,dimensionText(d),color,14);
         for(const auto& segment:graphics.segments)guide(segment.first,segment.second,color);
@@ -1326,7 +1323,7 @@ std::optional<modeling::Point2> CadViewport::sketchPosition(const QPointF& posit
     const gp_Vec normal(axes.Direction());
     const gp_Vec ray(dx, dy, dz);
     const double divisor = ray.Dot(normal);
-    if (std::abs(divisor) < 1e-10) { return {}; }
+    if (std::abs(divisor) < 1e-4) { return {}; }
     const gp_Pnt origin(x, y, z);
     const double distance = gp_Vec(origin, axes.Location()).Dot(normal) / divisor;
     const auto onPlane = origin.Translated(ray * distance);
@@ -1342,6 +1339,7 @@ QPoint CadViewport::nativePosition(const QPointF& position) const
 
 void CadViewport::mousePressEvent(QMouseEvent* event)
 {
+    if(event->button()==Qt::MiddleButton&&isReady()){beginNavigation(event);return;}
     m_contextClick=event->button()==Qt::RightButton;m_contextPress=event->position();
     m_deleteSequence.invalidate();
     if(m_pointDrag || m_dimensionDrag) {event->accept();return;}
@@ -1406,6 +1404,7 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
         std::optional<modeling::SketchPointRef> reference;
         const auto raw = sketchPosition(event->position());
         if(m_sketchTool==modeling::EntityKind::Point && raw){placeSketchPoint(event->position());event->accept();return;}
+        if(m_sketchTool&&!raw){event->accept();return;}
         if (m_sketchTool && raw) {
             const auto point = drawingPoint(event->position(), reference);
             if (!m_firstPoint) { m_firstPoint = point; m_firstReference = reference; }
@@ -1447,28 +1446,13 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
         event->accept();
         return;
     }
-    if (event->button() == Qt::LeftButton) {
-        m_planeClickCandidate = !m_sketchEditing && !m_regionSelecting;
-        m_planePressPosition = event->position();
-        m_navigation = Navigation::Orbit;
-        const QPoint position = nativePosition(event->position());
-        m_view->StartRotation(position.x(), position.y());
-    } else if (event->button() == Qt::MiddleButton || event->button() == Qt::RightButton) {
-        m_navigation = Navigation::Pan;
-    } else {
-        return;
-    }
-    setFocus(Qt::MouseFocusReason);
-    resetSketchInference();
-    updateSketchPresentation();
-    m_navigationButton = event->button();
-    m_previousPosition = nativePosition(event->position());
-    setCursor(m_navigation == Navigation::Pan ? Qt::ClosedHandCursor : Qt::SizeAllCursor);
-    event->accept();
+    if(event->button()==Qt::LeftButton){m_planeClickCandidate=!m_sketchEditing&&!m_regionSelecting;m_planePressPosition=event->position();setFocus(Qt::MouseFocusReason);event->accept();}
+
 }
 
 void CadViewport::mouseMoveEvent(QMouseEvent* event)
 {
+    if(m_navigation!=Navigation::None){moveNavigation(event);return;}
     if((event->position()-m_contextPress).manhattanLength()>QApplication::startDragDistance())m_contextClick=false;
     if(m_shiftSelectionChanged)m_selectionCursor=event->position().toPoint();
     if(m_dimensionDrag){updateDimensionDrag(event->position());event->accept();return;}
@@ -1490,6 +1474,7 @@ void CadViewport::mouseMoveEvent(QMouseEvent* event)
         updateSketchHover(event->position());
         if (m_sketchTool && m_firstPoint) {
             std::optional<modeling::SketchPointRef> reference;
+            if(!sketchPosition(event->position())){m_drawingPreview.reset();updateSketchPresentation();return;}
             const auto point = drawingPoint(event->position(), reference);
             modeling::SketchEntity preview;
             preview.kind = *m_sketchTool;
@@ -1500,18 +1485,6 @@ void CadViewport::mouseMoveEvent(QMouseEvent* event)
         } else { updatePointPresentation(); }
         return;
     }
-    if (!isReady() || m_navigation == Navigation::None) {
-        return;
-    }
-    const QPoint position = nativePosition(event->position());
-    if (m_navigation == Navigation::Orbit) {
-        m_view->Rotation(position.x(), position.y());
-    } else {
-        const QPoint delta = position - m_previousPosition;
-        m_view->Pan(delta.x(), -delta.y());
-    }
-    m_previousPosition = position;
-    updateRelationSymbols();update();
     event->accept();
 }
 
@@ -1524,7 +1497,8 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* event)
         updateConstraintPresentation();update();event->accept();return;
     }
     if(event->button()==Qt::LeftButton && m_pointDrag) { updatePointDrag(event->position()); finishPointDrag(); event->accept(); return; }
-    if (event->button() == m_navigationButton) {
+    if(event->button()==m_navigationButton&&m_navigation!=Navigation::None){m_navigation=Navigation::None;m_navigationButton=Qt::NoButton;unsetCursor();if(QWidget::mouseGrabber()==this)releaseMouse();event->accept();return;}
+    if (event->button() == Qt::LeftButton) {
         const bool regionClick=m_regionClickCandidate && event->button()==Qt::LeftButton
             && (event->position()-m_regionPressPosition).manhattanLength()<=QApplication::startDragDistance();
         m_regionClickCandidate=false;
@@ -1585,7 +1559,7 @@ void CadViewport::wheelEvent(QWheelEvent* event)
     const double steps = !event->angleDelta().isNull()
         ? event->angleDelta().y() / 120.0 : event->pixelDelta().y() / 40.0;
     const double factor = std::pow(1.15, std::clamp(steps, -10.0, 10.0));
-    m_view->SetZoom(factor);
+    zoomToward(event->position(),factor);
     updateConstraintPresentation();
     update();
     event->accept();

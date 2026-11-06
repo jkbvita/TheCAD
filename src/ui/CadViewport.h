@@ -86,6 +86,9 @@ public:
     bool smartDimensionActive() const { return m_smartDimensionPicking; }
     void fitAll();
     void resetView();
+    void normalTo();
+    void setTreeBodySelected(bool selected);
+    void setTreeReferenceSelection(const std::vector<modeling::SelectionRef>&);
     void applyTheme();
     void setDatums(const std::vector<DatumVisual>& datums);
     void setSelectedDatum(const std::string& id);
@@ -150,7 +153,9 @@ private:
     friend class GraphicalPlaneWorkflowTest;
     friend class SelectionWorkflowTest;
     friend class ReferenceManagerTest;
-    struct PickCandidate {modeling::SelectionCandidate value;TopoDS_Shape shape;Handle(SelectMgr_EntityOwner) owner;};
+    friend class PlaneNavigationTest;
+    struct PickCandidate {modeling::SelectionCandidate value;TopoDS_Shape shape;Handle(SelectMgr_EntityOwner) owner;
+        std::optional<gp_Pnt> hit;};
     std::vector<PickCandidate> selectionCandidates(const QPointF&,bool includeOccluded=false);
     void selectCandidate(const PickCandidate&,bool toggle=false);
     void updateSelectionHover(const QPointF&);
@@ -168,11 +173,20 @@ private:
     std::string m_bodyFeatureId,m_sketchFeatureId;
     std::vector<PickCandidate> m_nativeSelections;
     Handle(AIS_Shape) m_selectionHover;
+    std::vector<Handle(AIS_Shape)> m_selectionPresentations;
+    bool m_treeBodySelected=false;
     QPointer<QMenu> m_selectOtherMenu;
     QPointF m_contextPress;
     bool m_contextClick=false;
     bool m_dispatchingSelection=false;
-    enum class Navigation { None, Orbit, Pan };
+    enum class Navigation { None, Orbit, Pan, Zoom };
+    void beginNavigation(QMouseEvent*);
+    void moveNavigation(QMouseEvent*);
+    void zoomToward(const QPointF&,double);
+    gp_Pnt navigationPivot(const QPointF&);
+    gp_Pnt m_orbitPivot;
+    std::optional<gp_Pnt> m_rotationAnchor;
+    QPointF m_navigationLogical;
     void initialize();
     void releaseViewer();
     void synchronizeSurface();

@@ -147,6 +147,7 @@ std::vector<Contour> intersectedContours(const Sketch& sketch){
             if(whole[p.entityId])references.insert(p.entityId);
             else references.insert(std::string(fragmentPrefix)+field(p.key)+field(piece.first)+field(piece.last)+(piece.direction>0?"+":"-"));
         }
+        for(TopExp_Explorer e(face,TopAbs_EDGE);e.More();e.Next()){const auto edge=TopoDS::Edge(e.Current());const int index=fragments.FindIndex(edge);const auto& p=primitives[std::size_t(owner[std::size_t(index)])];auto first=vertexKey(TopExp::FirstVertex(edge,Standard_True)),last=vertexKey(TopExp::LastVertex(edge,Standard_True));BRepAdaptor_Curve curve(edge);gp_Pnt pos;gp_Vec tangent;curve.D1((curve.FirstParameter()+curve.LastParameter())/2,pos,tangent);if(edge.Orientation()==TopAbs_REVERSED)tangent.Reverse();if(p.kind==EntityKind::Circle){if(gp_Vec(sketchPoint(sketch,p.first),pos).Crossed(tangent).Dot(gp_Vec(axes.Direction()))<0)std::swap(first,last);}else if(last<first)std::swap(first,last);region.boundaryNames.add(topologyKey("fragment",{p.key+":"+field(first)+field(last)}),edge);}
         region.entityIds.assign(references.begin(),references.end());
         if(region.entityIds.empty() || region.entityIds.size()>1000)fail("A region exceeds the supported boundary-reference limit.");
         if(!identities.insert(region.entityIds).second)fail("Two sketch regions have ambiguous identities; adjust the intersecting geometry.");

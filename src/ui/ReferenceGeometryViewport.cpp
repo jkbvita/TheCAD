@@ -1,3 +1,4 @@
+#include "ui/SelectionAppearance.h"
 #include "ui/Theme.h"
 #include "ui/CadViewport.h"
 #include <AIS_Point.hxx>
@@ -46,7 +47,7 @@ void CadViewport::setDatums(const std::vector<DatumVisual>& datums){
         Handle(AIS_InteractiveObject) presentation;
         if(datum.geometry.kind==modeling::DatumKind::Point){auto marker=new AIS_Point(new Geom_CartesianPoint(datum.geometry.frame.Location()));marker->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_POINT,viewportColor(ThemeColor::Defined),7*devicePixelRatioF()));presentation=marker;m_context->Display(presentation,0,-1,Standard_False);}
         else{auto shape=new AIS_Shape(modeling::datumDisplayShape(datum.geometry,50));presentation=shape;
-            if(datum.geometry.kind==modeling::DatumKind::Plane){shape->SetTransparency(0.88);shape->Attributes()->SetFaceBoundaryDraw(Standard_True);m_context->Display(shape,AIS_Shaded,-1,Standard_False);}
+            if(datum.geometry.kind==modeling::DatumKind::Plane){styleReferencePlane(shape,false,false,int(m_datumPresentations.size()/2));m_context->Display(shape,AIS_Shaded,-1,Standard_False);}
             else{shape->SetWidth(1.5*devicePixelRatioF());shape->Attributes()->SetWireAspect(new Prs3d_LineAspect(viewportColor(ThemeColor::Defined),Aspect_TOL_DOTDASH,1.5*devicePixelRatioF()));m_context->Display(shape,AIS_WireFrame,-1,Standard_False);}
         }
         if(datum.geometry.kind!=modeling::DatumKind::Plane)presentation->SetZLayer(Graphic3d_ZLayerId_Topmost);
@@ -61,7 +62,7 @@ void CadViewport::setDatums(const std::vector<DatumVisual>& datums){
     updateDatumStyles();for(std::size_t i=0;i<m_datums.size();++i)if(m_sketchEditing||!m_datums[i].visible){m_context->Erase(m_datumPresentations[i*2],Standard_False);m_context->Erase(m_datumPresentations[i*2+1],Standard_False);}update();
 }
 void CadViewport::setSelectedDatum(const std::string& id){m_selectedDatum=id;updateDatumStyles();update();}
-void CadViewport::updateDatumStyles(){if(!isReady())return;for(std::size_t i=0;i<m_datums.size();++i){if(i*2>=m_datumPresentations.size())break;const auto& d=m_datums[i];const bool selected=d.id==m_selectedDatum||std::any_of(m_selection.items().begin(),m_selection.items().end(),[&](const auto& r){return !modeling::isTopology(r.kind)&&r.featureId==d.id;}),hovered=d.id==m_hoveredDatum;const Quantity_Color color=selected?Quantity_Color(0.55,0.80,1,Quantity_TOC_RGB):hovered?Quantity_Color(Quantity_NOC_ORANGE):viewportColor(d.geometry.kind==modeling::DatumKind::Plane?ThemeColor::Reference:ThemeColor::Defined);auto item=m_datumPresentations[i*2];item->SetColor(color);if(d.geometry.kind==modeling::DatumKind::Axis)item->Attributes()->SetWireAspect(new Prs3d_LineAspect(color,Aspect_TOL_DOTDASH,1.5*devicePixelRatioF()));if(d.geometry.kind==modeling::DatumKind::Plane)item->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(color,Aspect_TOL_SOLID,(selected?2:1)*devicePixelRatioF()));m_context->Redisplay(item,Standard_False);}}
+void CadViewport::updateDatumStyles(){if(!isReady())return;for(std::size_t i=0;i<m_datums.size();++i){if(i*2>=m_datumPresentations.size())break;const auto& d=m_datums[i];const bool selected=d.id==m_selectedDatum||std::any_of(m_selection.items().begin(),m_selection.items().end(),[&](const auto& r){return !modeling::isTopology(r.kind)&&r.featureId==d.id;}),hovered=d.id==m_hoveredDatum;const Quantity_Color color=selected?selectionBlue():hovered?hoverOrange():viewportColor(d.geometry.kind==modeling::DatumKind::Plane?ThemeColor::Reference:ThemeColor::Defined);auto item=m_datumPresentations[i*2];item->SetColor(color);if(d.geometry.kind==modeling::DatumKind::Axis)item->Attributes()->SetWireAspect(new Prs3d_LineAspect(color,Aspect_TOL_DOTDASH,1.5*devicePixelRatioF()));if(d.geometry.kind==modeling::DatumKind::Plane)styleReferencePlane(Handle(AIS_Shape)::DownCast(item),selected,hovered,int(i));m_context->Redisplay(item,Standard_False);}}
 std::vector<std::string> CadViewport::datumIdsAt(const QPointF& position){std::vector<std::string> ids;if(!isReady()||!m_selectionPolicy.allows(modeling::SelectionKind::ReferencePoint))return ids;for(const auto& d:m_datums)if(d.visible&&pick({{{},d.geometry,modeling::datumDisplayShape(d.geometry,50)}},{},position,m_view,m_pickingTolerance,devicePixelRatioF())>=0)ids.push_back(d.id);return ids;}
 std::string CadViewport::datumAt(const QPointF& position,std::optional<modeling::DatumKind> kind){if(!isReady()||!m_selectionPolicy.allows(modeling::SelectionKind::ReferencePoint))return {};std::vector<ReferencePickItem> items;std::vector<std::string> ids;for(const auto& d:m_datums)if(d.visible){items.push_back({{},d.geometry,modeling::datumDisplayShape(d.geometry,50)});ids.push_back(d.id);}const int index=pick(items,kind,position,m_view,m_pickingTolerance,devicePixelRatioF());return index<0?"":ids[std::size_t(index)];}
 void CadViewport::setReferenceCandidates(const std::vector<ReferencePickItem>& candidates,std::optional<modeling::DatumKind> kind){
@@ -85,7 +86,7 @@ int CadViewport::referenceCandidateAt(const QPointF& position){
 }
 void CadViewport::updateReferenceHover(const QPointF& position){
     if(!m_referenceHover.IsNull()){m_context->Remove(m_referenceHover,Standard_False);m_referenceHover.Nullify();}
-    if(!m_referenceCandidates.empty()){const int index=referenceCandidateAt(position);if(index>=0){m_referenceHover=new AIS_Shape(m_referenceCandidates[std::size_t(index)].shape);m_referenceHover->SetColor(Quantity_NOC_ORANGE);m_referenceHover->SetWidth(3*devicePixelRatioF());m_referenceHover->SetTransparency(0.6);m_referenceHover->SetZLayer(Graphic3d_ZLayerId_Topmost);m_context->Display(m_referenceHover,AIS_WireFrame,-1,Standard_False);}update();return;}
+    if(!m_referenceCandidates.empty()){const int index=referenceCandidateAt(position);if(index>=0){m_referenceHover=new AIS_Shape(selectionOutline(m_referenceCandidates[std::size_t(index)].shape));m_referenceHover->SetDisplayMode(AIS_WireFrame);m_referenceHover->SetColor(hoverOrange());m_referenceHover->SetWidth(3*devicePixelRatioF());m_referenceHover->SetZLayer(Graphic3d_ZLayerId_Topmost);m_context->Display(m_referenceHover,AIS_WireFrame,-1,Standard_False);}update();return;}
     const auto hover=datumAt(position);if(hover!=m_hoveredDatum){m_hoveredDatum=hover;updateDatumStyles();update();}
 }
 }

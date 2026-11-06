@@ -23,7 +23,7 @@ target_include_directories(thecad_occt SYSTEM INTERFACE "${OpenCASCADE_INCLUDE_D
 add_library(thecad_modeling STATIC src/modeling/Box.cpp src/modeling/Sketch.cpp src/modeling/PlanarRegions.cpp src/modeling/ReferencePlanes.cpp src/modeling/ConstraintSolver.cpp src/modeling/DimensionInference.cpp src/modeling/DimensionAnnotation.cpp src/modeling/SketchTools.cpp src/modeling/RelationCommands.cpp)
 set_target_properties(thecad_modeling PROPERTIES AUTOMOC OFF)
 target_sources(thecad_modeling PRIVATE src/modeling/FeaturePreview.cpp)
-target_sources(thecad_modeling PRIVATE src/modeling/ReferenceGeometry.cpp)
+target_sources(thecad_modeling PRIVATE src/modeling/ReferenceGeometry.cpp src/modeling/TopologyNames.cpp)
 target_sources(thecad_modeling PRIVATE src/modeling/Selection.cpp)
 target_include_directories(thecad_modeling PUBLIC src)
 target_link_libraries(thecad_modeling PRIVATE thecad_planegcs PUBLIC thecad_occt TKPrim TKTopAlgo TKBRep TKBO TKBool TKShHealing)
@@ -35,7 +35,7 @@ target_include_directories(thecad_document PUBLIC src)
 target_link_libraries(thecad_document PUBLIC thecad_modeling Qt6::Core)
 
 add_library(thecad_ui STATIC
-    src/ui/Theme.cpp src/ui/Theme.h
+    src/ui/Theme.cpp src/ui/Theme.h src/ui/SelectionAppearance.cpp src/ui/NavigationViewport.cpp
     src/ui/PropertyManagerPage.cpp
     src/ui/ReferenceGeometryViewport.cpp
     src/ui/SelectionViewport.cpp
@@ -59,6 +59,10 @@ endforeach()
 include(CTest)
 option(THECAD_GUI_TESTS "Run viewport tests (requires a desktop and OpenGL)" OFF)
 if(BUILD_TESTING)
+    add_executable(thecad_plane_topology_tests tests/PlaneTopologyTests.cpp)
+    set_target_properties(thecad_plane_topology_tests PROPERTIES AUTOMOC OFF)
+    target_link_libraries(thecad_plane_topology_tests PRIVATE thecad_document)
+    add_test(NAME document.plane-topology COMMAND thecad_plane_topology_tests)
     add_executable(thecad_selection_tests tests/SelectionTests.cpp)
     set_target_properties(thecad_selection_tests PROPERTIES AUTOMOC OFF)
     target_link_libraries(thecad_selection_tests PRIVATE thecad_document)
@@ -208,6 +212,12 @@ if(BUILD_TESTING)
         set_tests_properties(ui.viewport PROPERTIES
             TIMEOUT 60 LABELS "gui;opengl"
             ENVIRONMENT "THECAD_TEST_ARTIFACT_DIR=${CMAKE_BINARY_DIR}/test-artifacts")
+        add_executable(thecad_plane_navigation_tests tests/PlaneNavigationTests.cpp)
+        target_link_libraries(thecad_plane_navigation_tests PRIVATE thecad_ui Qt6::Test)
+        add_test(NAME ui.plane-navigation COMMAND thecad_plane_navigation_tests -o "${CMAKE_BINARY_DIR}/plane-navigation-results.txt,txt")
+        add_test(NAME ui.plane-navigation.hidpi COMMAND thecad_plane_navigation_tests -o "${CMAKE_BINARY_DIR}/plane-navigation-hidpi-results.txt,txt")
+        set_tests_properties(ui.plane-navigation ui.plane-navigation.hidpi PROPERTIES TIMEOUT 90 RUN_SERIAL TRUE LABELS "gui;planes;navigation;topology" ENVIRONMENT "THECAD_TEST_THEME=dark")
+        set_property(TEST ui.plane-navigation.hidpi APPEND PROPERTY ENVIRONMENT "QT_SCALE_FACTOR=1.5")
         add_executable(thecad_reference_manager_tests tests/ReferenceManagerTests.cpp)
         target_link_libraries(thecad_reference_manager_tests PRIVATE thecad_ui Qt6::Test)
         add_test(NAME ui.reference-managers COMMAND thecad_reference_manager_tests -o "${CMAKE_BINARY_DIR}/reference-managers-results.txt,txt")

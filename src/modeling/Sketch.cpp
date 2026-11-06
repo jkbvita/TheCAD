@@ -261,7 +261,7 @@ std::vector<Point2> orderedLineLoop(const Sketch& sketch)
 }
 
 TopoDS_Face profileFace(const Sketch& sketch);
-TopoDS_Face simpleProfileFace(const Sketch& sketch)
+TopoDS_Face simpleProfileFace(const Sketch& sketch,TopologyNames* names=nullptr)
 {
     validate(sketch);
     if(std::any_of(sketch.entities.begin(),sketch.entities.end(),[](const auto& e){return e.construction || e.kind==EntityKind::Point;})){
@@ -273,13 +273,14 @@ TopoDS_Face simpleProfileFace(const Sketch& sketch)
     }
     BRepBuilderAPI_MakeWire wire;
     if (sketch.entities.size() == 1 && sketch.entities.front().kind == EntityKind::Circle) {
-        wire.Add(circleEdge(sketch, sketch.entities.front()));
+        const auto edge=circleEdge(sketch,sketch.entities.front());wire.Add(edge);if(names)names->add(topologyKey("curve",{sketch.entities.front().id}),wire.Edge());
     } else {
         const auto points = sketch.entities.size() == 1
                 && sketch.entities.front().kind == EntityKind::Rectangle
             ? rectanglePoints(sketch.entities.front()) : orderedLineLoop(sketch);
         for (std::size_t index = 0; index < points.size(); ++index) {
             wire.Add(lineEdge(sketch, points[index], points[(index + 1) % points.size()]));
+            if(names){std::string source;if(sketch.entities.size()==1)source=sketch.entities.front().id+"/side/"+std::to_string(index);else for(const auto& e:sketch.entities)if((samePoint(e.first,points[index])&&samePoint(e.second,points[(index+1)%points.size()]))||(samePoint(e.second,points[index])&&samePoint(e.first,points[(index+1)%points.size()]))) {if(!source.empty())fail("Ambiguous sketch edge provenance.");source=e.id;}if(!source.empty())names->add(topologyKey("curve",{source}),wire.Edge());}
         }
     }
     if (!wire.IsDone()) {
@@ -525,7 +526,7 @@ std::vector<Contour> closedContours(const Sketch& sketch)
         const auto append=[&](const std::vector<std::size_t>& entities) {
             Sketch candidate;candidate.plane=sketch.plane;candidate.attachment=sketch.attachment;candidate.referencePlaneId=sketch.referencePlaneId;candidate.referencePlaneFrame=sketch.referencePlaneFrame;Contour contour;
             for(auto i:entities){candidate.entities.push_back(sketch.entities[i]);contour.entityIds.push_back(identifiers[i]);}
-            contour.face=simpleProfileFace(candidate);result.push_back(std::move(contour));
+            contour.face=simpleProfileFace(candidate,&contour.boundaryNames);result.push_back(std::move(contour));
         };
         // Traverse the left face of each directed edge in the planar embedding.
         // The clockwise successor of the reverse edge keeps a bounded face on
@@ -605,7 +606,7 @@ std::vector<Contour> closedContours(const Sketch& sketch)
             for(const auto& group:boundaries) {
                 Sketch boundary;boundary.plane=sketch.plane;boundary.attachment=sketch.attachment;boundary.referencePlaneId=sketch.referencePlaneId;boundary.referencePlaneFrame=sketch.referencePlaneFrame;
                 for(std::size_t index=0;index<identifiers.size();++index){const auto found=group.second.find(identifiers[index]);if(found!=group.second.end() && found->second==1){boundary.entities.push_back(sketch.entities[index]);result[i].entityIds.push_back(identifiers[index]);}}
-                const auto hole=simpleProfileFace(boundary);builder.Add(TopoDS::Wire(BRepTools::OuterWire(hole).Reversed()));
+                TopologyNames holeNames;const auto hole=simpleProfileFace(boundary,&holeNames);for(const auto& [key,list]:holeNames.images)for(const auto& edge:list)result[i].boundaryNames.add(key,edge);builder.Add(TopoDS::Wire(BRepTools::OuterWire(hole).Reversed()));
             }
             if(!builder.IsDone() || !BRepCheck_Analyzer(builder.Face()).IsValid())fail("The nested boundaries do not form a valid planar region.");
             result[i].face=builder.Face();
@@ -624,7 +625,7 @@ TopoDS_Face profileFace(const Sketch& sketch)
     for(const auto& region:closedContours(sketch))if(std::set<std::string>(region.entityIds.begin(),region.entityIds.end())==requested)return region.face;
     fail("Select one or more closed regions explicitly; open geometry and unrelated regions are not an extrusion boundary.");
 }
-std::vector<TopoDS_Shape> regionPrisms(const Sketch& sketch,const RegionReferences& references,double length,Direction direction)
+std::vector<TopoDS_Shape> regionPrisms(const Sketch& sketch,const RegionReferences& references,double length,Direction direction,TopologyNames* names=nullptr,const std::string& featureId={})
 {
     if(references.empty())fail("Select at least one closed region.");
     const auto regions=closedContours(sketch);std::set<std::set<std::string>> selected;std::vector<TopoDS_Shape> tools;
@@ -635,38 +636,39 @@ std::vector<TopoDS_Shape> regionPrisms(const Sketch& sketch,const RegionReferenc
         if(found==regions.end())fail("A selected region changed or disappeared. Reselect it explicitly.");
         BRepPrimAPI_MakePrism prism(found->face,sweepVector(sketch,length,direction),Standard_True);
         if(!prism.IsDone())fail("Cannot extrude a selected region.");
-        requireSolid(prism.Shape(),"A selected region did not produce a valid solid.");tools.push_back(prism.Shape());
+        requireSolid(prism.Shape(),"A selected region did not produce a valid solid.");if(names){auto regionIds=found->entityIds;regionIds.push_back(featureId);const auto regionKey=topologyKey("region",regionIds);names->add(topologyKey("start",{regionKey}),prism.FirstShape());names->add(topologyKey("end",{regionKey}),prism.LastShape());for(const auto& [key,edges]:found->boundaryNames.images)for(const auto& edge:edges)for(TopTools_ListIteratorOfListOfShape it(prism.Generated(edge));it.More();it.Next())if(it.Value().ShapeType()==TopAbs_FACE)names->add(topologyKey("side",{featureId,key}),it.Value());}tools.push_back(prism.Shape());
     }
     return tools;
 }
 }
-TopoDS_Shape makeExtrusions(const Sketch& sketch,const RegionReferences& references,double length,Direction direction,const TopoDS_Shape& base)
+TopoDS_Shape makeExtrusions(const Sketch& sketch,const RegionReferences& references,double length,Direction direction,const TopoDS_Shape& base,TopologyNames* names,const std::string& featureId)
 {
     try {
-        positiveLength(length,"Extrusion length");const auto prisms=regionPrisms(sketch,references,length,direction);
+        positiveLength(length,"Extrusion length");TopologyNames generated;const auto prisms=regionPrisms(sketch,references,length,direction,names?&generated:nullptr,featureId);
         TopTools_ListOfShape arguments,tools;
-        if(!base.IsNull()){requireSolids(base,"The current part must contain valid solids.");arguments.Append(BRepBuilderAPI_Copy(base,Standard_True,Standard_False).Shape());}
+        if(!base.IsNull()){requireSolids(base,"The current part must contain valid solids.");BRepBuilderAPI_Copy copy(base,Standard_True,Standard_False);arguments.Append(copy.Shape());if(names)*names=propagateTopology(*names,copy,copy.Shape());}
         else arguments.Append(prisms.front());
         for(std::size_t i=base.IsNull()?1:0;i<prisms.size();++i)tools.Append(prisms[i]);
-        if(tools.IsEmpty())return prisms.front();
+        if(names)for(const auto& [key,list]:generated.images)for(const auto& shape:list)names->add(key,shape);
+        if(tools.IsEmpty()){if(names)names->complete(prisms.front());return prisms.front();}
         BRepAlgoAPI_Fuse operation;operation.SetArguments(arguments);operation.SetTools(tools);operation.SetNonDestructive(Standard_True);operation.Build();
         if(!operation.IsDone() || operation.HasErrors())fail("Cannot combine the selected region extrusions.");
         operation.SimplifyResult();const auto result=operation.Shape();
-        requireSolids(result,"Selected extrusions did not produce valid solid bodies.");return result;
+        requireSolids(result,"Selected extrusions did not produce valid solid bodies.");if(names){*names=propagateTopology(*names,operation,result);names->complete(result);}return result;
     }catch(const Standard_Failure& e){fail(std::string("Cannot extrude selected regions: ")+e.GetMessageString());}
 }
-TopoDS_Shape makeCuts(const TopoDS_Shape& base,const Sketch& sketch,const RegionReferences& references,double depth,bool throughAll,Direction direction)
+TopoDS_Shape makeCuts(const TopoDS_Shape& base,const Sketch& sketch,const RegionReferences& references,double depth,bool throughAll,Direction direction,TopologyNames* names,const std::string& featureId)
 {
     try {
         requireSolids(base,"Cut requires existing valid solids.");positiveLength(depth,"Cut depth");
-        const auto privateBase=BRepBuilderAPI_Copy(base,Standard_True,Standard_False).Shape();
-        const auto prisms=regionPrisms(sketch,references,throughAll?throughLength(privateBase,sketch,direction):depth,direction);
+        BRepBuilderAPI_Copy copy(base,Standard_True,Standard_False);const auto privateBase=copy.Shape();if(names)*names=propagateTopology(*names,copy,privateBase);
+        TopologyNames generated;const auto prisms=regionPrisms(sketch,references,throughAll?throughLength(privateBase,sketch,direction):depth,direction,names?&generated:nullptr,featureId);if(names)for(const auto& [key,list]:generated.images)for(const auto& shape:list)names->add(key,shape);
         TopTools_ListOfShape arguments,tools;arguments.Append(privateBase);for(const auto& prism:prisms)tools.Append(prism);
         BRepAlgoAPI_Cut operation;operation.SetArguments(arguments);operation.SetTools(tools);operation.SetNonDestructive(Standard_True);operation.Build();
         if(!operation.IsDone() || operation.HasErrors())fail("Cannot cut the selected sketch regions.");
         operation.SimplifyResult();const auto result=operation.Shape();requireSolids(result,"The cut must leave at least one valid solid body.");
         if(volume(privateBase)-volume(result)<=std::max(volume(privateBase)*1e-10,1e-15))fail("Selected cuts do not remove material. Check depth, direction and sketch location.");
-        return result;
+        if(names){*names=propagateTopology(*names,operation,result);names->complete(result);}return result;
     }catch(const Standard_Failure& e){fail(std::string("Cannot cut selected regions: ")+e.GetMessageString());}
 }
 

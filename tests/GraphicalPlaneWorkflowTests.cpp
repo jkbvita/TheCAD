@@ -1,3 +1,4 @@
+#include "ui/SelectionAppearance.h"
 #include <QListWidget>
 #include "ui/MainWindow.h"
 #include "ui/CadViewport.h"
@@ -73,11 +74,11 @@ private:
     }
     void drag(CadViewport* viewport, QPoint first, QPoint second)
     {
-        QTest::mousePress(viewport, Qt::LeftButton, Qt::NoModifier, first);
+        QTest::mousePress(viewport, Qt::MiddleButton, Qt::NoModifier, first);
         QMouseEvent move(QEvent::MouseMove, second, viewport->mapToGlobal(second), Qt::NoButton,
-                         Qt::LeftButton, Qt::NoModifier);
+                         Qt::MiddleButton, Qt::NoModifier);
         QApplication::sendEvent(viewport, &move);
-        QTest::mouseRelease(viewport, Qt::LeftButton, Qt::NoModifier, second);
+        QTest::mouseRelease(viewport, Qt::MiddleButton, Qt::NoModifier, second);
         QApplication::processEvents();
     }
 private slots:
@@ -110,8 +111,8 @@ private slots:
                 QCOMPARE(viewport->selectedSolidFace(),selected);QCOMPARE(viewport->m_context->NbSelected(),1);
                 for(const auto type:{Prs3d_TypeOfHighlight_Selected,Prs3d_TypeOfHighlight_LocalSelected}){
                     const auto style=viewport->m_context->HighlightStyle(type);
-                    QVERIFY(style->Color().Distance(Quantity_Color(0.55,0.80,1.0,Quantity_TOC_RGB))<1e-6);
-                    QCOMPARE(style->DisplayMode(),int(AIS_Shaded));QCOMPARE(style->Transparency(),0.0);
+                    QVERIFY(style->Color().Distance(selectionBlue())<1e-6);
+                    QCOMPARE(style->DisplayMode(),int(AIS_Shaded));QVERIFY(std::abs(style->Transparency()-0.0)<1e-6);
                 }
                 const auto featureCount=window.document().features().size();const bool dirty=window.isWindowModified();
                 QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,pixel);
@@ -214,7 +215,7 @@ private slots:
             QApplication::sendEvent(viewport, &hover);
             QCOMPARE(viewport->m_hoveredPlane, std::optional<modeling::SketchPlane>(plane));
             const auto index = static_cast<std::size_t>(plane);
-            QVERIFY(std::abs(viewport->m_referencePlanes[index]->Transparency() - 0.88) < 1e-6);
+            QVERIFY(std::abs(viewport->m_referencePlanes[index]->Transparency() - 0.91) < 1e-6);
             QEvent leave(QEvent::Leave);
             QApplication::sendEvent(viewport, &leave);
             QVERIFY(!viewport->m_hoveredPlane);
@@ -248,7 +249,7 @@ private slots:
         QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, *selectedPixel);
         QCOMPARE(window.document().features().size(), std::size_t(3));
         QCOMPARE(viewport->m_selectedPlane, std::optional<modeling::SketchPlane>(modeling::SketchPlane::XY));
-        QVERIFY(std::abs(viewport->m_referencePlanes[0]->Transparency()-0.88) < 1e-6);
+        QVERIFY(std::abs(viewport->m_referencePlanes[0]->Transparency()-0.25) < 1e-6);
         command(window, "actionCreateSketch");
         QVERIFY(viewport->m_sketchEditing);
         QCOMPARE(window.document().features().size(), std::size_t(4));

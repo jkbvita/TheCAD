@@ -1,3 +1,5 @@
+#include <IntCurvesFace_ShapeIntersector.hxx>
+#include "ui/SelectionAppearance.h"
 #include "ui/CadViewport.h"
 #include <BRep_Tool.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
@@ -46,13 +48,14 @@ std::vector<SelectionRef> CadViewport::selection() const {
     }
     return result;
 }
-void CadViewport::beginTreeSelection(){if(m_dispatchingSelection)return;m_selection.clear();m_nativeSelections.clear();refreshNativeSelection();previewCandidate({});}
+void CadViewport::beginTreeSelection(){if(m_dispatchingSelection)return;m_treeBodySelected=false;m_selection.clear();m_nativeSelections.clear();refreshNativeSelection();previewCandidate({});}
 void CadViewport::setSelectionFilters(std::uint32_t filters,bool enabled){
     m_selectionPolicy={filters&modeling::FilterAll,enabled};
     previewCandidate({});m_hoveredEntity.clear();m_hoveredDimension.clear();m_hoveredRelation.clear();m_hoveredPoint.reset();m_hoveredDatum.clear();m_hoveredPlane.reset();
     updatePointPresentation();updateConstraintPresentation();updateDatumStyles();updatePlaneStyles();update();
 }
 void CadViewport::invalidateBodySelection(){
+    if(isReady())for(auto& item:m_selectionPresentations)m_context->Remove(item,Standard_False);m_selectionPresentations.clear();
     ++m_shapeGeneration;m_selection.invalidateTopology(m_shapeGeneration);m_nativeSelections.clear();m_selectedSolidFace=0;
     if(isReady())m_context->ClearSelected(Standard_False);
     previewCandidate({});if(m_selectOtherMenu)m_selectOtherMenu->close();
@@ -73,10 +76,10 @@ void CadViewport::prepareBodyPicking(){
     }
 }
 void CadViewport::clearSelection(){
-    m_selection.clear();m_nativeSelections.clear();m_selectedSolidFace=0;m_selectedDatum.clear();m_selectedPlane.reset();
+    m_treeBodySelected=false;m_selection.clear();m_nativeSelections.clear();m_selectedSolidFace=0;m_selectedDatum.clear();m_selectedPlane.reset();
     m_hoveredDatum.clear();m_hoveredPlane.reset();m_hoveredPoint.reset();m_hoveredEntity.clear();m_hoveredDimension.clear();m_hoveredRelation.clear();
     m_selectedPoint.reset();m_selectedEntities.clear();m_selectedDimensions.clear();m_selectedEntity.clear();m_selectedRelation.clear();
-    if(isReady())m_context->ClearSelected(Standard_False);
+    refreshNativeSelection();
     previewCandidate({});updateDatumStyles();updatePlaneStyles();updatePointPresentation();updateConstraintPresentation();
     emit selectionChanged();if(m_sketchEditing)emit sketchSelectionChanged();else {emit solidFaceSelected(0);emit datumSelected({});}update();
 }
@@ -84,7 +87,7 @@ std::vector<CadViewport::PickCandidate> CadViewport::selectionCandidates(const Q
     std::vector<PickCandidate> candidates;
     if(!isReady())return candidates;
     synchronizeSurface();
-    const auto append=[&](modeling::SelectionCandidate value,const TopoDS_Shape& shape=TopoDS_Shape(),const Handle(SelectMgr_EntityOwner)& owner={}){candidates.push_back({value,shape,owner});};
+    const auto append=[&](modeling::SelectionCandidate value,const TopoDS_Shape& shape=TopoDS_Shape(),const Handle(SelectMgr_EntityOwner)& owner={},const std::optional<gp_Pnt>& hit={}){candidates.push_back({value,shape,owner,hit});};
     if(m_sketchEditing && m_sketch){
         for(const auto& entry:modeling::sketchPoints(*m_sketch)){
             const double distance=QLineF(position,screenPoint(entry.second)).length();if(distance>m_pickingTolerance)continue;
@@ -114,11 +117,13 @@ std::vector<CadViewport::PickCandidate> CadViewport::selectionCandidates(const Q
                 if(type==TopAbs_VERTEX)kind=SelectionKind::Vertex;else if(type==TopAbs_EDGE)kind=SelectionKind::Edge;else if(type==TopAbs_FACE)kind=SelectionKind::Face;else if(type==TopAbs_SOLID)kind=SelectionKind::Body;else continue;
                 const auto& map=type==TopAbs_FACE?m_selectionFaces:type==TopAbs_EDGE?m_selectionEdges:type==TopAbs_VERTEX?m_selectionVertices:m_selectionBodies;const int index=map.FindIndex(shape);if(index<=0)continue;
                 if((type==TopAbs_EDGE&&m_seamEdges.count(index))||(type==TopAbs_VERTEX&&m_artificialVertices.count(index)))continue;
-                const auto hit=type==TopAbs_VERTEX?BRep_Tool::Pnt(TopoDS::Vertex(shape)):selector->PickedPoint(n);const double depth=gp_Vec(m_view->Camera()->Eye(),hit).Dot(gp_Vec(m_view->Camera()->Direction()));
-                int x,y;m_view->Convert(hit.X(),hit.Y(),hit.Z(),x,y);const double distance=QLineF(position,QPointF(x/devicePixelRatioF(),y/devicePixelRatioF())).length();
+                auto hit=type==TopAbs_VERTEX?BRep_Tool::Pnt(TopoDS::Vertex(shape)):selector->PickedPoint(n);bool onFace=false;
+                if(type==TopAbs_FACE||type==TopAbs_SOLID){double x,y,z,dx,dy,dz;m_view->ConvertWithProj(pixel.x(),pixel.y(),x,y,z,dx,dy,dz);IntCurvesFace_ShapeIntersector intersection;intersection.Load(shape,1e-7);intersection.Perform(gp_Lin(gp_Pnt(x,y,z),gp_Dir(dx,dy,dz)),-1e15,1e15);double nearest=1e100;for(int k=1;k<=intersection.NbPnt();++k){const auto p=intersection.Pnt(k);const double d=gp_Vec(m_view->Camera()->Eye(),p).Dot(gp_Vec(m_view->Camera()->Direction()));if(d>=0&&d<nearest){nearest=d;hit=p;onFace=true;}}}
+                const double depth=gp_Vec(m_view->Camera()->Eye(),hit).Dot(gp_Vec(m_view->Camera()->Direction()));
+                int x,y;m_view->Convert(hit.X(),hit.Y(),hit.Z(),x,y);const double distance=onFace?0:QLineF(position,QPointF(x/devicePixelRatioF(),y/devicePixelRatioF())).length();
                 if(distance>m_pickingTolerance)continue;
                 frontDepth=std::min(frontDepth,depth);
-                append({{kind,m_bodyFeatureId,{},modeling::PointRole::First,index,m_shapeGeneration},distance,depth},shape,owner);
+                append({{kind,m_bodyFeatureId,{},modeling::PointRole::First,index,m_shapeGeneration},distance,depth},shape,owner,hit);
             }
             // Tiny depth slack permits shared front edges/vertices. Back edges
             // remain unavailable on normal clicks even with an edge-only filter.
@@ -162,12 +167,16 @@ void CadViewport::previewCandidate(const std::optional<PickCandidate>& candidate
         }updatePointPresentation();updateConstraintPresentation();
     }
     if(!candidate||candidate->shape.IsNull()||!isReady())return;
-    m_selectionHover=new AIS_Shape(candidate->shape);m_selectionHover->SetColor(Quantity_NOC_ORANGE);m_selectionHover->SetWidth(3*devicePixelRatioF());
+    // Selection wins over hover: keep the complete selected surface blue.
+    const auto& reference=candidate->value.reference;
+    if(std::find(m_selection.items().begin(),m_selection.items().end(),reference)!=m_selection.items().end()
+       ||(reference.kind==SelectionKind::Face&&reference.index==m_selectedSolidFace)
+       ||(reference.kind==SelectionKind::OriginPlane&&m_selectedPlane&&reference.index==int(*m_selectedPlane))
+       ||(!modeling::isTopology(reference.kind)&&!m_selectedDatum.empty()&&reference.featureId==m_selectedDatum))return;
+    m_selectionHover=new AIS_Shape(selectionOutline(candidate->shape));m_selectionHover->SetDisplayMode(AIS_WireFrame);m_selectionHover->SetColor(hoverOrange());m_selectionHover->SetWidth(3*devicePixelRatioF());
     if(candidate->value.occluded)m_selectionHover->SetZLayer(Graphic3d_ZLayerId_Topmost);
-    m_selectionHover->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_POINT,Quantity_NOC_ORANGE,9*devicePixelRatioF()));
-    const bool face=candidate->value.reference.kind==SelectionKind::Face || candidate->value.reference.kind==SelectionKind::Body;
-    if(face)m_selectionHover->SetTransparency(0.35);
-    m_context->Display(m_selectionHover,face?AIS_Shaded:AIS_WireFrame,-1,Standard_False);update();
+    m_selectionHover->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_POINT,hoverOrange(),9*devicePixelRatioF()));
+    m_context->Display(m_selectionHover,AIS_WireFrame,-1,Standard_False);update();
 }
 void CadViewport::updateSelectionHover(const QPointF& point){
     auto candidates=selectionCandidates(point);previewCandidate(candidates.empty()?std::optional<PickCandidate>{}:candidates.front());
@@ -180,8 +189,14 @@ void CadViewport::updateSelectionHover(const QPointF& point){
 void CadViewport::refreshNativeSelection(){
     if(!isReady())return;m_context->ClearSelected(Standard_False);
     for(const auto& item:m_nativeSelections)if(std::find(m_selection.items().begin(),m_selection.items().end(),item.value.reference)!=m_selection.items().end()&&!item.owner.IsNull())m_context->AddOrRemoveSelected(item.owner,Standard_False);
+    for(auto& item:m_selectionPresentations)m_context->Remove(item,Standard_False);m_selectionPresentations.clear();
+    const auto display=[&](const TopoDS_Shape& shape){if(shape.IsNull())return;Handle(AIS_Shape) item=new AIS_Shape(shape);styleSelectedShape(item,devicePixelRatioF());const bool filled=shape.ShapeType()==TopAbs_FACE||shape.ShapeType()==TopAbs_SOLID||shape.ShapeType()==TopAbs_COMPOUND;m_context->Display(item,filled?AIS_Shaded:AIS_WireFrame,-1,Standard_False);m_selectionPresentations.push_back(item);};
+    if(m_treeBodySelected)display(m_shape);else for(const auto& item:m_nativeSelections)if(std::find(m_selection.items().begin(),m_selection.items().end(),item.value.reference)!=m_selection.items().end())display(item.shape);
+    if(m_selectedSolidFace>0&&m_nativeSelections.empty()){TopTools_IndexedMapOfShape faces;TopExp::MapShapes(m_shape,TopAbs_FACE,faces);if(m_selectedSolidFace<=faces.Extent())display(faces(m_selectedSolidFace));}
     updateDatumStyles();updatePlaneStyles();update();
 }
+void CadViewport::setTreeReferenceSelection(const std::vector<SelectionRef>& refs){if(m_dispatchingSelection)return;m_selection.clear();for(const auto& ref:refs)m_selection.select(ref,true);refreshNativeSelection();}
+void CadViewport::setTreeBodySelected(bool selected){m_treeBodySelected=selected;refreshNativeSelection();}
 void CadViewport::selectCandidate(const PickCandidate& item,bool toggle){
     const QScopedValueRollback<bool> dispatch(m_dispatchingSelection,true);
     const auto& ref=item.value.reference;

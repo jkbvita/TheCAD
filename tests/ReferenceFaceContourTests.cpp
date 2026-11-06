@@ -54,7 +54,7 @@ int main(int argc,char** argv){QCoreApplication app(argc,argv);try{
  s.entities={{EntityKind::Circle,{0,0},{},2,"circle"}};auto id=document.addSketch(s);
  document.addExtrude(id,{"circle"},3,Direction::Positive);require(volume(document.shape())>volume(base.shape()),"Face extrusion");
  auto path=directory.filePath("face.thepart");document.save(path);auto loaded=PartDocument::load(path);require(loaded.features()[2].sketch.attachment.has_value(),"Attachment lost");require(std::abs(volume(loaded.shape())-volume(document.shape()))<1e-6,"Face regeneration");
- auto changed=loaded.features()[1];changed.length=16;reject([&]{loaded.replaceFeature(changed);});require(loaded.features()[1].length==15,"Failed upstream edit changed document");
+ auto changed=loaded.features()[1];changed.length=16;loaded.replaceFeature(changed);require(loaded.features()[1].length==16,"Named face support must follow the upstream extrusion");
  auto cut=base;auto cutId=cut.addSketch(s);cut.addCut(cutId,{"circle"},3,true,Direction::Negative);require(volume(cut.shape())<volume(base.shape()),"Face through cut");
  auto tampered=loaded.features()[2];tampered.sketch.attachment->frame.SetLocation(gp_Pnt(123,456,789));reject([&]{loaded.replaceFeature(tampered);});
  }

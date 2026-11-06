@@ -1,6 +1,7 @@
 #pragma once
 
 #include <TopoDS_Shape.hxx>
+#include "modeling/TopologyNames.h"
 #include <TopoDS_Face.hxx>
 #include <string>
 #include <gp_Ax3.hxx>
@@ -55,6 +56,7 @@ struct FaceAttachment {
     int faceIndex = 0; // One-based OCCT face map in the strictly validated source body.
     std::string sourceSignature;
     gp_Ax3 frame;
+    std::string topologyName;
 };
 struct Sketch {
     SketchPlane plane = SketchPlane::XY;
@@ -93,6 +95,7 @@ using RegionReferences = std::vector<std::vector<std::string>>;
 struct Contour {
     std::vector<std::string> entityIds; // Persistent boundary references, including derived fragments.
     TopoDS_Face face;
+    TopologyNames boundaryNames;
 };
 
 // Right-handed planes: XY=(X,Y,+Z), XZ=(X,Z,-Y), YZ=(Y,Z,+X).
@@ -111,8 +114,8 @@ bool contourContains(const Contour& contour, SketchPlane plane, Point2 point);
 bool contourContains(const Contour& contour, const Sketch& sketch, Point2 point);
 TopoDS_Shape makeExtrusion(const Sketch& sketch, double length, Direction direction,
                           const TopoDS_Shape& base = {});
-TopoDS_Shape makeExtrusions(const Sketch& sketch,const RegionReferences& regions,double length,Direction direction,const TopoDS_Shape& base = {});
-TopoDS_Shape makeCuts(const TopoDS_Shape& base,const Sketch& sketch,const RegionReferences& regions,double depth,bool throughAll,Direction direction);
+TopoDS_Shape makeExtrusions(const Sketch& sketch,const RegionReferences& regions,double length,Direction direction,const TopoDS_Shape& base = {},TopologyNames* names=nullptr,const std::string& featureId={});
+TopoDS_Shape makeCuts(const TopoDS_Shape& base,const Sketch& sketch,const RegionReferences& regions,double depth,bool throughAll,Direction direction,TopologyNames* names=nullptr,const std::string& featureId={});
 TopoDS_Shape makeCut(const TopoDS_Shape& base, const Sketch& sketch, double depth,
                     bool throughAll, Direction direction);
 

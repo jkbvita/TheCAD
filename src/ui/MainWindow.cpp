@@ -368,6 +368,7 @@ MainWindow::MainWindow(QWidget* parent)
     connect(reset, &QAction::triggered, m_viewport, &CadViewport::resetView);
     viewMenu->addAction(fit);
     viewMenu->addAction(reset);
+    auto* normal=toolbar->addAction(commandIcon("Plane"),"Normal To");normal->setObjectName("actionNormalTo");normal->setShortcut(QKeySequence(Qt::CTRL|Qt::Key_8));viewMenu->addAction(normal);connect(normal,&QAction::triggered,m_viewport,&CadViewport::normalTo);
     auto* hideShow=viewMenu->addMenu("Hide/Show");auto* relationVisibility=hideShow->addAction("Sketch Relations");relationVisibility->setObjectName("actionShowSketchRelations");relationVisibility->setCheckable(true);relationVisibility->setChecked(true);
     connect(relationVisibility,&QAction::toggled,m_viewport,&CadViewport::showSketchRelations);
     insertMenu->addAction(m_createSketch);
@@ -571,7 +572,7 @@ MainWindow::MainWindow(QWidget* parent)
     auto* cancelFeature = new QAction("Cancel feature", this);
     cancelFeature->setObjectName("actionCancelFeature");cancelFeature->setShortcut(QKeySequence(Qt::Key_Escape));
     addAction(cancelFeature);connect(cancelFeature,&QAction::triggered,this,[this]{if(m_referenceDraft)finishReferenceGeometry(false);else finishOperation(false);});
-    statusBar()->showMessage("Orbit: left drag | Pan: middle / right drag | Zoom: wheel | Fit: F");
+    statusBar()->showMessage("Orbit: middle drag | Pan: Ctrl + middle | Zoom: Shift + middle / wheel | Normal To: Ctrl+8 | Fit: F");
     m_dimensions = new QLabel(this);
     statusBar()->addPermanentWidget(m_dimensions);
     setWindowModified(true);
@@ -866,8 +867,10 @@ void MainWindow::selectionChanged()
             m_viewport->showReferencePlanes(false);
             if (feature && feature->kind == document::FeatureKind::Sketch) m_viewport->setSketch(feature->sketch);
             if(feature&&feature->kind==document::FeatureKind::ReferenceGeometry)m_viewport->setSelectedDatum(feature->id);
+            m_viewport->setTreeBodySelected(feature&&document::isSolidFeature(feature->kind));
         }
     }
+    if(m_tree->selectedItems().size()>1){std::vector<modeling::SelectionRef> refs;for(const auto* node:m_tree->selectedItems()){const auto id=node->data(0,Qt::UserRole).toString();using K=modeling::SelectionKind;if(id=="origin:XY"||id=="origin:XZ"||id=="origin:YZ")refs.push_back({K::OriginPlane,{},{},modeling::PointRole::First,id=="origin:XY"?0:id=="origin:XZ"?1:2});else for(const auto& f:m_document.features())if(f.id==id.toStdString()&&f.kind==document::FeatureKind::ReferenceGeometry)refs.push_back({f.datum.kind==modeling::DatumKind::Plane?K::ReferencePlane:f.datum.kind==modeling::DatumKind::Axis?K::ReferenceAxis:K::ReferencePoint,f.id});}m_viewport->setTreeReferenceSelection(refs);}
     updateEntityList();
     updateActions();
 }

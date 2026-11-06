@@ -14,6 +14,7 @@ struct MainWindow::ReferenceDraft {
     PropertyManagerPage* page=nullptr;
     QComboBox* method=nullptr;
     QCheckBox* automatic=nullptr;
+    QComboBox* offsetConstraint=nullptr;
     QPushButton* reverse=nullptr;
     QFormLayout* referenceForm=nullptr;
     std::array<QComboBox*,3> references{};
