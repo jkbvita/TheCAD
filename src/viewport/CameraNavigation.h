@@ -23,6 +23,7 @@ public:
     void move(const Handle(V3d_View) & view, QPointF logical, QPoint physical, QSize viewport,
               std::optional<gp_Pnt> zoomDepth = {});
     static void zoom(const Handle(V3d_View) & view, QPoint pixel, double factor, gp_Pnt depth);
+    static void zoomCentered(const Handle(V3d_View) & view, double factor);
     void stop() { m_mode = Mode::None; }
     Mode mode() const { return m_mode; }
     Qt::MouseButton button() const

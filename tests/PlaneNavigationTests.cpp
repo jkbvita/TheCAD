@@ -72,14 +72,41 @@ private slots:
         v->m_graphics.view()->SetProj(1,0,0);QTest::mouseClick(v,Qt::LeftButton,Qt::NoModifier,{400,300});QCOMPARE(v->m_sketch->entities.size(),count);action(w,"actionNormalTo");
         const auto eye=v->m_graphics.view()->Camera()->Eye(),target=v->m_graphics.view()->Camera()->Center();drag(v,Qt::LeftButton,Qt::NoModifier,{400,300},{480,330});QVERIFY(eye.Distance(v->m_graphics.view()->Camera()->Eye())<1e-10);QVERIFY(target.Distance(v->m_graphics.view()->Camera()->Center())<1e-10);QVERIFY(w.errors.isEmpty());w.setWindowModified(false);w.close();
     }
+    void wheelDirectionAndAnchoring_data(){
+        QTest::addColumn<bool>("perspective");QTest::addColumn<bool>("sketch");QTest::addColumn<bool>("pixelDelta");
+        for(bool perspective:{false,true})for(bool sketch:{false,true})for(bool pixelDelta:{false,true}){
+            const auto name=QString("%1-%2-%3").arg(perspective?"perspective":"orthographic",sketch?"sketch":"part",pixelDelta?"pixel":"angle");
+            QTest::newRow(qPrintable(name))<<perspective<<sketch<<pixelDelta;
+        }
+    }
+    void wheelDirectionAndAnchoring(){
+        QFETCH(bool,perspective);QFETCH(bool,sketch);QFETCH(bool,pixelDelta);
+        PlaneWindow w;w.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&w));auto* v=w.findChild<CadViewport*>();QTRY_VERIFY(v->isReady());
+        v->setShape(makeBox(60,40,20));v->resetView();
+        if(sketch){Sketch s;s.entities={{EntityKind::Line,{15,12},{35,12},1,"line"}};v->beginSketch(s);v->selectSketchTool();}
+        const auto camera=v->m_graphics.view()->Camera();const gp_Pnt fixed(15,12,sketch?0:20);
+        v->m_graphics.view()->SetAt(30,20,fixed.Z());v->m_graphics.view()->SetProj(0,0,1);v->m_graphics.view()->SetUp(0,1,0);camera->SetScale(140);camera->SetProjectionType(perspective?Graphic3d_Camera::Projection_Perspective:Graphic3d_Camera::Projection_Orthographic);
+        QSignalSpy changed(v,&CadViewport::sketchChanged);Handle(Graphic3d_Camera) original=new Graphic3d_Camera(camera);
+        const auto wheel=[&](QPoint position,int direction){QWheelEvent event(position,v->mapToGlobal(position),pixelDelta?QPoint(0,40*direction):QPoint(),pixelDelta?QPoint():QPoint(0,120*direction),Qt::NoButton,Qt::NoModifier,Qt::NoScrollPhase,false);QApplication::sendEvent(v,&event);};
+        // Up zooms out without moving the target, regardless of cursor location.
+        wheel({v->width()/5,v->height()/4},1);QVERIFY(camera->Scale()>original->Scale());QVERIFY(camera->Center().Distance(original->Center())<1e-10);
+        Handle(Graphic3d_Camera) first=new Graphic3d_Camera(camera);camera->Copy(original);
+        wheel({v->width()*4/5,v->height()*3/4},1);QVERIFY(camera->Eye().Distance(first->Eye())<1e-10);QVERIFY(camera->Center().Distance(first->Center())<1e-10);QCOMPARE(camera->Scale(),first->Scale());
+        // Down zooms in while keeping the model point under the cursor fixed.
+        camera->Copy(original);const auto cursor=project(v,fixed);QVERIFY((cursor-v->rect().center()).manhattanLength()>20);wheel(cursor,-1);
+        QVERIFY(camera->Scale()<original->Scale());QVERIFY((project(v,fixed)-cursor).manhattanLength()<3);QVERIFY(camera->Direction().IsEqual(original->Direction(),1e-12));QVERIFY(camera->Up().IsEqual(original->Up(),1e-12));QCOMPARE(camera->ProjectionType(),original->ProjectionType());
+        const auto scale=camera->Scale();const auto eye=camera->Eye();wheel(cursor,0);QCOMPARE(camera->Scale(),scale);QVERIFY(camera->Eye().Distance(eye)<1e-10);
+        QCOMPARE(changed.count(),0);if(sketch){QCOMPARE(v->m_sketch->entities.size(),std::size_t(1));QCOMPARE(v->m_sketch->entities.front().first.x,15.0);}
+        QVERIFY(w.errors.isEmpty());w.setWindowModified(false);w.close();
+    }
     void cursorZoomAndPickedPivot(){
         PlaneWindow w;w.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&w));auto* v=w.findChild<CadViewport*>();QTRY_VERIFY(v->isReady());v->setShape(makeBox(60,40,20));v->resetView();const gp_Pnt vertex(60,0,20);const auto pixel=project(v,vertex);QTest::mouseClick(v,Qt::MiddleButton,Qt::NoModifier,pixel);QVERIFY(v->m_camera.anchor());QVERIFY(v->m_camera.anchor()->Distance(vertex)<1e-6);const auto anchor=project(v,vertex);drag(v,Qt::MiddleButton,Qt::NoModifier,{8,8},{70,45});QVERIFY((project(v,vertex)-anchor).manhattanLength()<3);
-        v->m_graphics.view()->SetAt(0,0,0);v->m_graphics.view()->SetProj(0,0,1);v->m_graphics.view()->SetUp(0,1,0);v->m_graphics.view()->Camera()->SetScale(150);const gp_Pnt fixed(15,12,0);const auto cursor=project(v,fixed);QWheelEvent wheel(cursor,v->mapToGlobal(cursor),{},QPoint(0,120),Qt::NoButton,Qt::NoModifier,Qt::NoScrollPhase,false);QApplication::sendEvent(v,&wheel);QVERIFY((project(v,fixed)-cursor).manhattanLength()<3);w.setWindowModified(false);w.close();
+        v->m_graphics.view()->SetAt(0,0,0);v->m_graphics.view()->SetProj(0,0,1);v->m_graphics.view()->SetUp(0,1,0);v->m_graphics.view()->Camera()->SetScale(150);const gp_Pnt fixed(15,12,0);const auto cursor=project(v,fixed);QWheelEvent wheel(cursor,v->mapToGlobal(cursor),{},QPoint(0,-120),Qt::NoButton,Qt::NoModifier,Qt::NoScrollPhase,false);QApplication::sendEvent(v,&wheel);QVERIFY((project(v,fixed)-cursor).manhattanLength()<3);w.setWindowModified(false);w.close();
     }
     void perspectiveZoomKeepsCursorAnchor(){
         PlaneWindow w;w.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&w));auto* v=w.findChild<CadViewport*>();QTRY_VERIFY(v->isReady());
         v->setShape(makeBox(60,40,20));v->resetView();v->m_graphics.view()->Camera()->SetProjectionType(Graphic3d_Camera::Projection_Perspective);const gp_Pnt point(25,15,20);const auto cursor=project(v,point);
-        QWheelEvent wheel(cursor,v->mapToGlobal(cursor),{},QPoint(0,120),Qt::NoButton,Qt::NoModifier,Qt::NoScrollPhase,false);QApplication::sendEvent(v,&wheel);QVERIFY((project(v,point)-cursor).manhattanLength()<3);
+        QWheelEvent wheel(cursor,v->mapToGlobal(cursor),{},QPoint(0,-120),Qt::NoButton,Qt::NoModifier,Qt::NoScrollPhase,false);QApplication::sendEvent(v,&wheel);QVERIFY((project(v,point)-cursor).manhattanLength()<3);
         drag(v,Qt::MiddleButton,Qt::ShiftModifier,cursor,cursor-QPoint(0,30));QVERIFY((project(v,point)-cursor).manhattanLength()<3);QCOMPARE(v->m_graphics.view()->Camera()->ProjectionType(),Graphic3d_Camera::Projection_Perspective);w.setWindowModified(false);w.close();
     }
     void hoverOutlineAndBlueFillOnGrayModel(){

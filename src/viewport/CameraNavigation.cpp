@@ -49,6 +49,13 @@ void CameraNavigation::move(const Handle(V3d_View) & view, QPointF logical, QPoi
     m_physical = physical;
     m_position = logical;
 }
+void CameraNavigation::zoomCentered(const Handle(V3d_View) & view, double factor)
+{
+    if (view.IsNull() || !std::isfinite(factor) || factor <= 0)
+        return;
+    const auto camera = view->Camera();
+    camera->SetScale(std::clamp(camera->Scale() / factor, 1e-6, 1e12));
+}
 void CameraNavigation::zoom(const Handle(V3d_View) & view, QPoint pixel, double factor,
                             gp_Pnt depth)
 {

@@ -174,7 +174,7 @@ private slots:
             QApplication::sendEvent(viewport.get(), &event);
             const double scale = viewport->m_graphics.view()->Camera()->Scale();
             if (delta > 0) {
-                QVERIFY(scale < before);
+                QVERIFY(scale > before);
             } else {
                 QVERIFY(std::abs(scale - before) < before * 1e-10);
             }

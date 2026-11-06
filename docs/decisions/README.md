@@ -48,6 +48,8 @@ approved scope do not need repeated approval.
 
 - [0028: Modular application and viewport architecture](0028-modular-architecture.md) — owner-approved session, storage, rendering and interaction boundaries.
 
+- [0029: Wheel direction and asymmetric zoom anchoring](0029-directional-wheel-zoom.md) — owner-requested wheel-up/out, wheel-down/in and centered zoom-out.
+
 ## Pending owner decisions
 
 - Resilient face references beyond the approved conservative planar-face strategy.

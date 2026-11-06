@@ -32,7 +32,8 @@ adds viewport selections; the FeatureManager supports multiple selections.
 10. Middle drag to orbit. Middle-click a vertex/edge/face, then middle-drag to check
     rotation around the picked geometry. Left drag must not rotate the camera.
 11. Ctrl + middle drag pans without rotation.
-12. Shift + middle drag zooms; the wheel zooms toward the cursor. Try 150% scaling.
+12. Shift + middle drag zooms. Wheel up zooms out around the viewport center;
+    wheel down zooms in toward the cursor. Try 150% scaling.
 13. Enter a 2D sketch, draw, orbit into 3D, pan/zoom and continue drawing. All new
     geometry stays on the original sketch plane. Navigation must not create or
     modify entities, constraints or dimensions. Near-edge-on drawing must reject

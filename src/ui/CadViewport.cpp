@@ -1422,8 +1422,10 @@ void CadViewport::wheelEvent(QWheelEvent* event)
     resetSketchInference();
     const double steps = !event->angleDelta().isNull()
         ? event->angleDelta().y() / 120.0 : event->pixelDelta().y() / 40.0;
-    const double factor = std::pow(1.15, std::clamp(steps, -10.0, 10.0));
-    zoomToward(event->position(),factor);
+    if(steps==0){event->accept();return;}
+    const double factor = std::pow(1.15, -std::clamp(steps, -10.0, 10.0));
+    if(factor>1)zoomToward(event->position(),factor);
+    else viewport::CameraNavigation::zoomCentered(m_graphics.view(),factor);
     m_cameraAnnotationsDirty=true;
     update();
     event->accept();
