@@ -4,6 +4,9 @@
 #include "modeling/DimensionAnnotation.h"
 #include <QInputDialog>
 #include "ui/MainWindow.h"
+#include "ui/widgets/FeatureTreePresenter.h"
+#include "ui/widgets/CommandBar.h"
+#include "application/FeatureOperation.h"
 #include "ui/CadViewport.h"
 #include "ui/PropertyManagerPage.h"
 #include "ui/ReferenceGeometryUi.h"
@@ -63,93 +66,6 @@
 
 namespace thecad::ui {
 namespace {
-// Original line-art icons, painted at device-independent resolution.
-QIcon commandIcon(const QString& name)
-{
-    QPixmap image(64, 64);
-    image.fill(Qt::transparent);
-    QPainter painter(&image);
-    painter.setRenderHint(QPainter::Antialiasing);
-    painter.scale(2.0, 2.0);
-    painter.setPen(QPen(themeColor(ThemeColor::Accent), 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-    painter.setBrush(Qt::NoBrush);
-    if(name.contains("Point")){painter.setBrush(themeColor(ThemeColor::Accent));painter.drawEllipse(QPointF(16,16),3.5,3.5);}
-    else if(name.contains("Polygon"))painter.drawPolygon(QPolygonF{QPointF(16,4),QPointF(26,10),QPointF(26,22),QPointF(16,28),QPointF(6,22),QPointF(6,10)});
-    else if(name.contains("Centerline") || name.contains("Construction")){painter.setPen(QPen(themeColor(ThemeColor::Accent),1.6,Qt::DashDotLine));painter.drawLine(QPointF(4,27),QPointF(28,5));}
-    else if (name.contains("Circle")) painter.drawEllipse(QRectF(6, 6, 20, 20));
-    else if (name.contains("Rectangle")) painter.drawRect(QRectF(5, 8, 22, 16));
-    else if (name.contains("Line")) {
-        painter.drawLine(QPointF(5, 26), QPointF(27, 6));
-        painter.setBrush(Qt::white);
-        painter.drawRect(QRectF(3, 24, 4, 4));
-        painter.drawRect(QRectF(25, 4, 4, 4));
-    } else if (name.contains("Arc")) {
-        painter.drawArc(QRectF(5, 5, 22, 22), 15 * 16, 270 * 16);
-    } else if (name.contains("Spline")) {
-        QPainterPath path(QPointF(4, 25));
-        path.cubicTo(12, -10, 17, 43, 28, 5);
-        painter.drawPath(path);
-    } else if (name.contains("Sketch") || name.contains("Exit")) {
-        painter.drawRect(QRectF(5, 6, 19, 21));
-        painter.setPen(QPen(QColor("#d49024"), 2.4, Qt::SolidLine, Qt::RoundCap));
-        painter.drawLine(QPointF(13, 22), QPointF(28, 5));
-    } else if (name.contains("Origin")) {
-        painter.setPen(QPen(QColor("#b83b42"), 1.6));
-        painter.drawLine(5, 25, 27, 25); painter.drawLine(8, 28, 8, 4);
-        painter.setBrush(QColor("#b83b42")); painter.drawEllipse(QPointF(8, 25), 2.5, 2.5);
-    } else if(name.contains("Axis")){
-        painter.setPen(QPen(themeColor(ThemeColor::Accent),1.6,Qt::DashDotLine));painter.drawLine(5,27,26,5);painter.setPen(QPen(themeColor(ThemeColor::Accent),1.6));painter.drawLine(26,5,25,13);painter.drawLine(26,5,18,6);
-    } else if (name.contains("Plane")) {
-        painter.drawPolygon(QPolygonF{QPointF(4, 11), QPointF(23, 5), QPointF(28, 23), QPointF(9, 28)});
-    } else if (name.contains("Extrude") || name.contains("Part")) {
-        painter.drawPolygon(QPolygonF{QPointF(6, 10), QPointF(20, 5), QPointF(27, 11), QPointF(13, 17)});
-        painter.drawPolygon(QPolygonF{QPointF(6, 10), QPointF(13, 17), QPointF(13, 28), QPointF(6, 21)});
-        painter.drawPolygon(QPolygonF{QPointF(13, 17), QPointF(27, 11), QPointF(27, 22), QPointF(13, 28)});
-        if (name.contains("Cut")) { painter.setPen(QPen(QColor("#b83b42"), 2)); painter.drawLine(18, 12, 24, 19); }
-    } else if (name.contains("Select")) {
-        painter.drawPolygon(QPolygonF{QPointF(8, 4), QPointF(8, 26), QPointF(14, 20), QPointF(20, 29), QPointF(24, 27), QPointF(18, 18), QPointF(27, 17)});
-    } else {
-        painter.drawRect(QRectF(6, 7, 20, 18));
-        painter.drawLine(8, 24, 25, 8);
-        painter.drawEllipse(QPointF(16, 16), 3, 3);
-    }
-    return QIcon(image);
-}
-
-QWidget* commandGroup(QHBoxLayout* row, const QString& name, QGridLayout*& grid)
-{
-    auto* group = new QWidget;
-    auto* column = new QVBoxLayout(group);
-    column->setContentsMargins(6, 0, 6, 0);
-    column->setSpacing(1);
-    grid = new QGridLayout;
-    grid->setContentsMargins(0, 0, 0, 0);
-    grid->setHorizontalSpacing(2);
-    grid->setVerticalSpacing(1);
-    column->addLayout(grid);
-    auto* caption = new QLabel(name);
-    caption->setAlignment(Qt::AlignCenter);
-    caption->setObjectName("secondaryCaption");
-    column->addWidget(caption);
-    row->addWidget(group);
-    auto* separator = new QFrame;
-    separator->setFrameShape(QFrame::VLine);
-
-    row->addWidget(separator);
-    return group;
-}
-
-QToolButton* commandButton(QAction* action, QGridLayout* grid, int row, int column, bool large = false)
-{
-    auto* button = new QToolButton;
-    button->setDefaultAction(action);
-    button->setToolButtonStyle(large ? Qt::ToolButtonTextUnderIcon : Qt::ToolButtonTextBesideIcon);
-    button->setIconSize(large ? QSize(28, 28) : QSize(18, 18));
-    button->setAutoRaise(true);
-    button->setAttribute(Qt::WA_AlwaysShowToolTips);
-    grid->addWidget(button, row, column, large ? 3 : 1, 1);
-    return button;
-}
 QDoubleSpinBox* number(QFormLayout* layout, const QString& label, double value, bool positive = false)
 {
     auto* editor = new QDoubleSpinBox;
@@ -208,11 +124,11 @@ struct MainWindow::OperationDraft {
 };
 
 MainWindow::MainWindow(QWidget* parent)
-    : QMainWindow(parent), m_document(document::PartDocument::createEmpty())
+    : QMainWindow(parent), m_session(document::PartDocument::createEmpty())
 {
     ThemeManager::instance();
     resize(1200, 800);
-    m_viewport = new CadViewport(m_document.shape(), this);
+    m_viewport = new CadViewport(m_session.document().shape(), this);
     setCentralWidget(m_viewport);
 
     auto* fileMenu = menuBar()->addMenu("&File");
@@ -407,6 +323,7 @@ MainWindow::MainWindow(QWidget* parent)
     auto* historySplitter = new QSplitter(Qt::Vertical);
     historySplitter->setChildrenCollapsible(false);
     m_tree = new QTreeWidget;
+    m_treePresenter=std::make_unique<FeatureTreePresenter>(*m_tree);
     m_tree->setObjectName("featureTree");
     m_tree->setHeaderHidden(true);
     m_tree->setMinimumSize(240, 170);
@@ -485,22 +402,22 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_entities, &QListWidget::itemSelectionChanged, this, [this] {
         updateActions();
         updateEntityProperties();
-        if (m_editSketch && m_entities->currentRow() >= 0)
-            m_viewport->selectSketchEntity(QString::fromStdString(m_editSketch->entities.at(std::size_t(m_entities->currentRow())).id));
+        if (m_session.editingSketch() && m_entities->currentRow() >= 0)
+            m_viewport->selectSketchEntity(QString::fromStdString(m_session.editingSketch()->entities.at(std::size_t(m_entities->currentRow())).id));
     });
     connect(m_applyProperties, &QPushButton::clicked, this, [this] {
-        if (!m_editSketch || m_entities->currentRow() < 0) return;
-        auto entity = m_editSketch->entities.at(std::size_t(m_entities->currentRow()));
+        if (!m_session.editingSketch() || m_entities->currentRow() < 0) return;
+        auto entity = m_session.editingSketch()->entities.at(std::size_t(m_entities->currentRow()));
         entity.first = {m_propertyFirstX->value(), m_propertyFirstY->value()};
         if (entity.kind == modeling::EntityKind::Circle) entity.radius = m_propertyRadius->value();
         else if(entity.kind!=modeling::EntityKind::Point)entity.second = {m_propertySecondX->value(), m_propertySecondY->value()};
         applySketchEntityEdit(entity);
     });
     connect(m_viewport, &CadViewport::sketchEntitySelected, this, [this](const QString& id) {
-        if (!m_editSketch) return;
+        if (!m_session.editingSketch()) return;
         constraintEntitySelected(id);
-        for (std::size_t i = 0; i < m_editSketch->entities.size(); ++i) {
-            if (m_editSketch->entities[i].id == id.toStdString()) {
+        for (std::size_t i = 0; i < m_session.editingSketch()->entities.size(); ++i) {
+            if (m_session.editingSketch()->entities[i].id == id.toStdString()) {
                 const QSignalBlocker blocker(m_entities);m_entities->setCurrentRow(int(i));
                 updateEntityProperties();updateActions();
                 return;
@@ -529,32 +446,32 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_viewport,&CadViewport::dimensionPlacementRequested,this,[this](modeling::Point2 point){placeSmartDimension(point);});
     connect(m_viewport,&CadViewport::dimensionReferencePicked,this,[this](const QString& id,int role){smartReferencePicked(id,role);});
     connect(m_viewport,&CadViewport::dimensionPointerMoved,this,[this](modeling::Point2 point){updateSmartPreview(point);});
-    connect(m_viewport,&CadViewport::dimensionVariantRequested,this,[this](bool radius){if(m_smartDimension && !m_smartDimension->editor){m_smartDimension->radius=radius;if(m_smartDimension->pending)updateSmartPreview(modeling::dimensionAnnotationPosition(*m_editSketch,*m_smartDimension->pending));}});
-    connect(m_viewport,&CadViewport::dimensionEditRequested,this,[this](const QString& id){if(m_editSketch)editSmartDimension(id.toStdString());});
+    connect(m_viewport,&CadViewport::dimensionVariantRequested,this,[this](bool radius){if(m_smartDimension && !m_smartDimension->editor){m_smartDimension->radius=radius;if(m_smartDimension->pending)updateSmartPreview(modeling::dimensionAnnotationPosition(*m_session.editingSketch(),*m_smartDimension->pending));}});
+    connect(m_viewport,&CadViewport::dimensionEditRequested,this,[this](const QString& id){if(m_session.editingSketch())editSmartDimension(id.toStdString());});
     connect(m_viewport, &CadViewport::sketchChanged, this, [this](const modeling::Sketch& sketch) {
-        if (!m_editSketch) return;
+        if (!m_session.editingSketch()) return;
         try {
             modeling::validateSketchRelations(sketch);
             (void)modeling::sketchShape(sketch);
             acceptConstrainedSketch(sketch);
-            m_viewport->setSketch(*m_editSketch);
+            m_viewport->setSketch(*m_session.editingSketch());
             setWindowModified(true);
             updateEntityList();
             updateActions();
         } catch (const std::exception& error) {
-            m_viewport->setSketch(*m_editSketch);
+            m_viewport->setSketch(*m_session.editingSketch());
             reportError(QString::fromUtf8(error.what()));
         }
     });
     connect(m_viewport, &CadViewport::sketchRegionClicked, this, [this](modeling::Point2 point) { operationRegionClicked(point); });
     connect(m_viewport, &CadViewport::referencePlaneSelected, this, [this](modeling::SketchPlane plane) { referencePlaneSelected(plane); });
     connect(m_viewport,&CadViewport::solidFaceSelected,this,[this](int index){
-        if(m_editSketch || m_operation || m_referenceDraft)return;
-        m_selectedFace=0;m_selectedPlane.reset();m_selectedId.clear();
+        if(m_session.editingSketch() || m_operation || m_referenceDraft)return;
+        m_selectedFace=0;m_selectedPlane.reset();m_session.selectedFeatureId().clear();
         {const QSignalBlocker blocker(m_tree);m_tree->clearSelection();}
         m_viewport->setSelectedReferencePlane({});updateActions();
         if(index==0){m_viewport->setSelectedSolidFace(0);return;}
-        if(m_selectingPlane)try {(void)m_document.sketchOnFace(index);}catch(const std::exception& error){m_selectedFace=0;m_viewport->setSelectedSolidFace(0);reportError(QString::fromUtf8(error.what()));return;}
+        if(m_selectingPlane)try {(void)m_session.document().sketchOnFace(index);}catch(const std::exception& error){m_selectedFace=0;m_viewport->setSelectedSolidFace(0);reportError(QString::fromUtf8(error.what()));return;}
         m_selectedPlane.reset();m_selectedFace=index;m_viewport->setSelectedReferencePlane({});
         m_viewport->setSelectedSolidFace(index);
         if(m_selectingPlane)createSketchOnFace(index);
@@ -563,8 +480,8 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_viewport, &CadViewport::planeSelectionCanceled, this, [this] { planeSelectionCanceled(); });
     connect(m_viewport,&CadViewport::referenceGeometryPicked,this,&MainWindow::referenceGeometryPicked);
     connect(m_viewport,&CadViewport::datumSelected,this,[this](const QString& id){
-        if(m_referenceDraft||m_editSketch||m_operation)return;
-        if(id.isEmpty()){m_selectedId.clear();{const QSignalBlocker blocker(m_tree);m_tree->clearSelection();m_tree->setCurrentItem(nullptr);}updateActions();return;}
+        if(m_referenceDraft||m_session.editingSketch()||m_operation)return;
+        if(id.isEmpty()){m_session.selectedFeatureId().clear();{const QSignalBlocker blocker(m_tree);m_tree->clearSelection();m_tree->setCurrentItem(nullptr);}updateActions();return;}
         if(m_selectingPlane){createSketchOnReferencePlane(id.toStdString());return;}
         selectFeature(id.toStdString());
     });
@@ -597,18 +514,18 @@ MainWindow::~MainWindow()
     m_viewport = nullptr;
 }
 
-const document::PartDocument& MainWindow::document() const { return m_document; }
-QString MainWindow::currentPath() const { return m_path; }
+const document::PartDocument& MainWindow::document() const { return m_session.document(); }
+QString MainWindow::currentPath() const { return m_session.path(); }
 
 QString MainWindow::chooseOpenPath()
 {
-    return QFileDialog::getOpenFileName(this, "Open TheCAD part", m_path,
+    return QFileDialog::getOpenFileName(this, "Open TheCAD part", m_session.path(),
         "TheCAD Part (*.thepart *.tcpart);;TheCAD Part (*.thepart);;Legacy TheCAD Part (*.tcpart)",nullptr,QFileDialog::DontUseNativeDialog);
 }
 
 QString MainWindow::chooseSavePath()
 {
-    QString suggestion = m_path.isEmpty() ? "Untitled.thepart" : m_path;
+    QString suggestion = m_session.path().isEmpty() ? "Untitled.thepart" : m_session.path();
     if (legacyPath(suggestion)) {
         suggestion = QFileInfo(suggestion).absolutePath() + "/" + QFileInfo(suggestion).completeBaseName() + ".thepart";
     }
@@ -737,7 +654,7 @@ bool MainWindow::openPartFileImpl(const QString& path,bool promptForEmptyDocumen
         auto candidate = document::PartDocument::load(path);
         // A file supplied at launch replaces only the pristine empty startup
         // document without prompting. Existing work still uses normal Save/Cancel.
-        const bool pristine=m_path.isEmpty()&&m_document.features().empty()&&!m_editSketch;
+        const bool pristine=m_session.path().isEmpty()&&m_session.document().features().empty()&&!m_session.editingSketch();
         if((promptForEmptyDocument || !pristine) && !maybeSave())return false;
         candidate = document::PartDocument::load(path);
         if(!replaceDocument(std::move(candidate), QFileInfo(path).absoluteFilePath()))return false;
@@ -749,7 +666,7 @@ bool MainWindow::openPartFileImpl(const QString& path,bool promptForEmptyDocumen
 bool MainWindow::saveDocument()
 {
     if (!finishSketch()) return false;
-    return m_path.isEmpty() || legacyPath(m_path) ? saveDocumentAs() : saveToPath(m_path);
+    return m_session.path().isEmpty() || legacyPath(m_session.path()) ? saveDocumentAs() : saveToPath(m_session.path());
 }
 
 bool MainWindow::saveDocumentAs()
@@ -768,11 +685,11 @@ bool MainWindow::saveDocumentAs()
 bool MainWindow::saveToPath(const QString& path)
 {
     try {
-        m_document.save(path);
-        m_path = QFileInfo(path).absoluteFilePath();
-        setWindowModified(false);m_savedRevision=m_revision;
+        m_session.document().save(path);
+        m_session.setPath(QFileInfo(path).absoluteFilePath());
+        setWindowModified(false);m_session.markSaved();
         updateDocumentUi();
-        statusBar()->showMessage("Saved " + QDir::toNativeSeparators(m_path), 4000);
+        statusBar()->showMessage("Saved " + QDir::toNativeSeparators(m_session.path()), 4000);
         return true;
     } catch (const std::exception& error) { reportError(QString::fromUtf8(error.what())); return false; }
 }
@@ -789,16 +706,16 @@ bool MainWindow::replaceDocument(document::PartDocument candidate, const QString
     m_viewport->cancelPlaneSelection();
     m_viewport->setSelectedReferencePlane({});
     m_viewport->endSketch();
-    m_editSketch.reset();
-    m_editSketchId.clear();
-    m_selectedId.clear();
-    m_document = std::move(candidate);
+    m_session.editingSketch().reset();
+    m_session.editingSketchId().clear();
+    m_session.selectedFeatureId().clear();
+    m_session.document() = std::move(candidate);
     m_mode = WorkspaceMode::Part;
     m_selectedFace=0;
-    m_path = path;
-    m_editHistory.clear();m_revision=0;m_nextRevision=0;m_savedRevision=0;
+    m_session.setPath(path);
+    m_session.clearHistory();
     updateDocumentUi();
-    m_viewport->showReferencePlanes(m_document.features().empty());
+    m_viewport->showReferencePlanes(m_session.document().features().empty());
     m_viewport->resetView(); // Opening a different document frames it once.
     return true;
 }
@@ -811,8 +728,8 @@ bool MainWindow::applyModel(document::PartDocument candidate, const std::string&
         return false;
     }
     if(record)rememberChange(std::move(previous));
-    m_document = std::move(candidate);
-    m_selectedId = selectedId;
+    m_session.document() = std::move(candidate);
+    m_session.selectedFeatureId() = selectedId;
     setWindowModified(true);
     updateDocumentUi();
     return true;
@@ -820,13 +737,13 @@ bool MainWindow::applyModel(document::PartDocument candidate, const std::string&
 
 const document::Feature* MainWindow::selectedFeature() const
 {
-    for (const auto& feature : m_document.features()) if (feature.id == m_selectedId) return &feature;
+    for (const auto& feature : m_session.document().features()) if (feature.id == m_session.selectedFeatureId()) return &feature;
     return nullptr;
 }
 
 void MainWindow::selectFeature(const std::string& id)
 {
-    m_selectedId = id;
+    m_session.selectedFeatureId() = id;
     for (QTreeWidgetItemIterator it(m_tree); *it; ++it) {
         if ((*it)->data(0, Qt::UserRole).toString().toStdString() == id) {
             m_tree->setCurrentItem(*it,0,QItemSelectionModel::ClearAndSelect);
@@ -845,23 +762,23 @@ void MainWindow::selectionChanged()
     m_viewport->setSelectedDatum({});
     const auto* item = m_tree->currentItem();
     const QString selection = item ? item->data(0, Qt::UserRole).toString() : QString{};
-    if (!m_editSketch && !m_operation && selection.startsWith("origin:")) {
+    if (!m_session.editingSketch() && !m_operation && selection.startsWith("origin:")) {
         const QString suffix = selection.mid(7);
         if (suffix == "XY") m_selectedPlane = modeling::SketchPlane::XY;
         else if (suffix == "XZ") m_selectedPlane = modeling::SketchPlane::XZ;
         else if (suffix == "YZ") m_selectedPlane = modeling::SketchPlane::YZ;
         else m_selectedPlane.reset();
-        m_selectedId.clear();
+        m_session.selectedFeatureId().clear();
         m_viewport->setSelectedReferencePlane(m_selectedPlane);
         m_viewport->showReferencePlanes(true);
         statusBar()->showMessage(m_selectedPlane
             ? QString("%1 selected. Click Sketch to begin on this reference plane.").arg(modeling::referencePlaneName(*m_selectedPlane))
             : QString("Select Front, Top or Right in the viewport, then click Sketch."));
     } else {
-        m_selectedId = selection.toStdString();
+        m_session.selectedFeatureId() = selection.toStdString();
         m_selectedPlane.reset();
         m_viewport->setSelectedReferencePlane({});
-        if (!m_editSketch) {
+        if (!m_session.editingSketch()) {
             const auto* feature = selectedFeature();
             m_viewport->endSketch();
             m_viewport->showReferencePlanes(false);
@@ -870,81 +787,20 @@ void MainWindow::selectionChanged()
             m_viewport->setTreeBodySelected(feature&&document::isSolidFeature(feature->kind));
         }
     }
-    if(m_tree->selectedItems().size()>1){std::vector<modeling::SelectionRef> refs;for(const auto* node:m_tree->selectedItems()){const auto id=node->data(0,Qt::UserRole).toString();using K=modeling::SelectionKind;if(id=="origin:XY"||id=="origin:XZ"||id=="origin:YZ")refs.push_back({K::OriginPlane,{},{},modeling::PointRole::First,id=="origin:XY"?0:id=="origin:XZ"?1:2});else for(const auto& f:m_document.features())if(f.id==id.toStdString()&&f.kind==document::FeatureKind::ReferenceGeometry)refs.push_back({f.datum.kind==modeling::DatumKind::Plane?K::ReferencePlane:f.datum.kind==modeling::DatumKind::Axis?K::ReferenceAxis:K::ReferencePoint,f.id});}m_viewport->setTreeReferenceSelection(refs);}
+    if(m_tree->selectedItems().size()>1){std::vector<modeling::SelectionRef> refs;for(const auto* node:m_tree->selectedItems()){const auto id=node->data(0,Qt::UserRole).toString();using K=modeling::SelectionKind;if(id=="origin:XY"||id=="origin:XZ"||id=="origin:YZ")refs.push_back({K::OriginPlane,{},{},modeling::PointRole::First,id=="origin:XY"?0:id=="origin:XZ"?1:2});else for(const auto& f:m_session.document().features())if(f.id==id.toStdString()&&f.kind==document::FeatureKind::ReferenceGeometry)refs.push_back({f.datum.kind==modeling::DatumKind::Plane?K::ReferencePlane:f.datum.kind==modeling::DatumKind::Axis?K::ReferenceAxis:K::ReferencePoint,f.id});}m_viewport->setTreeReferenceSelection(refs);}
     updateEntityList();
     updateActions();
 }
 void MainWindow::updateDocumentUi()
 {
-    std::string bodyId;for(const auto& feature:m_document.features())if(document::isSolidFeature(feature.kind))bodyId=feature.id;
-    m_viewport->setSelectionFeatureIds(bodyId,m_editSketchId);
+    std::string bodyId;for(const auto& feature:m_session.document().features())if(document::isSolidFeature(feature.kind))bodyId=feature.id;
+    m_viewport->setSelectionFeatureIds(bodyId,m_session.editingSketchId());
     refreshReferenceGeometry();
-    const QString name = m_path.isEmpty() ? "Untitled.thepart" : QFileInfo(m_path).fileName();
+    const QString name = m_session.path().isEmpty() ? "Untitled.thepart" : QFileInfo(m_session.path()).fileName();
     setWindowTitle(name + "[*] - TheCAD");
-    setWindowFilePath(m_path);
-    m_dimensions->setText(QString("%1 features | mm%2").arg(m_document.features().size()).arg(m_mode==WorkspaceMode::FeatureDraft ? " | Feature preview" : m_mode==WorkspaceMode::EditingSketch ? " | Editing sketch" : ""));
-    {
-        const QSignalBlocker blocker(m_tree);
-        // A shared sketch has several tree entries, all referring to one history ID.
-        // Remember its parent too so refreshes retain the selected occurrence.
-        const auto* current = m_tree->currentItem();
-        const QString currentId = current ? current->data(0, Qt::UserRole).toString() : QString{};
-        const QString parentId = current && current->parent()
-            ? current->parent()->data(0, Qt::UserRole).toString() : QString{};
-        std::map<QString, bool> expanded;
-        for (QTreeWidgetItemIterator it(m_tree); *it; ++it)
-            if ((*it)->childCount()) expanded[(*it)->data(0, Qt::UserRole).toString()] = (*it)->isExpanded();
-        m_tree->clear();
-        auto* part = new QTreeWidgetItem(m_tree, {name});
-        part->setData(0, Qt::UserRole, "part:");
-        part->setIcon(0, commandIcon("Part"));
-        part->setExpanded(expanded.count("part:") ? expanded.at("part:") : true);
-        for (const auto plane : {modeling::SketchPlane::XY, modeling::SketchPlane::XZ, modeling::SketchPlane::YZ}) {
-            const QString key = plane == modeling::SketchPlane::XY ? "origin:XY"
-                : plane == modeling::SketchPlane::XZ ? "origin:XZ" : "origin:YZ";
-            auto* reference = new QTreeWidgetItem(part, {QString("%1 Plane").arg(modeling::referencePlaneName(plane))});
-            reference->setIcon(0, commandIcon("Plane"));
-            reference->setData(0, Qt::UserRole, key);
-            reference->setToolTip(0, QString("%1 origin reference plane").arg(modeling::referencePlaneName(plane)));
-            if (m_selectedPlane && *m_selectedPlane == plane) m_tree->setCurrentItem(reference);
-        }
-        auto* origin = new QTreeWidgetItem(part, {"Origin"});
-        origin->setData(0, Qt::UserRole, "origin:");
-        origin->setIcon(0, commandIcon("Origin"));
-
-        std::map<std::string, const document::Feature*> sketches;
-        std::set<std::string> usedSketches;
-        for (const auto& feature : m_document.features()) {
-            if (feature.kind == document::FeatureKind::Sketch) sketches.emplace(feature.id, &feature);
-            if (feature.kind == document::FeatureKind::Extrude || feature.kind == document::FeatureKind::Cut)
-                usedSketches.insert(feature.sketchId);
-        }
-        QTreeWidgetItem* selectedItem = nullptr;
-        const auto addFeature = [&](QTreeWidgetItem* parent, const document::Feature& feature) {
-            auto* item = new QTreeWidgetItem(parent, {QString::fromStdString(feature.name)});
-            item->setData(0, Qt::UserRole, QString::fromStdString(feature.id));
-            item->setToolTip(0, QString::fromStdString(feature.name));
-            item->setIcon(0, commandIcon(feature.kind==document::FeatureKind::ReferenceGeometry?(feature.datum.kind==modeling::DatumKind::Point?"Reference Point":feature.datum.kind==modeling::DatumKind::Axis?"Reference Axis":"Reference Plane"):feature.kind == document::FeatureKind::Sketch ? "Sketch"
-                : feature.kind == document::FeatureKind::Cut ? "Extruded Cut" : "Extrude"));
-            if (feature.id == m_selectedId && (!selectedItem ||
-                (currentId == QString::fromStdString(feature.id) && parentId == parent->data(0, Qt::UserRole).toString())))
-                selectedItem = item;
-            return item;
-        };
-        for (const auto& feature : m_document.features()) {
-            if (feature.kind == document::FeatureKind::Sketch && usedSketches.count(feature.id)) continue;
-            auto* item = addFeature(part, feature);
-            if (feature.kind == document::FeatureKind::Extrude || feature.kind == document::FeatureKind::Cut) {
-                const auto source = sketches.find(feature.sketchId);
-                if (source != sketches.end()) addFeature(item, *source->second);
-            }
-            const auto key = QString::fromStdString(feature.id);
-            item->setExpanded(expanded.count(key) ? expanded.at(key) : true);
-        }
-        if (selectedItem) m_tree->setCurrentItem(selectedItem);
-        else if (currentId == "part:" && !m_selectedPlane) m_tree->setCurrentItem(part);
-        else if (currentId == "origin:" && !m_selectedPlane) m_tree->setCurrentItem(origin);
-    }
+    setWindowFilePath(m_session.path());
+    m_dimensions->setText(QString("%1 features | mm%2").arg(m_session.document().features().size()).arg(m_mode==WorkspaceMode::FeatureDraft ? " | Feature preview" : m_mode==WorkspaceMode::EditingSketch ? " | Editing sketch" : ""));
+    m_treePresenter->refresh(m_session.document(),name,m_session.selectedFeatureId(),m_selectedPlane);
     updateEntityList();
     updateActions();
 }
@@ -955,7 +811,7 @@ void MainWindow::updateEntityList()
     const int selectedRow = m_entities->currentRow();
     m_entities->clear();
     const auto* feature = selectedFeature();
-    const modeling::Sketch* sketch = m_editSketch ? &*m_editSketch
+    const modeling::Sketch* sketch = m_session.editingSketch() ? &*m_session.editingSketch()
         : feature && feature->kind == document::FeatureKind::Sketch ? &feature->sketch : nullptr;
     if (sketch) for (const auto& entity : sketch->entities) {
         auto* item = new QListWidgetItem(entityText(entity), m_entities);
@@ -987,7 +843,7 @@ void MainWindow::updateActions()
     findChild<QAction*>("actionSmartDimension")->setEnabled(editing && !operation);
     findChild<QAction*>("actionDisplayDeleteRelations")->setEnabled(editing && !operation);
     const bool selecting = m_selectingPlane;
-    for(auto* reference:{m_referencePoint,m_referenceAxis,m_referencePlane})reference->setEnabled(!operation&&!m_editSketch&&!selecting);
+    for(auto* reference:{m_referencePoint,m_referenceAxis,m_referencePlane})reference->setEnabled(!operation&&!m_session.editingSketch()&&!selecting);
     m_tabs->setEnabled(!operation);
     findChild<QAction*>("actionCancelFeature")->setEnabled(operation);
     m_tree->setEnabled(!operation && !editing && !selecting);
@@ -997,8 +853,8 @@ void MainWindow::updateActions()
     bool sketchSupport=true;const auto selection=m_viewport->selection();
     if(selection.size()>1)sketchSupport=false;
     else if(selection.size()==1){using K=modeling::SelectionKind;const auto kind=selection.front().kind;sketchSupport=kind==K::Face||kind==K::ReferencePlane||kind==K::OriginPlane;
-        if(kind==K::Face)try{(void)m_document.sketchOnFace(selection.front().index);}catch(const std::exception&){sketchSupport=false;}}
-    m_createSketch->setEnabled(!m_editSketch && !operation && !selecting && sketchSupport);
+        if(kind==K::Face)try{(void)m_session.document().sketchOnFace(selection.front().index);}catch(const std::exception&){sketchSupport=false;}}
+    m_createSketch->setEnabled(!m_session.editingSketch() && !operation && !selecting && sketchSupport);
     m_selectEntity->setEnabled(editing && !operation);
     m_line->setEnabled(editing && !operation);
     m_rectangle->setEnabled(editing && !operation);
@@ -1007,14 +863,14 @@ void MainWindow::updateActions()
     updateConstructionControls();
     m_finishSketch->setEnabled(editing && !operation);
     const auto* selected = selectedFeature();
-    m_editFeature->setEnabled(!m_editSketch && !operation && !selecting && selected);
+    m_editFeature->setEnabled(!m_session.editingSketch() && !operation && !selecting && selected);
     m_editEntity->setEnabled(editing && !operation && m_entities->currentRow() >= 0);
     m_deleteEntity->setEnabled(editing && !operation && (m_entities->currentRow()>=0 || !m_viewport->selectedSketchDimensions().empty() || !m_viewport->selectedSketchEntities().empty()));
     m_applyProperties->setEnabled(editing && !operation && m_entities->currentRow() >= 0);
     updateEntityProperties();
     bool profile = editing && !operation;
     if (!editing && !operation && !selecting) {
-        for (const auto& feature : m_document.features()) {
+        for (const auto& feature : m_session.document().features()) {
             if (feature.kind != document::FeatureKind::Sketch) continue;
             try { profile = !modeling::closedContours(feature.sketch).empty(); }
             catch (const std::exception&) { }
@@ -1022,11 +878,11 @@ void MainWindow::updateActions()
         }
     }
     m_extrude->setEnabled(profile && !m_constraints && !m_smartDimension);
-    m_cut->setEnabled(profile && !m_constraints && !m_smartDimension && !m_document.shape().IsNull());
+    m_cut->setEnabled(profile && !m_constraints && !m_smartDimension && !m_session.document().shape().IsNull());
 }
 void MainWindow::createSketch()
 {
-    if (m_editSketch || m_operation || m_referenceDraft || m_selectingPlane) return;
+    if (m_session.editingSketch() || m_operation || m_referenceDraft || m_selectingPlane) return;
     if(const auto* feature=selectedFeature();feature&&feature->kind==document::FeatureKind::ReferenceGeometry&&feature->datum.kind==modeling::DatumKind::Plane){createSketchOnReferencePlane(feature->id);return;}
     if(m_selectedFace) {createSketchOnFace(m_selectedFace);return;}
     if (m_selectedPlane) {
@@ -1043,7 +899,7 @@ void MainWindow::createSketch()
 void MainWindow::createSketchOnFace(int index)
 {
     try {
-        auto sketch=m_document.sketchOnFace(index);auto candidate=m_document;
+        auto sketch=m_session.document().sketchOnFace(index);auto candidate=m_session.document();
         const auto id=candidate.addSketch(sketch);m_selectingPlane=false;m_selectedFace=0;
         if(!applyModel(std::move(candidate),id))return;
         startSketchEditing(*selectedFeature());
@@ -1055,7 +911,7 @@ void MainWindow::createSketchOnPlane(modeling::SketchPlane plane)
     modeling::Sketch sketch;
     sketch.plane = plane;
     try {
-        auto candidate = m_document;
+        auto candidate = m_session.document();
         const auto id = candidate.addSketch(sketch);
         m_selectingPlane = false;
         m_selectedPlane.reset();
@@ -1068,14 +924,14 @@ void MainWindow::referencePlaneSelected(modeling::SketchPlane plane)
 {
     m_selectedFace=0;
     m_viewport->setSelectedSolidFace(0);
-    if (m_editSketch || m_operation) return;
+    if (m_session.editingSketch() || m_operation) return;
     if (m_selectingPlane) {
         createSketchOnPlane(plane);
         return;
     }
     m_selectedPlane = plane;
     m_viewport->setSelectedReferencePlane(plane);
-    m_selectedId.clear();
+    m_session.selectedFeatureId().clear();
     // Rebuilding the tree under a signal blocker preserves the current camera.
     updateDocumentUi();
     statusBar()->showMessage(QString("%1 selected. Click Sketch to begin on this plane.").arg(modeling::referencePlaneName(plane)));
@@ -1098,10 +954,10 @@ void MainWindow::startSketchEditing(const document::Feature& feature)
     m_viewport->setSelectedReferencePlane({});
     m_mode = WorkspaceMode::EditingSketch;
     m_constraintPoint.reset();
-    m_editSketch = feature.sketch;
-    m_editSketchId = feature.id;
-    m_selectedId = feature.id;
-    m_viewport->beginSketch(*m_editSketch);
+    m_session.editingSketch() = feature.sketch;
+    m_session.editingSketchId() = feature.id;
+    m_session.selectedFeatureId() = feature.id;
+    m_viewport->beginSketch(*m_session.editingSketch());
     m_viewport->setSketchTool(modeling::EntityKind::Line);
     m_tabs->setCurrentIndex(1);
     updateDocumentUi();
@@ -1112,17 +968,17 @@ bool MainWindow::finishSketch()
 {
     if(m_constraints)return false;
     closeSmartDimension();
-    if (!m_editSketch) return true;
+    if (!m_session.editingSketch()) return true;
     try {
-        auto candidate = m_document;
+        auto candidate = m_session.document();
         auto feature = *std::find_if(candidate.features().begin(), candidate.features().end(),
-                                    [this](const auto& item) { return item.id == m_editSketchId; });
-        feature.sketch = *m_editSketch;
+                                    [this](const auto& item) { return item.id == m_session.editingSketchId(); });
+        feature.sketch = *m_session.editingSketch();
         candidate.replaceFeature(feature);
-        const auto id = m_editSketchId;
+        const auto id = m_session.editingSketchId();
         if (!applyModel(std::move(candidate), id,false)) return false;
-        m_editSketch.reset();
-        m_editSketchId.clear();
+        m_session.editingSketch().reset();
+        m_session.editingSketchId().clear();
         m_mode = WorkspaceMode::Part;
         m_viewport->endSketch();
         m_viewport->setSketch(feature.sketch);
@@ -1139,7 +995,7 @@ bool MainWindow::finishSketch()
 void MainWindow::updateEntityProperties()
 {
     const auto* feature = selectedFeature();
-    const modeling::Sketch* sketch = m_editSketch ? &*m_editSketch
+    const modeling::Sketch* sketch = m_session.editingSketch() ? &*m_session.editingSketch()
         : feature && feature->kind == document::FeatureKind::Sketch ? &feature->sketch : nullptr;
     const int row = m_entities->currentRow();
     const bool valid = sketch && row >= 0 && std::size_t(row) < sketch->entities.size();
@@ -1178,12 +1034,12 @@ void MainWindow::updateEntityProperties()
 
 void MainWindow::applySketchEntityEdit(const modeling::SketchEntity& entity)
 {
-    if (!m_editSketch) return;
+    if (!m_session.editingSketch()) return;
     try {
-        auto candidate = modeling::editSketchEntity(*m_editSketch, entity);
+        auto candidate = modeling::editSketchEntity(*m_session.editingSketch(), entity);
         (void)modeling::sketchShape(candidate);
         acceptConstrainedSketch(candidate);
-        m_viewport->setSketch(*m_editSketch);
+        m_viewport->setSketch(*m_session.editingSketch());
         setWindowModified(true);
         updateEntityList();
         updateActions();
@@ -1192,29 +1048,29 @@ void MainWindow::applySketchEntityEdit(const modeling::SketchEntity& entity)
 
 void MainWindow::editSketchEntity()
 {
-    if (!m_editSketch || m_entities->currentRow() < 0) return;
-    auto entity = m_editSketch->entities.at(std::size_t(m_entities->currentRow()));
+    if (!m_session.editingSketch() || m_entities->currentRow() < 0) return;
+    auto entity = m_session.editingSketch()->entities.at(std::size_t(m_entities->currentRow()));
     if (chooseEntityParameters(entity)) applySketchEntityEdit(entity);
 }
 
 void MainWindow::deleteSketchEntity()
 {
-    if(!m_editSketch || m_operation || m_constraints || (m_smartDimension && m_smartDimension->editor))return;
+    if(!m_session.editingSketch() || m_operation || m_constraints || (m_smartDimension && m_smartDimension->editor))return;
     if(!m_viewport->selectedSketchRelation().empty()){deleteRelation(m_viewport->selectedSketchRelation());return;}
     auto entities=m_viewport->selectedSketchEntities();const auto dimensions=m_viewport->selectedSketchDimensions();
     if(entities.empty() && dimensions.empty() && m_entities->currentRow()>=0)
-        entities.push_back(m_editSketch->entities.at(std::size_t(m_entities->currentRow())).id);
+        entities.push_back(m_session.editingSketch()->entities.at(std::size_t(m_entities->currentRow())).id);
     if(entities.empty() && dimensions.empty())return;
     try {
-        auto candidate=*m_editSketch;
+        auto candidate=*m_session.editingSketch();
         candidate.dimensions.erase(std::remove_if(candidate.dimensions.begin(),candidate.dimensions.end(),[&](const auto& d){
             return std::find(dimensions.begin(),dimensions.end(),d.id)!=dimensions.end();
         }),candidate.dimensions.end());
         for(const auto& id:entities)candidate=modeling::removeSketchEntity(candidate,id);
         modeling::validateSketchRelations(candidate);(void)modeling::sketchShape(candidate);
-        auto previous=editState();m_editSketch=std::move(candidate);rememberSketchChange(std::move(previous));
+        auto previous=editState();m_session.editingSketch()=std::move(candidate);rememberSketchChange(std::move(previous));
         closeSmartDimension();m_viewport->selectSketchTool();m_viewport->selectSketchEntity({});
-        m_constraintPoint.reset();m_viewport->setSketch(*m_editSketch);
+        m_constraintPoint.reset();m_viewport->setSketch(*m_session.editingSketch());
         setWindowModified(true);updateEntityList();updateActions();
         statusBar()->showMessage("Deleted selected sketch geometry/dimensions. Ctrl+Z restores them.",3000);
     }catch(const std::exception& error){reportError(QString::fromUtf8(error.what()));}
@@ -1222,7 +1078,7 @@ void MainWindow::deleteSketchEntity()
 void MainWindow::editSelectedFeature()
 {
     const auto* selected = selectedFeature();
-    if (!selected || m_editSketch) return;
+    if (!selected || m_session.editingSketch()) return;
     if (selected->kind == document::FeatureKind::Sketch) { startSketchEditing(*selected); return; }
     if(selected->kind==document::FeatureKind::ReferenceGeometry){startReferenceGeometry(selected->datum.kind,selected);return;}
     auto feature = *selected;
@@ -1232,7 +1088,7 @@ void MainWindow::editSelectedFeature()
     }
     if (!chooseFeatureParameters(feature)) return;
     try {
-        auto candidate = m_document;
+        auto candidate = m_session.document();
         candidate.replaceFeature(feature);
         applyModel(std::move(candidate), feature.id);
     } catch (const std::exception& error) { reportError(QString::fromUtf8(error.what())); }
@@ -1244,7 +1100,7 @@ void MainWindow::extrude(bool cut)
     document::Feature feature;
     feature.kind = cut ? document::FeatureKind::Cut : document::FeatureKind::Extrude;
     const auto* selected = selectedFeature();
-    if (m_editSketch) feature.sketchId = m_editSketchId;
+    if (m_session.editingSketch()) feature.sketchId = m_session.editingSketchId();
     else if (selected && selected->kind == document::FeatureKind::Sketch) feature.sketchId = selected->id;
     startOperation(feature, false);
 }
@@ -1253,19 +1109,19 @@ void MainWindow::startOperation(document::Feature feature, bool editing)
 {
     if(m_operation || m_selectingPlane) return;
     m_selectedFace=0;m_viewport->setSelectedSolidFace(0);
-    auto sourceDocument=m_document;
-    if(m_editSketch) {
+    auto sourceDocument=m_session.document();
+    if(m_session.editingSketch()) {
         m_viewport->selectSketchTool();
         try {
-            if(modeling::closedContours(*m_editSketch).empty())
+            if(modeling::closedContours(*m_session.editingSketch()).empty())
                 throw std::runtime_error("The active sketch has no valid closed contour. Continue sketch editing and close a profile.");
-            auto source=*std::find_if(sourceDocument.features().begin(),sourceDocument.features().end(),[this](const auto& item){return item.id==m_editSketchId;});
-            source.sketch=*m_editSketch;sourceDocument.replaceFeature(source);
+            auto source=*std::find_if(sourceDocument.features().begin(),sourceDocument.features().end(),[this](const auto& item){return item.id==m_session.editingSketchId();});
+            source.sketch=*m_session.editingSketch();sourceDocument.replaceFeature(source);
         } catch(const std::exception& error) {reportError(QString("Cannot start the feature: %1").arg(error.what()));return;}
     }
     m_operation=std::make_unique<OperationDraft>();auto& draft=*m_operation;
     draft.feature=std::move(feature);draft.editing=editing;
-    draft.fromSketch=m_editSketch.has_value();draft.modifiedBefore=isWindowModified();
+    draft.fromSketch=m_session.editingSketch().has_value();draft.modifiedBefore=isWindowModified();
     draft.sourceDocument=std::move(sourceDocument);m_mode=WorkspaceMode::FeatureDraft;
     draft.panel=new PropertyManagerPage(draft.feature.kind==document::FeatureKind::Cut ? "Extruded Cut" : "Extrude",
         "Click inside sketch regions, then type the depth. The preview updates as you work.",m_managerStack);
@@ -1364,10 +1220,10 @@ void MainWindow::finishOperation(bool accepted)
     m_operation.reset();panel->deleteLater();
     if(resumeSketch) {
         m_mode=WorkspaceMode::EditingSketch;
-        m_viewport->beginSketch(*m_editSketch);m_viewport->selectSketchTool();m_tabs->setCurrentIndex(1);
+        m_viewport->beginSketch(*m_session.editingSketch());m_viewport->selectSketchTool();m_tabs->setCurrentIndex(1);
         setWindowModified(modifiedBefore);
     } else {
-        if(accepted) {m_editSketch.reset();m_editSketchId.clear();}
+        if(accepted) {m_session.editingSketch().reset();m_session.editingSketchId().clear();}
         m_mode=WorkspaceMode::Part;
         m_viewport->endSketch();
         if(!accepted) setWindowModified(modifiedBefore);
@@ -1444,20 +1300,9 @@ void MainWindow::updateOperationPreview()
         feature.length = depthValue;
         feature.direction = draft.direction->currentIndex() == 0 ? modeling::Direction::Positive : modeling::Direction::Negative;
         feature.throughAll = feature.kind == document::FeatureKind::Cut && draft.through->isChecked();
-        auto candidate = *draft.sourceDocument;
-        std::string id;
-        if (draft.editing) {
-            candidate.replaceFeature(feature);
-            id = feature.id;
-        } else if (feature.kind == document::FeatureKind::Cut) {
-            id = candidate.addCutRegions(feature.sketchId, references, feature.length, feature.throughAll, feature.direction);
-        } else {
-            id = candidate.addExtrudeRegions(feature.sketchId, references, feature.length, feature.direction);
-        }
-        const auto changes=modeling::materialChanges(draft.sourceDocument->shape(),candidate.shape());
-        m_viewport->previewShape(candidate.shape(),changes);
-        draft.candidate = std::move(candidate);
-        draft.candidateFeatureId = id;
+        auto result=application::FeatureOperation::preview(*draft.sourceDocument,feature,references,draft.editing);
+        m_viewport->previewShape(result.document.shape(),result.changes);
+        draft.candidate=std::move(result.document);draft.candidateFeatureId=std::move(result.featureId);
         draft.panel->setStatus("Preview ready. Type a depth or select more regions. Enter confirms.");
         draft.buttons->button(QDialogButtonBox::Ok)->setEnabled(true);
     } catch (const std::exception& error) {

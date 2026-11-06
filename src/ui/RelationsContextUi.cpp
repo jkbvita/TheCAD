@@ -19,10 +19,10 @@
 namespace thecad::ui {
 void MainWindow::hideRelationsContext(){if(m_relationsToolbar)m_relationsToolbar->hide();}
 void MainWindow::showRelationsContext(QPoint position){
-    hideRelationsContext();if(!m_editSketch || m_operation || m_constraints || (m_smartDimension && m_smartDimension->editor))return;
+    hideRelationsContext();if(!m_session.editingSketch() || m_operation || m_constraints || (m_smartDimension && m_smartDimension->editor))return;
     const auto ids=m_viewport->selectedSketchEntities();if(ids.empty())return;
-    const auto relations=modeling::availableRelations(*m_editSketch,ids);
-    const bool construction=std::all_of(ids.begin(),ids.end(),[&](const auto& id){const auto e=std::find_if(m_editSketch->entities.begin(),m_editSketch->entities.end(),[&](const auto& v){return v.id==id;});return e!=m_editSketch->entities.end() && (e->kind==modeling::EntityKind::Line || e->kind==modeling::EntityKind::Circle || e->kind==modeling::EntityKind::Rectangle);});
+    const auto relations=modeling::availableRelations(*m_session.editingSketch(),ids);
+    const bool construction=std::all_of(ids.begin(),ids.end(),[&](const auto& id){const auto e=std::find_if(m_session.editingSketch()->entities.begin(),m_session.editingSketch()->entities.end(),[&](const auto& v){return v.id==id;});return e!=m_session.editingSketch()->entities.end() && (e->kind==modeling::EntityKind::Line || e->kind==modeling::EntityKind::Circle || e->kind==modeling::EntityKind::Rectangle);});
     if(relations.empty() && !construction)return;
     auto* previous=m_relationsToolbar.data();m_relationsToolbar=nullptr;delete previous;
     // A native child stays above the OCCT native surface without creating an
@@ -33,7 +33,7 @@ void MainWindow::showRelationsContext(QPoint position){
     const auto bounds=m_viewport->rect().adjusted(4,4,-4,-4);const int columns=std::max(1,std::min(10,(bounds.width()-8)/30));int index=0;
     const auto button=[&](const QString& name,const QString& object,const QIcon& icon,auto callback){auto* b=new QToolButton(m_relationsToolbar);b->setObjectName(object);b->setToolTip(name);b->setAccessibleName(name);b->setIcon(icon);b->setIconSize({20,20});b->setFixedSize(29,29);b->setFocusPolicy(Qt::NoFocus);b->setMouseTracking(true);layout->addWidget(b,index/columns,index%columns);++index;connect(b,&QToolButton::clicked,this,callback);};
     for(const auto kind:relations)button(modeling::relationName(kind),QString("contextRelation%1").arg(int(kind)),relationIcon(kind),[this,kind,ids]{hideRelationsContext();applyContextRelation(kind,ids);});
-    if(construction){const bool allConstruction=std::all_of(ids.begin(),ids.end(),[&](const auto& id){return std::find_if(m_editSketch->entities.begin(),m_editSketch->entities.end(),[&](const auto& e){return e.id==id;})->construction;});
+    if(construction){const bool allConstruction=std::all_of(ids.begin(),ids.end(),[&](const auto& id){return std::find_if(m_session.editingSketch()->entities.begin(),m_session.editingSketch()->entities.end(),[&](const auto& e){return e.id==id;})->construction;});
         QPixmap icon(40,40);icon.fill(Qt::transparent);QPainter p(&icon);p.setPen(QPen(themeColor(ThemeColor::Accent),3,allConstruction?Qt::SolidLine:Qt::DashDotLine));p.drawLine(5,33,35,7);p.end();
         button(allConstruction?"Normal Geometry":"For Construction","contextConstruction",QIcon(icon),[this,ids]{hideRelationsContext();applyContextConstruction(ids);});}
     m_relationsToolbar->adjustSize();m_relationsAnchor=m_viewport->mapToGlobal(position);auto location=position+QPoint(14,14);
@@ -61,20 +61,20 @@ bool MainWindow::eventFilter(QObject* watched,QEvent* event){
     return QMainWindow::eventFilter(watched,event);
 }
 void MainWindow::applyContextRelation(modeling::RelationKind kind,const std::vector<std::string>& ids){
-    if(!m_editSketch || ids!=m_viewport->selectedSketchEntities())return;
-    try{const auto candidate=modeling::addSelectionRelations(*m_editSketch,kind,ids,QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString());acceptConstrainedSketch(candidate);m_viewport->setSketch(*m_editSketch);setWindowModified(true);updateEntityList();updateActions();statusBar()->showMessage(QString(modeling::relationName(kind))+" applied.",4000);}
+    if(!m_session.editingSketch() || ids!=m_viewport->selectedSketchEntities())return;
+    try{const auto candidate=modeling::addSelectionRelations(*m_session.editingSketch(),kind,ids,QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString());acceptConstrainedSketch(candidate);m_viewport->setSketch(*m_session.editingSketch());setWindowModified(true);updateEntityList();updateActions();statusBar()->showMessage(QString(modeling::relationName(kind))+" applied.",4000);}
     catch(const std::exception& e){constraintError(QString::fromUtf8(e.what()));QToolTip::showText(m_relationsAnchor,QString::fromUtf8(e.what()),m_viewport);}
     m_viewport->setFocus();
 }
 void MainWindow::deleteRelation(const std::string& id){
-    if(!m_editSketch || m_operation || (m_smartDimension && m_smartDimension->editor))return;
+    if(!m_session.editingSketch() || m_operation || (m_smartDimension && m_smartDimension->editor))return;
     hideRelationsContext();
-    try{acceptConstrainedSketch(modeling::removeSketchRelation(*m_editSketch,id));m_viewport->setSketch(*m_editSketch);setWindowModified(true);updateEntityList();updateActions();if(m_constraints)updateConstraintDraft();statusBar()->showMessage("Relation deleted; sketch geometry retained.",3000);}
+    try{acceptConstrainedSketch(modeling::removeSketchRelation(*m_session.editingSketch(),id));m_viewport->setSketch(*m_session.editingSketch());setWindowModified(true);updateEntityList();updateActions();if(m_constraints)updateConstraintDraft();statusBar()->showMessage("Relation deleted; sketch geometry retained.",3000);}
     catch(const std::exception& e){constraintError(QString::fromUtf8(e.what()));}
 }
 void MainWindow::applyContextConstruction(const std::vector<std::string>& ids){
-    if(!m_editSketch || ids!=m_viewport->selectedSketchEntities())return;
-    const auto state=modeling::constructionState(*m_editSketch,ids);
+    if(!m_session.editingSketch() || ids!=m_viewport->selectedSketchEntities())return;
+    const auto state=modeling::constructionState(*m_session.editingSketch(),ids);
     if(state!=modeling::ConstructionState::Unavailable)setSelectionConstruction(state!=modeling::ConstructionState::Construction);
 }
 }

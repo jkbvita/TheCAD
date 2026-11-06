@@ -30,9 +30,9 @@ std::vector<DatumVisual> visuals(const document::PartDocument& doc){std::vector<
 double entered(QDoubleSpinBox* spin){bool okay=false;const double value=spin->locale().toDouble(spin->cleanText(),&okay);if(!okay||!spin->hasAcceptableInput())throw std::runtime_error("Enter a valid number in each visible parameter.");return value;}
 }
 void MainWindow::startReferenceGeometry(modeling::DatumKind kind,const document::Feature* editing){
-    if(m_referenceDraft||m_operation||m_editSketch||m_selectingPlane)return;
+    if(m_referenceDraft||m_operation||m_session.editingSketch()||m_selectingPlane)return;
     auto draft=std::make_unique<ReferenceDraft>();draft->kind=kind;draft->editing=editing!=nullptr;if(editing)draft->feature=*editing;
-    draft->support=editing?m_document.beforeFeature(editing->id):m_document;draft->options=draft->support.referenceOptions();
+    draft->support=editing?m_session.document().beforeFeature(editing->id):m_session.document();draft->options=draft->support.referenceOptions();
     std::optional<GeometryReference> selectedPlane;
     std::vector<GeometryReference> selectedReferences;std::vector<DatumKind> selectedKinds;std::optional<DatumMethod> selectedMethod;
     if(!editing)for(const auto& selection:m_viewport->selection())for(const auto& option:draft->options){
@@ -128,18 +128,18 @@ void MainWindow::updateReferenceGeometryPreview(){
         if(kinds.empty()){definition.position={entered(d.position[0]),entered(d.position[1]),entered(d.position[2])};if(d.kind!=DatumKind::Point)definition.direction={entered(d.direction[0]),entered(d.direction[1]),entered(d.direction[2])};}
         else if(definition.references.empty())for(int i=0;i<int(kinds.size());++i){if(d.references[i]->currentIndex()<0)throw std::runtime_error("Select every required reference to see the preview.");definition.references.push_back(d.options[std::size_t(d.references[i]->currentData().toInt())].reference);}
         if(definition.method==DatumMethod::PlaneOffset||definition.method==DatumMethod::PlaneAtAngle||definition.method==DatumMethod::PlaneTangentParallel)definition.value=entered(d.value);if(definition.method==DatumMethod::PlaneOffset&&d.offsetConstraint&&d.offsetConstraint->currentIndex()==1)definition.value=0;
-        auto candidate=m_document;std::string id;if(d.editing){auto feature=d.feature;feature.reference=definition;candidate.replaceFeature(feature);id=feature.id;}else id=candidate.addReferenceGeometry(definition);
+        auto candidate=m_session.document();std::string id;if(d.editing){auto feature=d.feature;feature.reference=definition;candidate.replaceFeature(feature);id=feature.id;}else id=candidate.addReferenceGeometry(definition);
         auto display=visuals(d.support);const auto& feature=*std::find_if(candidate.features().begin(),candidate.features().end(),[&](const auto& f){return f.id==id;});display.push_back({id,feature.name,feature.datum});m_viewport->setDatums(display);m_viewport->setSelectedDatum(id);
         d.candidate=std::move(candidate);d.candidateId=id;d.page->setStatus(QString("Fully defined — %1. Confirm or Cancel.").arg(datumMethodName(definition.method)));d.page->buttons->button(QDialogButtonBox::Ok)->setEnabled(true);
     }catch(const std::exception& error){m_viewport->setDatums(visuals(d.support));const bool hasReferences=std::any_of(d.references.begin(),d.references.end(),[](auto* c){return c->currentIndex()>=0;});d.page->setStatus(QString(hasReferences?"Invalid / under-defined: ":"Under-defined: ")+QString::fromUtf8(error.what()),hasReferences);}
 }
 void MainWindow::finishReferenceGeometry(bool accepted){
-    if(!m_referenceDraft)return;auto& d=*m_referenceDraft;if(accepted){updateReferenceGeometryPreview();if(!d.candidate)return;if(!m_viewport->setShape(m_document.shape()))return;if(!applyModel(*d.candidate,d.candidateId))return;}
-    auto* page=d.page;for(auto* child:page->findChildren<QObject*>())QObject::disconnect(child,nullptr,this,nullptr);m_managerStack->setCurrentIndex(0);m_managerStack->removeWidget(page);page->hide();page->setParent(nullptr);m_referenceDraft.reset();page->deleteLater();m_mode=WorkspaceMode::Part;m_viewport->setReferenceCandidates({},{});m_viewport->setShape(m_document.shape());m_viewport->showReferencePlanes(false);m_historyDock->setWindowTitle("FeatureManager");updateDocumentUi();m_viewport->setFocus();
+    if(!m_referenceDraft)return;auto& d=*m_referenceDraft;if(accepted){updateReferenceGeometryPreview();if(!d.candidate)return;if(!m_viewport->setShape(m_session.document().shape()))return;if(!applyModel(*d.candidate,d.candidateId))return;}
+    auto* page=d.page;for(auto* child:page->findChildren<QObject*>())QObject::disconnect(child,nullptr,this,nullptr);m_managerStack->setCurrentIndex(0);m_managerStack->removeWidget(page);page->hide();page->setParent(nullptr);m_referenceDraft.reset();page->deleteLater();m_mode=WorkspaceMode::Part;m_viewport->setReferenceCandidates({},{});m_viewport->setShape(m_session.document().shape());m_viewport->showReferencePlanes(false);m_historyDock->setWindowTitle("FeatureManager");updateDocumentUi();m_viewport->setFocus();
 }
-void MainWindow::refreshReferenceGeometry(){if(!m_referenceDraft){m_viewport->setDatums(visuals(m_document));const auto* feature=selectedFeature();m_viewport->setSelectedDatum(feature&&feature->kind==document::FeatureKind::ReferenceGeometry?feature->id:"");}}
+void MainWindow::refreshReferenceGeometry(){if(!m_referenceDraft){m_viewport->setDatums(visuals(m_session.document()));const auto* feature=selectedFeature();m_viewport->setSelectedDatum(feature&&feature->kind==document::FeatureKind::ReferenceGeometry?feature->id:"");}}
 void MainWindow::createSketchOnReferencePlane(const std::string& id){
-    try{auto candidate=m_document;const auto sketchId=candidate.addSketch(candidate.sketchOnReferencePlane(id));m_selectingPlane=false;if(!applyModel(std::move(candidate),sketchId))return;startSketchEditing(*selectedFeature());}catch(const std::exception& error){reportError(QString::fromUtf8(error.what()));}
+    try{auto candidate=m_session.document();const auto sketchId=candidate.addSketch(candidate.sketchOnReferencePlane(id));m_selectingPlane=false;if(!applyModel(std::move(candidate),sketchId))return;startSketchEditing(*selectedFeature());}catch(const std::exception& error){reportError(QString::fromUtf8(error.what()));}
 }
 bool MainWindow::referenceGeometryEvent(QObject* watched,QEvent* event){
     if(!m_referenceDraft)return false;auto* widget=qobject_cast<QWidget*>(watched);if(!widget||widget->window()!=this)return false;

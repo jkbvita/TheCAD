@@ -1,5 +1,5 @@
 #include <IntCurvesFace_ShapeIntersector.hxx>
-#include "ui/SelectionAppearance.h"
+#include "presentation/SelectionAppearance.h"
 #include "ui/CadViewport.h"
 #include <BRep_Tool.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
@@ -24,6 +24,7 @@
 #include <cmath>
 
 namespace thecad::ui {
+using namespace presentation;
 using modeling::SelectionKind;
 using modeling::SelectionRef;
 namespace {
@@ -55,9 +56,9 @@ void CadViewport::setSelectionFilters(std::uint32_t filters,bool enabled){
     updatePointPresentation();updateConstraintPresentation();updateDatumStyles();updatePlaneStyles();update();
 }
 void CadViewport::invalidateBodySelection(){
-    if(isReady())for(auto& item:m_selectionPresentations)m_context->Remove(item,Standard_False);m_selectionPresentations.clear();
+    if(isReady())for(auto& item:m_selectionPresentations)m_graphics.context()->Remove(item,Standard_False);m_selectionPresentations.clear();
     ++m_shapeGeneration;m_selection.invalidateTopology(m_shapeGeneration);m_nativeSelections.clear();m_selectedSolidFace=0;
-    if(isReady())m_context->ClearSelected(Standard_False);
+    if(isReady())m_graphics.context()->ClearSelected(Standard_False);
     previewCandidate({});if(m_selectOtherMenu)m_selectOtherMenu->close();
 }
 void CadViewport::prepareBodyPicking(){
@@ -100,15 +101,15 @@ std::vector<CadViewport::PickCandidate> CadViewport::selectionCandidates(const Q
     }else{
         // OCCT intersects sensitive topology, including exact trimmed circles
         // and triangulated faces. It never tests a projected bounding box alone.
-        if(!m_presentation.IsNull() && m_context->IsDisplayed(m_presentation)){
+        if(!m_presentation.IsNull() && m_graphics.context()->IsDisplayed(m_presentation)){
             prepareBodyPicking();
-            const auto pixel=nativePosition(position);const auto selector=m_context->MainSelector();
+            const auto pixel=nativePosition(position);const auto selector=m_graphics.context()->MainSelector();
             // OCCT's point frustum uses a full width, while our tolerance is a
             // cursor radius. Ensure custom sensitivity is actually installed:
             // 7.9 can otherwise early-return when the adaptive maximum matches.
             const int width=qMax(1,qRound(2*m_pickingTolerance*devicePixelRatioF()));
             if(selector->CustomPixelTolerance()!=width){selector->SetPixelTolerance(width+1);selector->SetPixelTolerance(width);}
-            selector->Pick(pixel.x(),pixel.y(),m_view);
+            selector->Pick(pixel.x(),pixel.y(),m_graphics.view());
             double frontDepth=1e100;
             for(int n=1;n<=selector->NbPicked();++n){
                 const auto owner=Handle(StdSelect_BRepOwner)::DownCast(selector->Picked(n));
@@ -118,16 +119,16 @@ std::vector<CadViewport::PickCandidate> CadViewport::selectionCandidates(const Q
                 const auto& map=type==TopAbs_FACE?m_selectionFaces:type==TopAbs_EDGE?m_selectionEdges:type==TopAbs_VERTEX?m_selectionVertices:m_selectionBodies;const int index=map.FindIndex(shape);if(index<=0)continue;
                 if((type==TopAbs_EDGE&&m_seamEdges.count(index))||(type==TopAbs_VERTEX&&m_artificialVertices.count(index)))continue;
                 auto hit=type==TopAbs_VERTEX?BRep_Tool::Pnt(TopoDS::Vertex(shape)):selector->PickedPoint(n);bool onFace=false;
-                if(type==TopAbs_FACE||type==TopAbs_SOLID){double x,y,z,dx,dy,dz;m_view->ConvertWithProj(pixel.x(),pixel.y(),x,y,z,dx,dy,dz);IntCurvesFace_ShapeIntersector intersection;intersection.Load(shape,1e-7);intersection.Perform(gp_Lin(gp_Pnt(x,y,z),gp_Dir(dx,dy,dz)),-1e15,1e15);double nearest=1e100;for(int k=1;k<=intersection.NbPnt();++k){const auto p=intersection.Pnt(k);const double d=gp_Vec(m_view->Camera()->Eye(),p).Dot(gp_Vec(m_view->Camera()->Direction()));if(d>=0&&d<nearest){nearest=d;hit=p;onFace=true;}}}
-                const double depth=gp_Vec(m_view->Camera()->Eye(),hit).Dot(gp_Vec(m_view->Camera()->Direction()));
-                int x,y;m_view->Convert(hit.X(),hit.Y(),hit.Z(),x,y);const double distance=onFace?0:QLineF(position,QPointF(x/devicePixelRatioF(),y/devicePixelRatioF())).length();
+                if(type==TopAbs_FACE||type==TopAbs_SOLID){double x,y,z,dx,dy,dz;m_graphics.view()->ConvertWithProj(pixel.x(),pixel.y(),x,y,z,dx,dy,dz);IntCurvesFace_ShapeIntersector intersection;intersection.Load(shape,1e-7);intersection.Perform(gp_Lin(gp_Pnt(x,y,z),gp_Dir(dx,dy,dz)),-1e15,1e15);double nearest=1e100;for(int k=1;k<=intersection.NbPnt();++k){const auto p=intersection.Pnt(k);const double d=gp_Vec(m_graphics.view()->Camera()->Eye(),p).Dot(gp_Vec(m_graphics.view()->Camera()->Direction()));if(d>=0&&d<nearest){nearest=d;hit=p;onFace=true;}}}
+                const double depth=gp_Vec(m_graphics.view()->Camera()->Eye(),hit).Dot(gp_Vec(m_graphics.view()->Camera()->Direction()));
+                int x,y;m_graphics.view()->Convert(hit.X(),hit.Y(),hit.Z(),x,y);const double distance=onFace?0:QLineF(position,QPointF(x/devicePixelRatioF(),y/devicePixelRatioF())).length();
                 if(distance>m_pickingTolerance)continue;
                 frontDepth=std::min(frontDepth,depth);
                 append({{kind,m_bodyFeatureId,{},modeling::PointRole::First,index,m_shapeGeneration},distance,depth},shape,owner,hit);
             }
             // Tiny depth slack permits shared front edges/vertices. Back edges
             // remain unavailable on normal clicks even with an edge-only filter.
-            const double slack=std::max(1e-6,m_view->Camera()->Scale()/std::max(1,height())*2.0);
+            const double slack=std::max(1e-6,m_graphics.view()->Camera()->Scale()/std::max(1,height())*2.0);
             for(auto& candidate:candidates)candidate.value.occluded=candidate.value.depth>frontDepth+slack;
         }
         if(!m_referenceCandidateKind){
@@ -139,8 +140,8 @@ std::vector<CadViewport::PickCandidate> CadViewport::selectionCandidates(const Q
                 append({{datumSelectionKind(datum.geometry.kind),datum.id},0,0},modeling::datumDisplayShape(datum.geometry,50));
             }
             if(m_planesVisible){
-                const auto pixel=nativePosition(position);double x,y,z,dx,dy,dz;m_view->ConvertWithProj(pixel.x(),pixel.y(),x,y,z,dx,dy,dz);
-                const gp_Dir direction(dx,dy,dz);const gp_Pnt projected(x,y,z);const double depth=gp_Vec(m_view->Camera()->Eye(),projected).Dot(gp_Vec(direction));const gp_Lin ray(projected.Translated(-gp_Vec(direction)*depth),direction);
+                const auto pixel=nativePosition(position);double x,y,z,dx,dy,dz;m_graphics.view()->ConvertWithProj(pixel.x(),pixel.y(),x,y,z,dx,dy,dz);
+                const gp_Dir direction(dx,dy,dz);const gp_Pnt projected(x,y,z);const double depth=gp_Vec(m_graphics.view()->Camera()->Eye(),projected).Dot(gp_Vec(direction));const gp_Lin ray(projected.Translated(-gp_Vec(direction)*depth),direction);
                 const auto nearest=modeling::pickReferencePlane(ray,m_planeHalfExtent);
                 for(const auto type:{modeling::SketchPlane::XY,modeling::SketchPlane::XZ,modeling::SketchPlane::YZ})if(modeling::pickReferencePlane(ray,m_planeHalfExtent,type))
                     append({{SelectionKind::OriginPlane,{}, {},modeling::PointRole::First,int(type)},0,nearest&&nearest->plane==type?0.0:1.0},modeling::referencePlaneFace(type,m_planeHalfExtent));
@@ -156,7 +157,7 @@ std::vector<CadViewport::PickCandidate> CadViewport::selectionCandidates(const Q
     for(const auto& value:ordered){const auto found=std::find_if(candidates.begin(),candidates.end(),[&](const auto& c){return c.value.reference==value.reference;});result.push_back(*found);}return result;
 }
 void CadViewport::previewCandidate(const std::optional<PickCandidate>& candidate){
-    if(isReady()&&!m_selectionHover.IsNull())m_context->Remove(m_selectionHover,Standard_False);m_selectionHover.Nullify();
+    if(isReady()&&!m_selectionHover.IsNull())m_graphics.context()->Remove(m_selectionHover,Standard_False);m_selectionHover.Nullify();
     if(m_sketchEditing){
         m_hoveredPoint.reset();m_hoveredEntity.clear();m_hoveredDimension.clear();m_hoveredRelation.clear();
         if(candidate){const auto& r=candidate->value.reference;
@@ -176,7 +177,7 @@ void CadViewport::previewCandidate(const std::optional<PickCandidate>& candidate
     m_selectionHover=new AIS_Shape(selectionOutline(candidate->shape));m_selectionHover->SetDisplayMode(AIS_WireFrame);m_selectionHover->SetColor(hoverOrange());m_selectionHover->SetWidth(3*devicePixelRatioF());
     if(candidate->value.occluded)m_selectionHover->SetZLayer(Graphic3d_ZLayerId_Topmost);
     m_selectionHover->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_POINT,hoverOrange(),9*devicePixelRatioF()));
-    m_context->Display(m_selectionHover,AIS_WireFrame,-1,Standard_False);update();
+    m_graphics.context()->Display(m_selectionHover,AIS_WireFrame,-1,Standard_False);update();
 }
 void CadViewport::updateSelectionHover(const QPointF& point){
     auto candidates=selectionCandidates(point);previewCandidate(candidates.empty()?std::optional<PickCandidate>{}:candidates.front());
@@ -187,10 +188,10 @@ void CadViewport::updateSelectionHover(const QPointF& point){
     }updateDatumStyles();updatePlaneStyles();update();
 }
 void CadViewport::refreshNativeSelection(){
-    if(!isReady())return;m_context->ClearSelected(Standard_False);
-    for(const auto& item:m_nativeSelections)if(std::find(m_selection.items().begin(),m_selection.items().end(),item.value.reference)!=m_selection.items().end()&&!item.owner.IsNull())m_context->AddOrRemoveSelected(item.owner,Standard_False);
-    for(auto& item:m_selectionPresentations)m_context->Remove(item,Standard_False);m_selectionPresentations.clear();
-    const auto display=[&](const TopoDS_Shape& shape){if(shape.IsNull())return;Handle(AIS_Shape) item=new AIS_Shape(shape);styleSelectedShape(item,devicePixelRatioF());const bool filled=shape.ShapeType()==TopAbs_FACE||shape.ShapeType()==TopAbs_SOLID||shape.ShapeType()==TopAbs_COMPOUND;m_context->Display(item,filled?AIS_Shaded:AIS_WireFrame,-1,Standard_False);m_selectionPresentations.push_back(item);};
+    if(!isReady())return;m_graphics.context()->ClearSelected(Standard_False);
+    for(const auto& item:m_nativeSelections)if(std::find(m_selection.items().begin(),m_selection.items().end(),item.value.reference)!=m_selection.items().end()&&!item.owner.IsNull())m_graphics.context()->AddOrRemoveSelected(item.owner,Standard_False);
+    for(auto& item:m_selectionPresentations)m_graphics.context()->Remove(item,Standard_False);m_selectionPresentations.clear();
+    const auto display=[&](const TopoDS_Shape& shape){if(shape.IsNull())return;Handle(AIS_Shape) item=new AIS_Shape(shape);styleSelectedShape(item,devicePixelRatioF());const bool filled=shape.ShapeType()==TopAbs_FACE||shape.ShapeType()==TopAbs_SOLID||shape.ShapeType()==TopAbs_COMPOUND;m_graphics.context()->Display(item,filled?AIS_Shaded:AIS_WireFrame,-1,Standard_False);m_selectionPresentations.push_back(item);};
     if(m_treeBodySelected)display(m_shape);else for(const auto& item:m_nativeSelections)if(std::find(m_selection.items().begin(),m_selection.items().end(),item.value.reference)!=m_selection.items().end())display(item.shape);
     if(m_selectedSolidFace>0&&m_nativeSelections.empty()){TopTools_IndexedMapOfShape faces;TopExp::MapShapes(m_shape,TopAbs_FACE,faces);if(m_selectedSolidFace<=faces.Extent())display(faces(m_selectedSolidFace));}
     updateDatumStyles();updatePlaneStyles();update();
@@ -235,7 +236,7 @@ void CadViewport::selectCandidate(const PickCandidate& item,bool toggle){
     }else {emit solidFaceSelected(0);emit datumSelected({});}
 }
 void CadViewport::showSelectOther(const QPoint& point){
-    if(m_sketchTool||m_dimensionDrag||m_pointDrag||m_regionSelecting||!m_referenceCandidates.empty())return;
+    if(m_tools.drawing()||m_dimensionDrag||m_pointDrag||m_regionSelecting||!m_referenceCandidates.empty())return;
     const auto candidates=selectionCandidates(point,true);if(candidates.empty())return;
     if(m_selectOtherMenu)m_selectOtherMenu->close();auto* menu=new QMenu(this);menu->setObjectName("selectOtherMenu");menu->setAttribute(Qt::WA_DeleteOnClose);m_selectOtherMenu=menu;
     for(const auto& candidate:candidates){const auto& r=candidate.value.reference;
@@ -251,7 +252,7 @@ void CadViewport::showSelectOther(const QPoint& point){
     connect(menu,&QMenu::aboutToHide,this,[this]{previewCandidate({});update();});menu->popup(mapToGlobal(point));menu->setActiveAction(menu->actions().front());
 }
 void CadViewport::contextMenuEvent(QContextMenuEvent* event){
-    if(m_sketchTool||m_dimensionDrag||m_pointDrag||m_regionSelecting||!m_referenceCandidates.empty()){event->ignore();return;}
+    if(m_tools.drawing()||m_dimensionDrag||m_pointDrag||m_regionSelecting||!m_referenceCandidates.empty()){event->ignore();return;}
     if(!m_contextClick&&event->reason()!=QContextMenuEvent::Keyboard){event->ignore();return;}
     m_contextClick=false;auto* menu=new QMenu(this);menu->setObjectName("geometryContextMenu");menu->setAttribute(Qt::WA_DeleteOnClose);
     const auto position=event->reason()==QContextMenuEvent::Keyboard?rect().center():event->pos();

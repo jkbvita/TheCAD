@@ -1,7 +1,7 @@
 #pragma once
 
 #include "document/PartDocument.h"
-#include "document/UndoHistory.h"
+#include "application/DocumentSession.h"
 
 #include <QMainWindow>
 #include <QPointer>
@@ -31,6 +31,7 @@ class QMenu;
 namespace thecad::ui {
 
 class CadViewport;
+class FeatureTreePresenter;
 
 class MainWindow : public QMainWindow {
 public:
@@ -118,20 +119,13 @@ private:
     bool saveToPath(const QString& path);
     bool replaceDocument(document::PartDocument candidate, const QString& path);
     bool applyModel(document::PartDocument candidate, const std::string& selectedId,bool record=true);
-    struct EditState {
-        document::PartDocument document;
-        std::optional<modeling::Sketch> sketch;
-        std::string sketchId,selectedId;
-        TopoDS_Shape displayedShape;
-        std::size_t revision=0;
-    };
+    using EditState=application::DocumentSession::State;
     EditState editState() const;
     void rememberChange(EditState previous);
     void rememberSketchChange(EditState previous);
     void traverseHistory(bool redo);
     void updateHistoryActions();
-    document::UndoHistory<EditState> m_editHistory{10};
-    std::size_t m_revision=0,m_nextRevision=0,m_savedRevision=0;
+
     QAction* m_undo=nullptr;
     QAction* m_redo=nullptr;
     void updateDocumentUi();
@@ -179,11 +173,11 @@ private:
 
     enum class WorkspaceMode { Part, SelectingPlane, EditingSketch, FeatureDraft };
     WorkspaceMode m_mode = WorkspaceMode::Part;
-    document::PartDocument m_document;
-    QString m_path;
+    application::DocumentSession m_session;
     CadViewport* m_viewport = nullptr;
     QLabel* m_dimensions = nullptr;
     QTreeWidget* m_tree = nullptr;
+    std::unique_ptr<FeatureTreePresenter> m_treePresenter;
     QDockWidget* m_historyDock = nullptr;
     QStackedWidget* m_managerStack = nullptr;
     QListWidget* m_entities = nullptr;
@@ -212,9 +206,6 @@ private:
     std::optional<modeling::SketchPlane> m_selectedPlane;
     bool m_selectingPlane = false;
     int m_selectedFace = 0;
-    std::optional<modeling::Sketch> m_editSketch;
-    std::string m_editSketchId;
-    std::string m_selectedId;
     std::unique_ptr<OperationDraft> m_operation;
 };
 

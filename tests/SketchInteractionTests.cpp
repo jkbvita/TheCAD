@@ -168,12 +168,12 @@ private slots:
         move({45,-10});QVERIFY(viewport->m_pointDrag->candidate);QCOMPARE(changes.count(),2);
         const auto text=dimensionAnnotationPosition(*viewport->m_sketch,viewport->m_sketch->dimensions[0]);
         QVERIFY(std::hypot(text.x-anchor.x,text.y-anchor.y)>1);
-        const auto expected=sketchPoint(*viewport->m_sketch,text);QVERIFY(viewport->m_constraintLabels[0]->Position().Distance(expected)<1e-7);
+        const auto expected=sketchPoint(*viewport->m_sketch,text);QVERIFY(viewport->m_dimensions.labels()[0]->Position().Distance(expected)<1e-7);
         QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,pixel({45,-10}));QCOMPARE(changes.count(),3);
         // Circular annotation rotates on repeated drags, including while Smart Dimension is active.
         viewport->setSmartDimensionPicking(true);anchor=dimensionAnnotationPosition(*viewport->m_sketch,viewport->m_sketch->dimensions[1]);
         QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,pixel(anchor));QVERIFY(viewport->m_dimensionDrag);move({-50,45});
-        QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,pixel({-50,45}));QVERIFY(viewport->m_smartDimensionPicking);
+        QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,pixel({-50,45}));QVERIFY(viewport->m_tools.dimensionPicking());
         const auto g=dimensionGraphics(*viewport->m_sketch,viewport->m_sketch->dimensions[1],0.2);
         QVERIFY(g.segments.front().second.x < -30);QCOMPARE(viewport->m_sketch->entities[1].radius,8.0);
         viewport->setSmartDimensionPicking(false);
@@ -182,7 +182,7 @@ private slots:
         using namespace modeling;Sketch sketch;sketch.entities={{EntityKind::Line,{-40,-20},{40,-20},1,"a"},{EntityKind::Line,{-40,-15},{40,-15},1,"b"},{EntityKind::Circle,{20,30},{},1,"small"},{EntityKind::Line,{-25,30},{-24,30},1,"short"}};
         viewport->beginSketch(sketch);viewport->selectSketchTool();QCOMPARE(viewport->pickingTolerance(),8.0);
         for(const double scale:{100.0,200.0}) {
-            viewport->m_view->Camera()->SetScale(scale);
+            viewport->m_graphics.view()->Camera()->SetScale(scale);
             QVERIFY(viewport->entityAt(pixel({0,-20})+QPoint(0,6))==std::optional<std::string>("a"));
             QVERIFY(!viewport->entityAt(pixel({0,-20})+QPoint(0,12)));
             QVERIFY(viewport->entityAt(pixel({21,30})+QPoint(6,0))==std::optional<std::string>("small"));
@@ -211,8 +211,8 @@ private slots:
         auto pinned=*viewport->m_sketch;SketchRelation fixed;fixed.id="fixed-center";fixed.kind=RelationKind::FixedPoint;fixed.first={"circle",PointRole::Center};fixed.fixedPosition=pinned.entities[1].first;pinned.relations.push_back(fixed);viewport->setSketch(pinned);const auto center=pinned.entities[1].first;drag(center,{-40,-40});QCOMPARE(viewport->m_sketch->entities[1].first.x,center.x);QCOMPARE(viewport->m_sketch->entities[1].first.y,center.y);
     }
     void renderingQualityBeforeAndAfter() {
-        const auto expected=viewport->m_view->RenderingParams();
-        if (viewport->m_viewer->Driver()->InquireLimit(Graphic3d_TypeOfLimit_MaxMsaa) >= 4)
+        const auto expected=viewport->m_graphics.view()->RenderingParams();
+        if (viewport->m_graphics.viewer()->Driver()->InquireLimit(Graphic3d_TypeOfLimit_MaxMsaa) >= 4)
             QCOMPARE(expected.NbMsaaSamples,4);
         modeling::Sketch sketch; sketch.entities={
             {modeling::EntityKind::Line,{-45,-12},{40,24},1,"diagonal"},
@@ -221,21 +221,21 @@ private slots:
         const QString directory=qEnvironmentVariable("THECAD_TEST_ARTIFACT_DIR",QDir::currentPath()+"/test-artifacts")+"/rendering";
         QVERIFY(QDir().mkpath(directory));
         for (const double zoom : {0.75,1.0,3.0}) {
-            viewport->m_view->Camera()->SetScale(150.0/zoom);
+            viewport->m_graphics.view()->Camera()->SetScale(150.0/zoom);
             const QString stem=directory+QString("/sketch-%1").arg(zoom);
-            viewport->m_view->ChangeRenderingParams().NbMsaaSamples=0;
-            viewport->m_view->ChangeRenderingParams().IsAntialiasingEnabled=false;
+            viewport->m_graphics.view()->ChangeRenderingParams().NbMsaaSamples=0;
+            viewport->m_graphics.view()->ChangeRenderingParams().IsAntialiasingEnabled=false;
             viewport->m_sketchPresentation->SetWidth(3.0);
             viewport->m_sketchPresentation->Attributes()->SetDeviationCoefficient(0.001);
             viewport->m_sketchPresentation->Attributes()->SetDeviationAngle(0.5);
-            viewport->m_context->Redisplay(viewport->m_sketchPresentation,false);
-            QVERIFY(viewport->m_view->Dump((stem+"-before.png").toUtf8().constData()));
-            viewport->m_view->ChangeRenderingParams()=expected;
+            viewport->m_graphics.context()->Redisplay(viewport->m_sketchPresentation,false);
+            QVERIFY(viewport->m_graphics.view()->Dump((stem+"-before.png").toUtf8().constData()));
+            viewport->m_graphics.view()->ChangeRenderingParams()=expected;
             viewport->m_sketchPresentation->SetWidth(2.0*viewport->devicePixelRatioF());
             viewport->m_sketchPresentation->Attributes()->SetDeviationCoefficient(1e-5);
             viewport->m_sketchPresentation->Attributes()->SetDeviationAngle(0.015);
-            viewport->m_context->Redisplay(viewport->m_sketchPresentation,false);
-            QVERIFY(viewport->m_view->Dump((stem+"-after.png").toUtf8().constData()));
+            viewport->m_graphics.context()->Redisplay(viewport->m_sketchPresentation,false);
+            QVERIFY(viewport->m_graphics.view()->Dump((stem+"-after.png").toUtf8().constData()));
             const QImage before(stem+"-before.png"),after(stem+"-after.png");
             QVERIFY(!before.isNull() && !after.isNull()); QCOMPARE(before.size(),after.size());
             QVERIFY(before!=after);
@@ -250,7 +250,7 @@ private slots:
         viewport->beginSketch(sketch); viewport->selectSketchTool();
         QCOMPARE(viewport->m_pointPresentations.size(),std::size_t(5));
         QSignalSpy changes(viewport,&CadViewport::sketchChanged);
-        const auto direction=viewport->m_view->Camera()->Direction();
+        const auto direction=viewport->m_graphics.view()->Camera()->Direction();
         const auto drag=[&](modeling::Point2 from,modeling::Point2 to,QPoint offset={}) {
             QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,pixel(from));
             const auto p=pixel(to)+offset;
@@ -268,7 +268,7 @@ private slots:
         QCOMPARE(changes.count(),2);
         const auto& a=viewport->m_sketch->entities[0];const auto& b=viewport->m_sketch->entities[1];
         QCOMPARE(a.second.x,b.first.x);QCOMPARE(a.second.y,b.first.y);
-        QVERIFY(direction.Angle(viewport->m_view->Camera()->Direction())<1e-10);
+        QVERIFY(direction.Angle(viewport->m_graphics.view()->Camera()->Direction())<1e-10);
         modeling::validateSketchRelations(*viewport->m_sketch);
         auto part=document::PartDocument::createEmpty();part.addSketch(*viewport->m_sketch);
         QTemporaryDir dir;const auto path=dir.filePath("dragged.thepart");part.save(path);
@@ -366,7 +366,7 @@ private slots:
         click({0,0}); click(sketch.entities.front().second);
         QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(4)); // no zero/duplicate edges
         QTest::keyClick(viewport,Qt::Key_Escape);
-        QVERIFY(!viewport->m_firstPoint); QVERIFY(!viewport->m_sketchTool);
+        QVERIFY(!viewport->m_firstPoint); QVERIFY(!viewport->m_tools.drawing());
         const auto& first=sketch.entities.front();
         click({(first.first.x+first.second.x)/2,0});
         QCOMPARE(viewport->m_selectedEntity,first.id);
@@ -405,9 +405,9 @@ private slots:
             viewport->endSketch(); viewport->resetView();
             modeling::Sketch sketch; sketch.plane=plane; viewport->beginSketch(sketch);
             const auto axes=modeling::sketchAxes(plane);
-            QVERIFY(viewport->m_view->Camera()->Direction().Dot(axes.Direction()) < -0.999999);
-            QVERIFY(viewport->m_view->Camera()->Up().Dot(axes.YDirection()) > 0.999999);
-            QVERIFY(viewport->m_view->Camera()->Center().Distance(gp_Pnt(0,0,0)) < 1e-8);
+            QVERIFY(viewport->m_graphics.view()->Camera()->Direction().Dot(axes.Direction()) < -0.999999);
+            QVERIFY(viewport->m_graphics.view()->Camera()->Up().Dot(axes.YDirection()) > 0.999999);
+            QVERIFY(viewport->m_graphics.view()->Camera()->Center().Distance(gp_Pnt(0,0,0)) < 1e-8);
         }
         viewport->setShape({});
     }

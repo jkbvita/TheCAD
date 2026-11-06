@@ -1,4 +1,4 @@
-#include "ui/SelectionAppearance.h"
+#include "presentation/SelectionAppearance.h"
 #include <QListWidget>
 #include "ui/MainWindow.h"
 #include "ui/CadViewport.h"
@@ -23,6 +23,7 @@
 #include <cmath>
 
 namespace thecad::ui {
+using namespace presentation;
 class PlaneTestWindow : public MainWindow {
 public:
     QString path;
@@ -40,7 +41,7 @@ private:
     QPoint project(CadViewport* viewport, const gp_Pnt& point)
     {
         int x, y;
-        viewport->m_view->Convert(point.X(), point.Y(), point.Z(), x, y);
+        viewport->m_graphics.view()->Convert(point.X(), point.Y(), point.Z(), x, y);
         return {qRound(x / viewport->devicePixelRatioF()), qRound(y / viewport->devicePixelRatioF())};
     }
     std::optional<QPoint> pickPoint(CadViewport* viewport, modeling::SketchPlane plane)
@@ -101,43 +102,43 @@ private slots:
             QVERIFY(selected>0);
             if(sketchFirst)command(window,"actionCreateSketch");
             const auto axes=modeling::sketchAxes(support);
-            viewport->m_view->SetAt(axes.Location().X(),axes.Location().Y(),axes.Location().Z());
-            viewport->m_view->SetProj(axes.Direction().X(),axes.Direction().Y(),axes.Direction().Z());
-            viewport->m_view->SetUp(axes.YDirection().X(),axes.YDirection().Y(),axes.YDirection().Z());viewport->m_view->Camera()->SetScale(90);
-            viewport->m_view->Redraw();const auto pixel=project(viewport,axes.Location());
+            viewport->m_graphics.view()->SetAt(axes.Location().X(),axes.Location().Y(),axes.Location().Z());
+            viewport->m_graphics.view()->SetProj(axes.Direction().X(),axes.Direction().Y(),axes.Direction().Z());
+            viewport->m_graphics.view()->SetUp(axes.YDirection().X(),axes.YDirection().Y(),axes.YDirection().Z());viewport->m_graphics.view()->Camera()->SetScale(90);
+            viewport->m_graphics.view()->Redraw();const auto pixel=project(viewport,axes.Location());
             QCOMPARE(viewport->faceAt(pixel),selected);
             QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,pixel);
             if(!sketchFirst){
-                QCOMPARE(viewport->selectedSolidFace(),selected);QCOMPARE(viewport->m_context->NbSelected(),1);
+                QCOMPARE(viewport->selectedSolidFace(),selected);QCOMPARE(viewport->m_graphics.context()->NbSelected(),1);
                 for(const auto type:{Prs3d_TypeOfHighlight_Selected,Prs3d_TypeOfHighlight_LocalSelected}){
-                    const auto style=viewport->m_context->HighlightStyle(type);
+                    const auto style=viewport->m_graphics.context()->HighlightStyle(type);
                     QVERIFY(style->Color().Distance(selectionBlue())<1e-6);
                     QCOMPARE(style->DisplayMode(),int(AIS_Shaded));QVERIFY(std::abs(style->Transparency()-0.0)<1e-6);
                 }
                 const auto featureCount=window.document().features().size();const bool dirty=window.isWindowModified();
                 QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,pixel);
-                QCOMPARE(viewport->selectedSolidFace(),selected);QCOMPARE(viewport->m_context->NbSelected(),1);
+                QCOMPARE(viewport->selectedSolidFace(),selected);QCOMPARE(viewport->m_graphics.context()->NbSelected(),1);
                 std::optional<QPoint> blank;
                 for(const auto p:{QPoint(5,5),QPoint(viewport->width()-5,5),QPoint(5,viewport->height()-5)})if(!viewport->faceAt(p)&&!viewport->planeAt(p)){blank=p;break;}
                 QVERIFY(blank);QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,*blank);
-                QCOMPARE(viewport->selectedSolidFace(),0);QCOMPARE(viewport->m_context->NbSelected(),0);
+                QCOMPARE(viewport->selectedSolidFace(),0);QCOMPARE(viewport->m_graphics.context()->NbSelected(),0);
                 QCOMPARE(window.document().features().size(),featureCount);QCOMPARE(window.isWindowModified(),dirty);
                 QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,pixel);
                 QCOMPARE(viewport->selectedSolidFace(),selected);command(window,"actionCreateSketch");
             }
-            QCOMPARE(viewport->selectedSolidFace(),0);QCOMPARE(viewport->m_context->NbSelected(),0);
+            QCOMPARE(viewport->selectedSolidFace(),0);QCOMPARE(viewport->m_graphics.context()->NbSelected(),0);
             QVERIFY(viewport->m_sketchEditing);QVERIFY(viewport->m_sketch->attachment);
             QCOMPARE(viewport->m_sketch->attachment->faceIndex,selected);
-            QVERIFY(viewport->m_view->Camera()->Direction().Dot(axes.Direction())< -0.999);
+            QVERIFY(viewport->m_graphics.view()->Camera()->Direction().Dot(axes.Direction())< -0.999);
             const auto origin=viewport->screenPoint({0,0});const auto local=viewport->sketchPosition(origin);
             QVERIFY(local && std::abs(local->x)<0.2 && std::abs(local->y)<0.2);
             for(const auto& axis:viewport->m_globalAxes)QVERIFY(axis.IsNull());
             // Reproduce drawing after zooming/panning on top and side body
             // faces through the real MainWindow sketchChanged/regeneration path.
-            viewport->m_view->SetZoom(4.0);viewport->m_view->Pan(25,-15);
-            const auto camera=viewport->m_view->Camera();
+            viewport->m_graphics.view()->SetZoom(4.0);viewport->m_graphics.view()->Pan(25,-15);
+            const auto camera=viewport->m_graphics.view()->Camera();
             const auto eye=camera->Eye(),center=camera->Center();const auto up=camera->Up();const auto direction=camera->Direction();const double scale=camera->Scale();
-            const auto cameraUnchanged=[&]{const auto current=viewport->m_view->Camera();return std::abs(current->Scale()-scale)<1e-7 && current->Eye().Distance(eye)<1e-7 && current->Center().Distance(center)<1e-7 && current->Up().Angle(up)<1e-7 && current->Direction().Angle(direction)<1e-7;};
+            const auto cameraUnchanged=[&]{const auto current=viewport->m_graphics.view()->Camera();return std::abs(current->Scale()-scale)<1e-7 && current->Eye().Distance(eye)<1e-7 && current->Center().Distance(center)<1e-7 && current->Up().Angle(up)<1e-7 && current->Direction().Angle(direction)<1e-7;};
             const auto draw=[&](const char* tool,modeling::Point2 first,modeling::Point2 second){
                 command(window,tool);
                 QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,project(viewport,modeling::sketchPoint(support,first)));
@@ -193,10 +194,10 @@ private slots:
         QVERIFY(empty);
         QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, *empty);
         QVERIFY(window.document().features().empty());
-        const auto direction = viewport->m_view->Camera()->Direction();
+        const auto direction = viewport->m_graphics.view()->Camera()->Direction();
         drag(viewport, QPoint(viewport->width()/2, viewport->height()/2),
              QPoint(viewport->width()/2+80, viewport->height()/2+45));
-        QVERIFY(direction.Angle(viewport->m_view->Camera()->Direction()) > 0.01);
+        QVERIFY(direction.Angle(viewport->m_graphics.view()->Camera()->Direction()) > 0.01);
         QVERIFY(window.document().features().empty());
         QVERIFY(viewport->m_selectingPlane);
         QTest::keyClick(viewport, Qt::Key_Escape);
@@ -226,8 +227,8 @@ private slots:
             QVERIFY(!viewport->m_sketchAxes[0].IsNull());
             QVERIFY(!viewport->m_sketchOrigin.IsNull());
             const auto axes = modeling::sketchAxes(plane);
-            QVERIFY(viewport->m_view->Camera()->Direction().Dot(axes.Direction()) < -0.999);
-            QVERIFY(viewport->m_view->Camera()->Up().Dot(axes.YDirection()) > 0.999);
+            QVERIFY(viewport->m_graphics.view()->Camera()->Direction().Dot(axes.Direction()) < -0.999);
+            QVERIFY(viewport->m_graphics.view()->Camera()->Up().Dot(axes.YDirection()) > 0.999);
             command(window, "actionRectangle");
             const auto first = project(viewport, modeling::sketchPoint(plane, {-12, -10}));
             const auto second = project(viewport, modeling::sketchPoint(plane, {12, 10}));
@@ -282,8 +283,8 @@ private slots:
                 command(window, "actionEditFeature");
             }
             const auto normal = modeling::sketchAxes(static_cast<modeling::SketchPlane>(i)).Direction();
-            QVERIFY(viewport->m_view->Camera()->Direction().Dot(normal) < -0.999);
-            QVERIFY(viewport->m_view->Camera()->Up().Dot(modeling::sketchAxes(static_cast<modeling::SketchPlane>(i)).YDirection()) > 0.999);
+            QVERIFY(viewport->m_graphics.view()->Camera()->Direction().Dot(normal) < -0.999);
+            QVERIFY(viewport->m_graphics.view()->Camera()->Up().Dot(modeling::sketchAxes(static_cast<modeling::SketchPlane>(i)).YDirection()) > 0.999);
             command(window, "actionFinishSketch");
         }
         QVERIFY(window.errors.isEmpty());
@@ -293,8 +294,8 @@ private slots:
             window.document().save(artifacts + "/perpendicular-sketches.thepart");
             viewport->showReferencePlanes(true);
             viewport->resetView();
-            viewport->m_view->Redraw();
-            QVERIFY(viewport->m_view->Dump((artifacts + "/reference-planes.png").toUtf8().constData()));
+            viewport->m_graphics.view()->Redraw();
+            QVERIFY(viewport->m_graphics.view()->Dump((artifacts + "/reference-planes.png").toUtf8().constData()));
         }
         window.setWindowModified(false);
         QVERIFY(window.close());

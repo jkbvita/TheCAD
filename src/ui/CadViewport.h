@@ -1,6 +1,11 @@
 #pragma once
 
 #include "modeling/Sketch.h"
+#include "viewport/GraphicsScene.h"
+#include "viewport/CameraNavigation.h"
+#include "viewport/DimensionPresenter.h"
+#include "viewport/SketchPicker.h"
+#include "application/SketchToolController.h"
 #include "modeling/ConstraintSolver.h"
 #include "modeling/FeaturePreview.h"
 #include "modeling/ReferencePlanes.h"
@@ -55,7 +60,7 @@ public:
     void beginSketch(const modeling::Sketch& sketch);
     void endSketch();
     void setSketchTool(modeling::EntityKind kind,bool construction=false);
-    bool constructionTool() const {return m_constructionTool;}
+    bool constructionTool() const {return m_tools.construction();}
     void selectSketchTool();
     bool finishSketchMultiSelection();
     void cancelSketchMultiSelection();
@@ -82,8 +87,8 @@ public:
     std::string selectedSketchRelation() const {return m_selectedRelation;}
     void setPickingTolerance(double logicalPixels);
     double pickingTolerance() const { return m_pickingTolerance; }
-    std::optional<modeling::EntityKind> sketchTool() const { return m_sketchTool; }
-    bool smartDimensionActive() const { return m_smartDimensionPicking; }
+    std::optional<modeling::EntityKind> sketchTool() const { return m_tools.drawing(); }
+    bool smartDimensionActive() const { return m_tools.dimensionPicking(); }
     void fitAll();
     void resetView();
     void normalTo();
@@ -179,14 +184,12 @@ private:
     QPointF m_contextPress;
     bool m_contextClick=false;
     bool m_dispatchingSelection=false;
-    enum class Navigation { None, Orbit, Pan, Zoom };
+    using Navigation=viewport::CameraNavigation::Mode;
     void beginNavigation(QMouseEvent*);
     void moveNavigation(QMouseEvent*);
     void zoomToward(const QPointF&,double);
     gp_Pnt navigationPivot(const QPointF&);
-    gp_Pnt m_orbitPivot,m_zoomDepth;
-    std::optional<gp_Pnt> m_rotationAnchor;
-    QPointF m_navigationLogical;
+    viewport::CameraNavigation m_camera;
     void initialize();
     void releaseViewer();
     void synchronizeSurface();
@@ -196,7 +199,6 @@ private:
     void updateConstraintPresentation(bool layoutRelations=true);
     void updateCameraAnnotations();
     bool m_cameraAnnotationsDirty=false;
-    double m_annotationUnit=0;
     void updateRelationSymbols();
     void updateRelationPositions();
     std::optional<std::string> relationAt(const QPointF& position) const;
@@ -205,10 +207,7 @@ private:
     std::vector<Handle(AIS_Point)> m_relationMarkers;
     bool m_showRelations=true;
     std::string m_hoveredRelation,m_selectedRelation;
-    std::vector<Handle(AIS_TextLabel)> m_constraintLabels;
-    std::vector<Handle(AIS_Shape)> m_dimensionGuides;
-    bool m_constraintPicking = false;
-    bool m_smartDimensionPicking = false;
+    viewport::DimensionPresenter m_dimensions;
     std::optional<modeling::SketchDimension> m_dimensionPreview;
     std::vector<std::string> m_dimensionEntities;
     std::vector<modeling::SketchPointRef> m_dimensionPoints;
@@ -221,7 +220,8 @@ private:
     std::optional<modeling::ReferencePlaneHit> planeAt(const QPointF& position);
     void updateSketchPresentation(const std::optional<modeling::SketchEntity>& preview = {});
     std::optional<modeling::Point2> sketchPosition(const QPointF& position);
-    struct SnapHit { modeling::SketchPointRef reference; modeling::Point2 point; };
+    using SnapHit=viewport::SketchPicker::SnapHit;
+    viewport::SketchPicker sketchPicker()const;
     std::optional<SnapHit> pointAt(const QPointF& position,bool includeMidpoints=false) const;
     std::optional<SnapHit> selectionPointAt(const QPointF& position) const;
     std::optional<std::string> entityAt(const QPointF& position) const;
@@ -255,9 +255,7 @@ private:
     QPoint nativePosition(const QPointF& position) const;
 
     TopoDS_Shape m_shape;
-    Handle(V3d_Viewer) m_viewer;
-    Handle(V3d_View) m_view;
-    Handle(AIS_InteractiveContext) m_context;
+    viewport::GraphicsScene m_graphics;
     Handle(AIS_Shape) m_presentation;
     Handle(AIS_Shape) m_sketchPresentation;
     Handle(AIS_Shape) m_constructionPresentation;
@@ -273,8 +271,7 @@ private:
     void updateDatumStyles();
     std::vector<std::string> datumIdsAt(const QPointF& position);
     void updateReferenceHover(const QPointF& position);
-    std::optional<modeling::EntityKind> m_sketchTool;
-    bool m_constructionTool=false;
+    application::SketchToolController m_tools;
     std::optional<modeling::SketchEntity> m_drawingPreview;
     void placeSketchPoint(const QPointF& position);
     std::optional<modeling::Point2> m_firstPoint;
@@ -332,11 +329,7 @@ private:
     bool m_planeClickCandidate = false;
     QPointF m_planePressPosition;
     double m_planeHalfExtent = 50.0;
-    QSize m_renderSize;
     QString m_error;
-    Navigation m_navigation = Navigation::None;
-    Qt::MouseButton m_navigationButton = Qt::NoButton;
-    QPoint m_previousPosition;
     bool m_attemptedInitialization = false;
 };
 

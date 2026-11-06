@@ -32,9 +32,10 @@ struct Feature {
 };
 struct ReferenceOption {std::string label;modeling::GeometryReference reference;modeling::DatumGeometry geometry;TopoDS_Shape selectionShape;};
 
-// Sequential prototype feature history. No UI widgets or permanent topology naming.
+// Sequential feature history with persistent support names and no UI dependency.
 // Every edit regenerates a candidate history before changing this document.
 class PartDocument final {
+    friend class PartFileStore;
 public:
     static PartDocument createEmpty();
     static PartDocument createBox(BoxParameters parameters = {});

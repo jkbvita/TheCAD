@@ -4,6 +4,14 @@ TheCAD is a standalone, open-source mechanical CAD application under development
 not a FreeCAD fork. The Windows prototype uses C++, Qt 6, Open CASCADE Technology
 (OCCT), and CMake as owner-approved provisional choices.
 
+## Architecture
+
+The code is divided into independently built modeling, document, application,
+presentation, graphics, widget and UI-shell modules. The engine and application
+services also build with `-DTHECAD_BUILD_GUI=OFF`. See the
+[architecture guide](docs/architecture.md) for component ownership, dependency
+rules, build options and extension guidelines.
+
 ## Current sketch-creation workflow
 
 Click **Sketch** in the SKETCH tab, hover a labeled Front, Top, or Right plane

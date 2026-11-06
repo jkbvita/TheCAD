@@ -26,14 +26,14 @@ private:
 
     void verifyNativeSurface()
     {
-        const auto glView = Handle(OpenGl_View)::DownCast(viewport->m_view->View());
+        const auto glView = Handle(OpenGl_View)::DownCast(viewport->m_graphics.view()->View());
         QVERIFY(!glView.IsNull());
         const auto& surface = glView->GlWindow();
         const QSize expected(qRound(viewport->width() * viewport->devicePixelRatioF()),
                              qRound(viewport->height() * viewport->devicePixelRatioF()));
         QTRY_COMPARE(surface->Width(), expected.width());
         QTRY_COMPARE(surface->Height(), expected.height());
-        QVERIFY(std::abs(viewport->m_view->Camera()->Aspect()
+        QVERIFY(std::abs(viewport->m_graphics.view()->Camera()->Aspect()
                 - double(expected.width()) / expected.height()) < 0.01);
     }
 
@@ -115,7 +115,7 @@ private slots:
                 const auto toPixel = [&](modeling::Point2 point) {
                     const auto world = modeling::sketchPoint(plane, point);
                     int x, y;
-                    viewport->m_view->Convert(world.X(), world.Y(), world.Z(), x, y);
+                    viewport->m_graphics.view()->Convert(world.X(), world.Y(), world.Z(), x, y);
                     return QPoint(qRound(x / viewport->devicePixelRatioF()), qRound(y / viewport->devicePixelRatioF()));
                 };
                 entities.clear();
@@ -139,10 +139,10 @@ private slots:
     void orbitChangesDirection()
     {
         viewport->resetView();
-        const auto before = viewport->m_view->Camera()->Direction();
+        const auto before = viewport->m_graphics.view()->Camera()->Direction();
         drag(Qt::MiddleButton, QPoint(350, 300), QPoint(450, 350));
-        QVERIFY(before.Angle(viewport->m_view->Camera()->Direction()) > 0.01);
-        QCOMPARE(viewport->m_navigation, CadViewport::Navigation::None);
+        QVERIFY(before.Angle(viewport->m_graphics.view()->Camera()->Direction()) > 0.01);
+        QCOMPARE(viewport->m_camera.mode(), CadViewport::Navigation::None);
     }
 
     void panMovesCenter_data()
@@ -156,23 +156,23 @@ private slots:
     {
         QFETCH(int, button);
         viewport->resetView();
-        const auto before = viewport->m_view->Camera()->Center();
-        const auto direction = viewport->m_view->Camera()->Direction();
+        const auto before = viewport->m_graphics.view()->Camera()->Center();
+        const auto direction = viewport->m_graphics.view()->Camera()->Direction();
         drag(static_cast<Qt::MouseButton>(button), QPoint(350, 300), QPoint(420, 350),Qt::ControlModifier);
-        QVERIFY(before.Distance(viewport->m_view->Camera()->Center()) > 1.0);
-        QVERIFY(direction.Angle(viewport->m_view->Camera()->Direction()) < 1e-10);
+        QVERIFY(before.Distance(viewport->m_graphics.view()->Camera()->Center()) > 1.0);
+        QVERIFY(direction.Angle(viewport->m_graphics.view()->Camera()->Direction()) < 1e-10);
     }
 
     void wheelZoomsBothWays()
     {
         viewport->resetView();
-        const double before = viewport->m_view->Camera()->Scale();
+        const double before = viewport->m_graphics.view()->Camera()->Scale();
         const QPointF position(400, 300);
         for (const int delta : {120, -120}) {
             QWheelEvent event(position, viewport->mapToGlobal(position.toPoint()), {}, QPoint(0, delta),
                               Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
             QApplication::sendEvent(viewport.get(), &event);
-            const double scale = viewport->m_view->Camera()->Scale();
+            const double scale = viewport->m_graphics.view()->Camera()->Scale();
             if (delta > 0) {
                 QVERIFY(scale < before);
             } else {
@@ -188,12 +188,12 @@ private slots:
         viewport->resetView();
         QTest::keyClick(viewport.get(), Qt::Key_F);
         verifyNativeSurface();
-        viewport->m_view->Redraw();
+        viewport->m_graphics.view()->Redraw();
         const QString directory = qEnvironmentVariable("THECAD_TEST_ARTIFACT_DIR",
                                                        QDir::tempPath() + "/TheCAD-tests");
         QVERIFY(QDir().mkpath(directory));
         const QString filename = directory + "/viewport.png";
-        QVERIFY(viewport->m_view->Dump(filename.toUtf8().constData()));
+        QVERIFY(viewport->m_graphics.view()->Dump(filename.toUtf8().constData()));
         const QImage image(filename);
         QVERIFY(!image.isNull());
         // A fitted solid occupies the center; it must differ from the background.

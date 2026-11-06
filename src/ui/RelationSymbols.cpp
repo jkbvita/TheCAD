@@ -32,7 +32,7 @@ modeling::Point2 anchor(const modeling::Sketch& sketch,const modeling::SketchRel
 }
 }
 void CadViewport::updateRelationSymbols(){
-    if(!isReady())return;for(auto& marker:m_relationMarkers)m_context->Remove(marker,Standard_False);m_relationMarkers.clear();m_relationHits.clear();
+    if(!isReady())return;for(auto& marker:m_relationMarkers)m_graphics.context()->Remove(marker,Standard_False);m_relationMarkers.clear();m_relationHits.clear();
     if(!m_showRelations || !m_sketchEditing || !m_sketch)return;
     const int pixels=std::max(1,qRound(18*devicePixelRatioF()));std::vector<QRectF> placed;
     for(const auto& group:modeling::relationGroups(*m_sketch)){
@@ -53,7 +53,7 @@ void CadViewport::updateRelationSymbols(){
         if(!found)continue;const auto model=sketchPosition(area.center());if(!model)continue;
         Handle(AIS_Point) marker=new AIS_Point(new Geom_CartesianPoint(modeling::sketchPoint(*m_sketch,*model)));
         marker->Attributes()->SetPointAspect(sprite(r.kind,pixels,r.id==m_hoveredRelation,r.id==m_selectedRelation));marker->SetZLayer(Graphic3d_ZLayerId_Topmost);marker->SetInfiniteState(Standard_True);
-        m_context->Display(marker,0,-1,Standard_False);m_context->SetDisplayPriority(marker,Graphic3d_DisplayPriority_Topmost);m_relationMarkers.push_back(marker);m_relationHits.push_back({group.id,area,entityId,localAnchor,area.center()-origin});placed.push_back(area);
+        m_graphics.context()->Display(marker,0,-1,Standard_False);m_graphics.context()->SetDisplayPriority(marker,Graphic3d_DisplayPriority_Topmost);m_relationMarkers.push_back(marker);m_relationHits.push_back({group.id,area,entityId,localAnchor,area.center()-origin});placed.push_back(area);
         }
     }
 }
@@ -69,12 +69,12 @@ void CadViewport::updateRelationPositions(){
         center.setY(std::clamp(center.y(),11.0,std::max(11.0,height()-11.0)));
         const auto point=sketchPosition(center);
         if(!rect().adjusted(-20,-20,20,20).contains(origin.toPoint())||!point){
-            hit.bounds={};m_context->Erase(marker,Standard_False);continue;
+            hit.bounds={};m_graphics.context()->Erase(marker,Standard_False);continue;
         }
         hit.bounds=QRectF(center-QPointF(9,9),QSizeF(18,18));
         marker->SetComponent(new Geom_CartesianPoint(modeling::sketchPoint(*m_sketch,*point)));
-        m_context->Redisplay(marker,Standard_False);
-        if(!m_context->IsDisplayed(marker))m_context->Display(marker,0,-1,Standard_False);
+        m_graphics.context()->Redisplay(marker,Standard_False);
+        if(!m_graphics.context()->IsDisplayed(marker))m_graphics.context()->Display(marker,0,-1,Standard_False);
     }
 }
 std::optional<std::string> CadViewport::relationAt(const QPointF& position) const {

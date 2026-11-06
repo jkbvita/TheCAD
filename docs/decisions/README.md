@@ -46,6 +46,8 @@ approved scope do not need repeated approval.
 - [0022: Parametric 3D reference geometry and reference-plane sketch supports](0022-reference-geometry.md).
 - [0023: Opening saved parts supplied through a desktop shortcut](0023-saved-part-startup-open.md).
 
+- [0028: Modular application and viewport architecture](0028-modular-architecture.md) — owner-approved session, storage, rendering and interaction boundaries.
+
 ## Pending owner decisions
 
 - Resilient face references beyond the approved conservative planar-face strategy.
