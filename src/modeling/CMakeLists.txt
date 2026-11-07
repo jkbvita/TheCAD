@@ -7,6 +7,7 @@ add_library(thecad_modeling STATIC
     DimensionInference.cpp
     DimensionAnnotation.cpp
     SketchTools.cpp
+    SketchModifiers.cpp
     RelationCommands.cpp)
 set_target_properties(thecad_modeling PROPERTIES AUTOMOC OFF)
 target_sources(thecad_modeling PRIVATE FeaturePreview.cpp SolidFeatures.cpp PatternFeatures.cpp SweepFeatures.cpp)

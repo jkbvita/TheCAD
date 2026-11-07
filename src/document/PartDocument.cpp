@@ -4,6 +4,7 @@
 #include <TopoDS.hxx>
 #include "document/PartDocument.h"
 #include "document/ReferenceGeometryData.h"
+#include "document/SketchProjectionData.h"
 #include "modeling/Box.h"
 #include "modeling/ConstraintSolver.h"
 #include "modeling/PlanarRegions.h"
@@ -123,6 +124,13 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
                 auto legacy=feature.sketch;legacy.dimensions.clear();
                 legacy.relations.erase(std::remove_if(legacy.relations.begin(),legacy.relations.end(),[](const auto& r){return r.kind!=modeling::RelationKind::Coincident && r.kind!=modeling::RelationKind::Horizontal && r.kind!=modeling::RelationKind::Vertical;}),legacy.relations.end());
                 validSketch(legacy);
+                if (!feature.sketch.projections.empty())
+                {
+                    detail::refreshSketchProjections(feature.sketch, namedBodies);
+                    for (const auto& link : feature.sketch.projections)
+                        if (std::find(expected.begin(), expected.end(), link.sourceFeature) == expected.end())
+                            expected.push_back(link.sourceFeature);
+                }
                 modeling::validateSketchConstraintReferences(feature.sketch);
                 modeling::attachDimensionAnnotations(feature.sketch);
                 feature.sketch=modeling::requireSolvedSketch(modeling::solvePlanarSketch(feature.sketch));

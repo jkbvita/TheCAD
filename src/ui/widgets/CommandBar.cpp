@@ -39,7 +39,7 @@ QIcon commandIcon(const QString& name)
         painter.drawEllipse(QRectF(6, 6, 20, 20));
     else if (name.contains("Rectangle"))
         painter.drawRect(QRectF(5, 8, 22, 16));
-    else if (name == "Linear Pattern")
+    else if (name == "Linear Pattern" || name == "Linear Sketch Pattern")
     {
         for (int x : {3, 13, 23})
             painter.drawRect(QRectF(x, 8, 6, 8));
@@ -47,7 +47,22 @@ QIcon commandIcon(const QString& name)
         painter.drawLine(24, 19, 28, 23);
         painter.drawLine(24, 27, 28, 23);
     }
-    else if (name == "Mirror")
+    else if (name == "Circular Sketch Pattern")
+    {
+        painter.drawArc(QRectF(5, 5, 22, 22), 35 * 16, 290 * 16);
+        for (const auto& point : {QPointF(16, 5), QPointF(5, 16), QPointF(16, 27), QPointF(27, 16)})
+            painter.drawEllipse(point, 2.5, 2.5);
+        painter.drawPoint(QPointF(16, 16));
+    }
+    else if (name == "Convert Entities")
+    {
+        painter.drawPolygon(QPolygonF{QPointF(4, 8), QPointF(19, 4), QPointF(27, 11), QPointF(11, 15)});
+        painter.drawPolygon(QPolygonF{QPointF(4, 21), QPointF(19, 17), QPointF(27, 24), QPointF(11, 28)});
+        painter.drawLine(16, 11, 16, 21);
+        painter.drawLine(12, 18, 16, 21);
+        painter.drawLine(20, 18, 16, 21);
+    }
+    else if (name == "Mirror" || name == "Mirror Entities")
     {
         painter.drawPolygon(QPolygonF{QPointF(5, 25), QPointF(12, 25), QPointF(12, 7)});
         painter.drawPolygon(QPolygonF{QPointF(27, 25), QPointF(20, 25), QPointF(20, 7)});

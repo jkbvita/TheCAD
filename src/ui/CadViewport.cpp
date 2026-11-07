@@ -524,6 +524,9 @@ void CadViewport::endSketch()
     cancelSketchMultiSelection();
     cancelDimensionDrag();cancelPointDrag(); resetSketchInference();
     m_sketchEditing = false;
+    setSketchModifierPicking(false);
+    setSketchBoundaryReferences({});
+    setSketchModifierPreview(nullptr);
     setDatums(m_datums);
     updateSketchAxes();
     m_tools.clearDrawing();
@@ -704,7 +707,9 @@ void CadViewport::placeSketchPoint(const QPointF& position) {
     std::optional<modeling::SketchPointRef> reference;auto point=drawingPoint(position,reference);auto candidate=*m_sketch;
     modeling::SketchEntity entity{modeling::EntityKind::Point,point,{},1,QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString()};
     const auto relationId=QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
+    try {
     if(reference){const bool midpoint=reference->role==modeling::PointRole::Midpoint;candidate.relations.push_back({relationId,midpoint?modeling::RelationKind::Midpoint:modeling::RelationKind::Coincident,{entity.id,modeling::PointRole::First},midpoint?modeling::SketchPointRef{reference->entityId,modeling::PointRole::First}:*reference});}
+    else if(m_boundarySnap) attachBoundarySnap(candidate,{entity.id,modeling::PointRole::First},*m_boundarySnap);
     else if(const auto id=entityAt(position)) {
         const auto e=std::find_if(candidate.entities.begin(),candidate.entities.end(),[&](const auto& v){return v.id==*id;});
         if(e!=candidate.entities.end() && e->kind==modeling::EntityKind::Line){
@@ -716,7 +721,7 @@ void CadViewport::placeSketchPoint(const QPointF& position) {
         }
     }
     candidate.entities.push_back(entity);
-    try{modeling::validateSketchRelations(candidate);(void)modeling::sketchShape(candidate);m_sketch=candidate;emit sketchChanged(candidate);emit sketchEntityCreated(entity);updateSketchPresentation();}
+    modeling::validateSketchRelations(candidate);(void)modeling::sketchShape(candidate);m_sketch=candidate;emit sketchChanged(candidate);emit sketchEntityCreated(entity);updateSketchPresentation();}
     catch(const std::exception& e){emit sketchInteractionError(QString::fromUtf8(e.what()));}
 }
 
@@ -819,6 +824,7 @@ void CadViewport::updateSketchPresentation(const std::optional<modeling::SketchE
             }
             for(const bool construction:{false,true})for(const bool defined:{false,true}){
                 auto group=visible;group.relations.clear();group.dimensions.clear();group.polygons.clear();
+                group.projections.clear();group.replications.clear();
                 group.entities.erase(std::remove_if(group.entities.begin(),group.entities.end(),[&](const auto& e){const bool fixed=std::find(m_definition.definedCurves.begin(),m_definition.definedCurves.end(),e.id)!=m_definition.definedCurves.end();return e.kind==modeling::EntityKind::Point || e.construction!=construction || fixed!=defined;}),group.entities.end());
                 if(group.entities.empty())continue;
                 Handle(AIS_Shape) batch=new AIS_Shape(modeling::sketchShape(group));
@@ -881,6 +887,7 @@ std::optional<CadViewport::SnapHit> CadViewport::selectionPointAt(const QPointF&
 modeling::Point2 CadViewport::drawingPoint(const QPointF& position, std::optional<modeling::SketchPointRef>& reference)
 {
     reference.reset();
+    m_boundarySnap.reset();
     const auto previous=m_inference;
     m_inference={};
     const bool midpointTool=m_tools.drawing()==modeling::EntityKind::Line || m_tools.drawing()==modeling::EntityKind::Point;
@@ -894,6 +901,13 @@ modeling::Point2 CadViewport::drawingPoint(const QPointF& position, std::optiona
         m_hoveredPoint=reference; return hit->point;
     }
     auto point=sketchPosition(position).value_or(modeling::Point2{});
+    if (!(m_firstPoint && m_tools.drawing() == modeling::EntityKind::Circle))
+        if (auto snap = boundarySnapAt(position, point))
+        {
+            m_boundarySnap = snap;
+            m_inference.symbolPosition = snap->point;
+            return snap->point;
+        }
     if(m_firstPoint && m_tools.drawing()==modeling::EntityKind::Line) {
         const auto firstPixel=screenPoint(*m_firstPoint);
         const auto horizontal=screenPoint({point.x,m_firstPoint->y});
@@ -941,6 +955,7 @@ void CadViewport::updatePointPresentation()
     if(m_sketchEditing && m_sketch) {
         if(!m_hoveredEntity.empty()) {
             auto only=*m_sketch;only.entities.clear();only.relations.clear();only.dimensions.clear();only.polygons.clear();
+            only.projections.clear();only.replications.clear();
             for(const auto& e:m_sketch->entities)if(e.id==m_hoveredEntity)only.entities.push_back(e);
             if(!only.entities.empty()) {
                 m_hoveredEntityPresentation=new AIS_Shape(modeling::sketchShape(only));
@@ -1008,7 +1023,7 @@ void CadViewport::clearInteractionPresentation()
 
 void CadViewport::resetSketchInference()
 {
-    m_inference={}; clearInteractionPresentation();
+    m_inference={}; m_boundarySnap.reset(); clearInteractionPresentation();
 }
 
 void CadViewport::updateInteractionPresentation()
@@ -1022,6 +1037,9 @@ void CadViewport::updateInteractionPresentation()
         point=modeling::sketchPointValue(*m_sketch,m_pointDrag->reference);
         if(!m_pointDrag->error.isEmpty()) {text="Cannot move";invalid=true;}
         else if(m_pointDrag->target) {text=m_pointDrag->target->role==modeling::PointRole::Midpoint?"Midpoint":"Coincident";point=modeling::sketchPointValue(*m_sketch,*m_pointDrag->target);}
+    } else if (m_boundarySnap && m_sketchEditing && m_tools.drawing()) {
+        text = m_boundarySnap->role == modeling::PointRole::Midpoint ? "Model midpoint" :
+               m_boundarySnap->role ? "Model point" : "Model edge";
     } else if(m_sketchEditing && m_tools.drawing() && m_firstPoint) {
         for(const auto& line:m_inference.guides) {
             Handle(AIS_Shape) guide=new AIS_Shape(BRepBuilderAPI_MakeEdge(modeling::sketchPoint(*m_sketch,line.first),modeling::sketchPoint(*m_sketch,line.second)).Shape());
@@ -1109,17 +1127,20 @@ void CadViewport::commitDrawing(modeling::Point2 point, const std::optional<mode
     const auto relation=[&](modeling::RelationKind kind,modeling::SketchPointRef a,modeling::SketchPointRef b) {
         candidate.relations.push_back({sketchId(),kind,a,b});
     };
-    const auto attach=[&](modeling::SketchPointRef a,const std::optional<modeling::SketchPointRef>& b) {
+    const auto attach=[&](modeling::SketchPointRef a,const std::optional<modeling::SketchPointRef>& b,
+                          const std::optional<BoundarySnap>& snap) {
         if(b){const bool midpoint=b->role==modeling::PointRole::Midpoint;relation(midpoint?modeling::RelationKind::Midpoint:modeling::RelationKind::Coincident,a,midpoint?modeling::SketchPointRef{b->entityId,modeling::PointRole::First}:*b);}
+        else if(snap) attachBoundarySnap(candidate,a,*snap);
     };
     modeling::SketchEntity entity; entity.id=sketchId(); entity.kind=*m_tools.drawing();
     entity.first=first; entity.second=point;entity.construction=m_tools.construction(); entity.radius=std::hypot(point.x-first.x,point.y-first.y);
+    try {
     if(entity.kind==modeling::EntityKind::Polygon) {
         try {
             candidate=modeling::addRegularPolygon(candidate,entity.id,{first,entity.radius,std::atan2(point.y-first.y,point.x-first.x),6});
             const auto& group=candidate.polygons.back();
-            attach({group.centerId,modeling::PointRole::First},m_firstReference);
-            attach({group.edges.front(),modeling::PointRole::First},reference);
+            attach({group.centerId,modeling::PointRole::First},m_firstReference,m_firstBoundarySnap);
+            attach({group.edges.front(),modeling::PointRole::First},reference,m_boundarySnap);
         }catch(const std::exception& e){emit sketchInteractionError(QString::fromUtf8(e.what()));return;}
     } else if(entity.kind==modeling::EntityKind::Rectangle) {
         if(std::abs(first.x-point.x)<1e-7 || std::abs(first.y-point.y)<1e-7) return;
@@ -1137,23 +1158,28 @@ void CadViewport::commitDrawing(modeling::Point2 point, const std::optional<mode
         }
         for(int n=0;n<4;++n) relation(modeling::RelationKind::Coincident,
             {ids[n],modeling::PointRole::Second},{ids[(n+1)%4],modeling::PointRole::First});
-        attach({ids[0],modeling::PointRole::First},m_firstReference);
-        attach({ids[1],modeling::PointRole::Second},reference);
+        attach({ids[0],modeling::PointRole::First},m_firstReference,m_firstBoundarySnap);
+        attach({ids[1],modeling::PointRole::Second},reference,m_boundarySnap);
     } else if(entity.kind==modeling::EntityKind::Line) {
         for(const auto& old:candidate.entities) if(old.kind==modeling::EntityKind::Line && old.construction==entity.construction &&
             ((samePoint(old.first,first)&&samePoint(old.second,point)) ||
              (samePoint(old.first,point)&&samePoint(old.second,first)))) return;
         candidate.entities.push_back(entity);
-        attach({entity.id,modeling::PointRole::First},m_firstReference);
-        attach({entity.id,modeling::PointRole::Second},reference);
-        if(first.y==point.y) relation(modeling::RelationKind::Horizontal,{entity.id,modeling::PointRole::First},{entity.id,modeling::PointRole::Second});
-        if(first.x==point.x) relation(modeling::RelationKind::Vertical,{entity.id,modeling::PointRole::First},{entity.id,modeling::PointRole::Second});
+        attach({entity.id,modeling::PointRole::First},m_firstReference,m_firstBoundarySnap);
+        attach({entity.id,modeling::PointRole::Second},reference,m_boundarySnap);
+        const auto anchored = [&](const auto& ref, const auto& snap) {
+            return (snap && snap->role) || (ref && (ref->role == modeling::PointRole::Origin ||
+                   modeling::sketchProjection(candidate, ref->entityId)));
+        };
+        if (!(anchored(m_firstReference,m_firstBoundarySnap) && anchored(reference,m_boundarySnap))) {
+            if(first.y==point.y) relation(modeling::RelationKind::Horizontal,{entity.id,modeling::PointRole::First},{entity.id,modeling::PointRole::Second});
+            if(first.x==point.x) relation(modeling::RelationKind::Vertical,{entity.id,modeling::PointRole::First},{entity.id,modeling::PointRole::Second});
+        }
     } else {
         for(const auto& old:candidate.entities) if(old.kind==modeling::EntityKind::Circle && samePoint(old.first,first) && std::abs(old.radius-entity.radius)<1e-7) return;
         candidate.entities.push_back(entity);
-        attach({entity.id,modeling::PointRole::Center},m_firstReference);
+        attach({entity.id,modeling::PointRole::Center},m_firstReference,m_firstBoundarySnap);
     }
-    try {
         modeling::validateSketchRelations(candidate);
         modeling::sketchShape(candidate); // Validate sizes, limits and kernel geometry before replacing the draft.
     } catch (const std::exception& failure) {
@@ -1162,6 +1188,7 @@ void CadViewport::commitDrawing(modeling::Point2 point, const std::optional<mode
         emit sketchInteractionError(QString::fromUtf8(failure.GetMessageString())); return;
     }
     m_sketch=candidate;
+    m_firstBoundarySnap.reset();
     if(entity.kind==modeling::EntityKind::Line) {
         m_firstPoint=point; m_firstReference=modeling::SketchPointRef{entity.id,modeling::PointRole::Second};
     } else { m_firstPoint.reset(); m_firstReference.reset(); }
@@ -1229,8 +1256,9 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
         m_regionClickCandidate=true;
         m_regionPressPosition=event->position();
     }
-    if(event->button()==Qt::LeftButton && m_sketchEditing && !m_tools.drawing() && !selectionPointAt(event->position())
-        && (!m_tools.constraintPicking() || m_tools.dimensionPicking()) && !m_dimensionPreview) {
+    if(event->button()==Qt::LeftButton && m_sketchEditing && !m_sketchModifierPicking &&
+        !m_tools.drawing() && !selectionPointAt(event->position())
+        && (!m_tools.constraintPicking() || (m_tools.dimensionPicking() && m_dimensionEntities.empty() && m_dimensionPoints.empty())) && !m_dimensionPreview) {
         if(const auto id=dimensionAt(event->position())) {
             setFocus(Qt::MouseFocusReason);
             const bool toggle=event->modifiers().testFlag(Qt::ControlModifier)||event->modifiers().testFlag(Qt::ShiftModifier);selectDimension(*id,toggle);
@@ -1250,7 +1278,13 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
         if(m_tools.dimensionPicking()) {
             if(hit)emit dimensionReferencePicked(QString::fromStdString(hit->reference.entityId),int(hit->reference.role));
             else if(body && !body->empty())emit dimensionReferencePicked(QString::fromStdString(*body),-1);
-            else {const auto position=sketchPosition(event->position());if(position)emit dimensionPlacementRequested(*position);}
+            else if (const auto position = sketchPosition(event->position())) {
+                if (const auto snap = boundarySnapAt(event->position(), *position))
+                    emit dimensionBodyReferencePicked(m_sketchBoundaryReferences.at(snap->index),
+                        snap->role && snap->role != modeling::PointRole::Midpoint ? int(*snap->role) : -1);
+                else
+                    emit dimensionPlacementRequested(*position);
+            }
             event->accept();return;
         }
         if(body && !body->empty()){m_selectedEntity=*body;m_selectedEntities={*body};m_selectedDimensions.clear();emit sketchEntitySelected(QString::fromStdString(*body));}
@@ -1260,19 +1294,39 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
     }
     if (event->button() == Qt::LeftButton && m_sketchEditing) {
         setFocus(Qt::MouseFocusReason);
+        const bool toggle = event->modifiers().testFlag(Qt::ControlModifier);
+        if (m_sketchConversionPicking ||
+            (!m_tools.drawing() && !selectionPointAt(event->position()) && !entityAt(event->position())))
+        {
+            const auto candidates = selectionCandidates(event->position());
+            const auto model = std::find_if(candidates.begin(), candidates.end(),
+                [](const auto& item) { return modeling::isTopology(item.value.reference.kind); });
+            if (model != candidates.end())
+            {
+                selectCandidate(*model, toggle);
+                event->accept();
+                return;
+            }
+            if (m_sketchConversionPicking)
+            {
+                if (!toggle) clearSelection();
+                event->accept();
+                return;
+            }
+        }
+        if (!toggle && !m_selection.items().empty()) beginTreeSelection();
         std::optional<modeling::SketchPointRef> reference;
         const auto raw = sketchPosition(event->position());
         if(m_tools.drawing()==modeling::EntityKind::Point && raw){placeSketchPoint(event->position());event->accept();return;}
         if(m_tools.drawing()&&!raw){event->accept();return;}
         if (m_tools.drawing() && raw) {
             const auto point = drawingPoint(event->position(), reference);
-            if (!m_firstPoint) { m_firstPoint = point; m_firstReference = reference; }
+            if (!m_firstPoint) { m_firstPoint = point; m_firstReference = reference; m_firstBoundarySnap = m_boundarySnap; }
             else { commitDrawing(point, reference); }
         } else {
             const auto hit = selectionPointAt(event->position());
             m_selectedPoint = hit ? std::optional<modeling::SketchPointRef>(hit->reference) : std::nullopt;
             const auto body = hit ? std::optional<std::string>(hit->reference.entityId) : entityAt(event->position());
-            const bool toggle=event->modifiers().testFlag(Qt::ControlModifier);
             if(!toggle){m_selectedEntities.clear();m_selectedDimensions.clear();}
             if(body && !body->empty()) {
                 const auto found=std::find(m_selectedEntities.begin(),m_selectedEntities.end(),*body);
@@ -1285,7 +1339,8 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
             emit sketchSelectionChanged();
             std::optional<modeling::SketchPointRef> dragRef=hit?std::optional<modeling::SketchPointRef>(hit->reference):std::nullopt;
             if(!hit && body && raw){const auto e=std::find_if(m_sketch->entities.begin(),m_sketch->entities.end(),[&](const auto& e){return e.id==*body;});if(e!=m_sketch->entities.end() && e->kind==modeling::EntityKind::Circle)dragRef=modeling::SketchPointRef{e->id,modeling::PointRole::Center};}
-            if(dragRef && !toggle && dragRef->role!=modeling::PointRole::Origin) {
+            if(dragRef && !toggle && !m_sketchModifierPicking && dragRef->role!=modeling::PointRole::Origin &&
+               !modeling::sketchProjection(*m_sketch, dragRef->entityId)) {
                 const auto entity=std::find_if(m_sketch->entities.begin(),m_sketch->entities.end(),[&](const auto& e){return e.id==dragRef->entityId;});
                 if(entity!=m_sketch->entities.end() && (entity->kind==modeling::EntityKind::Line || entity->kind==modeling::EntityKind::Circle || entity->kind==modeling::EntityKind::Point)) {
                     m_pointDrag=PointDrag{*m_sketch,*dragRef,event->position(),false,*m_sketch,{},{}};
@@ -1330,6 +1385,10 @@ void CadViewport::mouseMoveEvent(QMouseEvent* event)
         m_planeClickCandidate = false;
     }
     if (isReady() && m_sketchEditing && m_camera.mode() == Navigation::None) {
+        if (m_sketchConversionPicking) {
+            updateSelectionHover(event->position());
+            return;
+        }
         updateSketchHover(event->position());
         if (m_tools.drawing() && m_firstPoint) {
             std::optional<modeling::SketchPointRef> reference;
@@ -1341,7 +1400,14 @@ void CadViewport::mouseMoveEvent(QMouseEvent* event)
             preview.radius = std::hypot(point.x - m_firstPoint->x, point.y - m_firstPoint->y);preview.construction=m_tools.construction();m_drawingPreview=preview;
             updateSketchPresentation(preview);
             updateInteractionPresentation();
-        } else { updatePointPresentation(); }
+        } else {
+            if (m_tools.drawing()) {
+                std::optional<modeling::SketchPointRef> reference;
+                if (sketchPosition(event->position())) (void)drawingPoint(event->position(), reference);
+                updateInteractionPresentation();
+            }
+            updatePointPresentation();
+        }
         return;
     }
     event->accept();

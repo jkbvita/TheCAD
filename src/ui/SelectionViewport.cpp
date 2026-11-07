@@ -95,6 +95,7 @@ std::vector<SelectionRef> CadViewport::selection() const {
         for(const auto& id:m_selectedEntities)if(!m_selectedPoint||m_selectedPoint->entityId!=id)result.push_back({SelectionKind::SketchEntity,m_sketchFeatureId,id});
         for(const auto& id:m_selectedDimensions)result.push_back({SelectionKind::Dimension,m_sketchFeatureId,id});
     }
+    result.insert(result.end(),m_selection.items().begin(),m_selection.items().end());
     return result;
 }
 void CadViewport::beginTreeSelection(){if(m_dispatchingSelection)return;m_treeBodySelected=false;m_selection.clear();m_nativeSelections.clear();refreshNativeSelection();previewCandidate({});}
@@ -137,7 +138,7 @@ std::vector<CadViewport::PickCandidate> CadViewport::selectionCandidates(const Q
     if(!isReady())return candidates;
     synchronizeSurface();
     const auto append=[&](modeling::SelectionCandidate value,const TopoDS_Shape& shape=TopoDS_Shape(),const Handle(SelectMgr_EntityOwner)& owner={},const std::optional<gp_Pnt>& hit={}){candidates.push_back({value,shape,owner,hit});};
-    if(m_sketchEditing && m_sketch){
+    if(m_sketchEditing && m_sketch && !m_sketchConversionPicking){
         for(const auto& entry:modeling::sketchPoints(*m_sketch)){
             const double distance=QLineF(position,screenPoint(entry.second)).length();if(distance>m_pickingTolerance)continue;
             if(entry.first.role==modeling::PointRole::Center){const auto e=std::find_if(m_sketch->entities.begin(),m_sketch->entities.end(),[&](const auto& e){return e.id==entry.first.entityId;});const double radius=QLineF(screenPoint(e->first),screenPoint({e->first.x+e->radius,e->first.y})).length();if(std::abs(distance-radius)<distance)continue;}
@@ -146,7 +147,8 @@ std::vector<CadViewport::PickCandidate> CadViewport::selectionCandidates(const Q
         for(const auto& item:sketchEntityCandidates(position))append(item);
         for(const auto& dimension:dimensionCandidates(position))append(dimension);
         if(m_selectionPolicy.allows(SelectionKind::Relation))for(const auto& hit:m_relationHits)if(hit.bounds.adjusted(-2,-2,2,2).contains(position))append({{SelectionKind::Relation,m_sketchFeatureId,hit.id}});
-    }else{
+    }
+    if (!m_sketchEditing || (!m_tools.drawing() && !m_tools.constraintPicking())) {
         // OCCT intersects sensitive topology, including exact trimmed circles
         // and triangulated faces. It never tests a projected bounding box alone.
         if(!m_presentation.IsNull() && m_graphics.context()->IsDisplayed(m_presentation)){
@@ -164,6 +166,8 @@ std::vector<CadViewport::PickCandidate> CadViewport::selectionCandidates(const Q
                 if(owner.IsNull()||owner->Selectable()!=m_presentation||!owner->HasShape())continue;
                 const auto shape=owner->Shape();SelectionKind kind;TopAbs_ShapeEnum type=shape.ShapeType();
                 if(type==TopAbs_VERTEX)kind=SelectionKind::Vertex;else if(type==TopAbs_EDGE)kind=SelectionKind::Edge;else if(type==TopAbs_FACE)kind=SelectionKind::Face;else if(type==TopAbs_SOLID)kind=SelectionKind::Body;else continue;
+                if (m_sketchEditing && kind != SelectionKind::Edge && kind != SelectionKind::Face)
+                    continue;
                 const auto& map=type==TopAbs_FACE?m_selectionFaces:type==TopAbs_EDGE?m_selectionEdges:type==TopAbs_VERTEX?m_selectionVertices:m_selectionBodies;const int index=map.FindIndex(shape);if(index<=0)continue;
                 if((type==TopAbs_EDGE&&m_seamEdges.count(index))||(type==TopAbs_VERTEX&&m_artificialVertices.count(index)))continue;
                 auto hit=type==TopAbs_VERTEX?BRep_Tool::Pnt(TopoDS::Vertex(shape)):selector->PickedPoint(n);bool onFace=false;
@@ -188,7 +192,7 @@ std::vector<CadViewport::PickCandidate> CadViewport::selectionCandidates(const Q
             const double slack=std::max(1e-6,m_graphics.view()->Camera()->Scale()/std::max(1,height())*2.0);
             for(auto& candidate:candidates)candidate.value.occluded=candidate.value.depth>frontDepth+slack;
         }
-        if(!m_referenceCandidateKind){
+        if(!m_sketchEditing && !m_referenceCandidateKind){
             const auto datumIds=datumIdsAt(position);
             for(const auto& datum:m_datums){
                 // Reuse the existing exact datum geometry hit tests, one stable
@@ -268,7 +272,7 @@ void CadViewport::selectCandidate(const PickCandidate& item,bool toggle){
     const QScopedValueRollback<bool> dispatch(m_dispatchingSelection,true);
     const auto& ref=item.value.reference;
     if(modeling::isTopology(ref.kind)&&ref.generation!=m_shapeGeneration)return;
-    if(m_sketchEditing){
+    if(m_sketchEditing && !modeling::isTopology(ref.kind)){
         if(ref.kind==SelectionKind::Dimension)selectDimension(ref.entityId,toggle);
         else if(ref.kind==SelectionKind::Relation)selectSketchRelation(ref.entityId);
         else {
@@ -282,6 +286,11 @@ void CadViewport::selectCandidate(const PickCandidate& item,bool toggle){
         }
         emit selectionChanged();return;
     }
+    if (m_sketchEditing && !toggle) {
+        m_selectedEntity.clear();m_selectedEntities.clear();m_selectedPoint.reset();
+        m_selectedDimensions.clear();m_selectedRelation.clear();
+        updatePointPresentation();updateConstraintPresentation();
+    }
     if(!toggle)m_nativeSelections.clear();m_selection.select(ref,toggle);
     if(!item.owner.IsNull()&&std::none_of(m_nativeSelections.begin(),m_nativeSelections.end(),[&](const auto& c){return c.value.reference==ref;}))m_nativeSelections.push_back(item);
     m_selectedSolidFace=0;m_selectedDatum.clear();m_selectedPlane.reset();
@@ -289,9 +298,10 @@ void CadViewport::selectCandidate(const PickCandidate& item,bool toggle){
         if(selected.kind==SelectionKind::ReferencePlane||selected.kind==SelectionKind::ReferenceAxis||selected.kind==SelectionKind::ReferencePoint)m_selectedDatum=selected.featureId;
         if(selected.kind==SelectionKind::OriginPlane)m_selectedPlane=modeling::SketchPlane(selected.index);
     }
-    if(m_selection.items().size()==1&&m_selection.items()[0].kind==SelectionKind::Face)m_selectedSolidFace=m_selection.items()[0].index;
+    if(!m_sketchEditing&&m_selection.items().size()==1&&m_selection.items()[0].kind==SelectionKind::Face)m_selectedSolidFace=m_selection.items()[0].index;
     refreshNativeSelection();previewCandidate({});
     emit selectionChanged();
+    if(m_sketchEditing){emit sketchSelectionChanged();return;}
     // Compatibility notifications supply a support only for a single valid
     // selection; edge/vertex clicks never masquerade as a planar face.
     if(m_selection.items().size()==1){

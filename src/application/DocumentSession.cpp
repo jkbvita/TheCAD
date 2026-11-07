@@ -33,6 +33,18 @@ QByteArray sketchKey(const modeling::Sketch& sketch)
         point(e.second);
         out << e.radius;
     }
+    out << quint64(sketch.projections.size());
+    for (const auto& link : sketch.projections)
+        out << QString::fromStdString(link.entityId) << QString::fromStdString(link.sourceFeature)
+            << QString::fromStdString(link.edgeName) << QString::fromStdString(link.startVertex);
+    out << quint64(sketch.replications.size());
+    for (const auto& copy : sketch.replications)
+    {
+        out << QString::fromStdString(copy.source) << QString::fromStdString(copy.target)
+            << QString::fromStdString(copy.mirrorLine);
+        point(copy.offset);
+        out << copy.angle;
+    }
     out << quint64(sketch.relations.size());
     for (const auto& r : sketch.relations)
     {

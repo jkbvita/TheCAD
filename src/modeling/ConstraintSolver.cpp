@@ -1,4 +1,5 @@
 #include "modeling/ConstraintSolver.h"
+#include "modeling/SketchModifiers.h"
 #include "GCS.h"
 #include <Standard_Failure.hxx>
 #include <algorithm>
@@ -30,12 +31,14 @@ public:
             if(entity.id.empty())throw std::runtime_error("Solver entities require stable IDs.");
             const auto firstRole=entity.kind==EntityKind::Circle?PointRole::Center:PointRole::First;
             points.emplace(std::make_pair(entity.id,int(firstRole)),GCS::Point(&entity.first.x,&entity.first.y));
-            unknowns.push_back(&entity.first.x);unknowns.push_back(&entity.first.y);
+            const bool linked = sketchProjection(sketch, entity.id) != nullptr;
+            if (!linked) {unknowns.push_back(&entity.first.x);unknowns.push_back(&entity.first.y);}
             if(entity.kind==EntityKind::Circle) {
-                unknowns.push_back(&entity.radius);GCS::Circle circle;circle.center=point({entity.id,PointRole::Center});circle.rad=&entity.radius;circles.emplace(entity.id,circle);
+                if (!linked) unknowns.push_back(&entity.radius);
+                GCS::Circle circle;circle.center=point({entity.id,PointRole::Center});circle.rad=&entity.radius;circles.emplace(entity.id,circle);
             } else if(entity.kind!=EntityKind::Point) {
                 points.emplace(std::make_pair(entity.id,int(PointRole::Second)),GCS::Point(&entity.second.x,&entity.second.y));
-                unknowns.push_back(&entity.second.x);unknowns.push_back(&entity.second.y);
+                if (!linked) {unknowns.push_back(&entity.second.x);unknowns.push_back(&entity.second.y);}
                 if(entity.kind==EntityKind::Line){GCS::Line line;line.p1=point({entity.id,PointRole::First});line.p2=point({entity.id,PointRole::Second});lines.emplace(entity.id,line);}
             }
         }
@@ -156,6 +159,54 @@ public:
             }
         }
     }
+    void addReplications(GCS::System& system) {
+        for (const auto& copy : sketch.replications) {
+            const int id = tag("copy:" + copy.target);
+            const auto auxiliary = [&](double value) {
+                auxiliaries.push_back(value);
+                unknowns.push_back(&auxiliaries.back());
+                return &auxiliaries.back();
+            };
+            const auto scaled = [&](double* value, double factor) {
+                if (std::abs(factor) < 1e-14)
+                    return constant(0);
+                if (factor == 1)
+                    return value;
+                auto* product = auxiliary(*value * factor);
+                GCS::Point p(value, product), zero(constant(0), constant(0)),
+                    direction(constant(1), constant(factor));
+                system.addConstraintPointOnLine(p, zero, direction, id);
+                return product;
+            };
+            const auto sum = [&](double* first, double* second, double* result, double offset) {
+                auto* difference = auxiliary(*result - *first);
+                system.addConstraintDifference(first, result, difference, id);
+                system.addConstraintDifference(second, difference, constant(offset), id);
+            };
+            const auto constrain = [&](PointRole role) {
+                auto& seed = point({copy.source, role});
+                auto& target = point({copy.target, role});
+                if (!copy.mirrorLine.empty()) {
+                    system.addConstraintP2PSymmetric(seed, target, lines.at(copy.mirrorLine), id);
+                } else if (copy.angle == 0) {
+                    system.addConstraintDifference(seed.x, target.x, constant(copy.offset.x), id);
+                    system.addConstraintDifference(seed.y, target.y, constant(copy.offset.y), id);
+                } else {
+                    const double c = std::cos(copy.angle), s = std::sin(copy.angle);
+                    sum(scaled(seed.x, c), scaled(seed.y, -s), target.x, copy.offset.x);
+                    sum(scaled(seed.x, s), scaled(seed.y, c), target.y, copy.offset.y);
+                }
+            };
+            if (circles.count(copy.source)) {
+                constrain(PointRole::Center);
+                system.addConstraintEqualRadius(circles.at(copy.source), circles.at(copy.target), id);
+            } else {
+                constrain(PointRole::First);
+                if (lines.count(copy.source))
+                    constrain(PointRole::Second);
+            }
+        }
+    }
     bool parallelImplied(const SketchDimension& dimension,const std::string& except={}) const {
         // Avoid introducing a duplicate derived parallel equation where existing
         // orientation relations already imply it. No owner constraint is removed.
@@ -203,11 +254,13 @@ public:
     void addTargets(GCS::System& system,const SolveOptions& options) {
         for(const auto& target:options.pointTargets) {
             finiteValue(target.position.x,"Target X");finiteValue(target.position.y,"Target Y");
-            if(target.point.role==PointRole::Origin)throw std::runtime_error("The sketch origin is fixed.");
+            if(target.point.role==PointRole::Origin||sketchProjection(sketch,target.point.entityId))
+                throw std::runtime_error("The reference geometry is fixed.");
             auto& p=point(target.point);const int id=target.hard?tag("edit:"+target.point.entityId):-1;
             system.addConstraintCoordinateX(p,constant(target.position.x),id);system.addConstraintCoordinateY(p,constant(target.position.y),id);
         }
         for(const auto& target:options.radiusTargets) {
+            if(sketchProjection(sketch,target.first))throw std::runtime_error("Projected geometry follows its source edge.");
             finiteValue(target.second,"Radius target");if(target.second<=1e-7)throw std::runtime_error("Radius must be above kernel tolerance.");
             system.addConstraintCircleRadius(circles.at(target.first),constant(target.second),tag("edit:"+target.first));
         }
@@ -232,7 +285,7 @@ SketchSolveResult solvePlanarSketch(const Sketch& input,const SolveOptions& opti
         WorkingSketch work(input);GCS::System system;
         system.maxIter=options.maximumIterations;system.maxIterRedundant=options.maximumIterations;
         system.convergence=options.tolerance;system.debugMode=GCS::NoDebug;
-        work.addRelations(system);work.addPolygons(system);work.addDimensions(system);work.addTargets(system,options);
+        work.addRelations(system);work.addPolygons(system);work.addReplications(system);work.addDimensions(system);work.addTargets(system,options);
         system.declareUnknowns(work.unknowns);solving=true;system.initSolution();
         const auto status=system.solve();
         if(status==GCS::SolveStatus::Success || status==GCS::SolveStatus::Converged)system.applySolution();
@@ -274,7 +327,7 @@ SketchDefinition analyzeSketchDefinition(const Sketch& sketch){
         if(sketch.space!=SketchSpace::Planar2D)return result;
         validateSketchConstraintReferences(sketch);
         (void)sketchShape(sketch);WorkingSketch work(sketch);GCS::System system;system.debugMode=GCS::NoDebug;
-        work.addRelations(system);work.addPolygons(system);work.addDimensions(system);
+        work.addRelations(system);work.addPolygons(system);work.addReplications(system);work.addDimensions(system);
         system.declareUnknowns(work.unknowns);system.diagnose();
         GCS::VEC_I conflicts,redundant;system.getConflicting(conflicts);system.getRedundant(redundant);
         if(!conflicts.empty() || !redundant.empty())return result;

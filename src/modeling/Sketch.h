@@ -69,6 +69,16 @@ struct Sketch {
     SketchSpace space = SketchSpace::Planar2D;
     struct RegularPolygon { std::string id,centerId; std::vector<std::string> edges; };
     std::vector<RegularPolygon> polygons;
+    struct Projection {
+        std::string entityId, sourceFeature, edgeName, startVertex;
+    };
+    std::vector<Projection> projections;
+    struct Replication {
+        std::string source, target, mirrorLine;
+        Point2 offset;
+        double angle = 0; // Radians, for affine rotation and translation.
+    };
+    std::vector<Replication> replications;
 };
 // Point references address the immutable local origin or stable entity IDs.
 Point2 sketchPointValue(const Sketch& sketch, const SketchPointRef& reference);

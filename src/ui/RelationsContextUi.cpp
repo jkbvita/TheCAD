@@ -19,7 +19,7 @@
 namespace thecad::ui {
 void MainWindow::hideRelationsContext(){if(m_relationsToolbar)m_relationsToolbar->hide();}
 void MainWindow::showRelationsContext(QPoint position){
-    hideRelationsContext();if(!m_session.editingSketch() || m_operation || m_constraints || (m_smartDimension && m_smartDimension->editor))return;
+    hideRelationsContext();if(!m_session.editingSketch() || m_operation || m_constraints || m_sketchModifier || (m_smartDimension && m_smartDimension->editor))return;
     const auto ids=m_viewport->selectedSketchEntities();if(ids.empty())return;
     const auto relations=modeling::availableRelations(*m_session.editingSketch(),ids);
     const bool construction=std::all_of(ids.begin(),ids.end(),[&](const auto& id){const auto e=std::find_if(m_session.editingSketch()->entities.begin(),m_session.editingSketch()->entities.end(),[&](const auto& v){return v.id==id;});return e!=m_session.editingSketch()->entities.end() && (e->kind==modeling::EntityKind::Line || e->kind==modeling::EntityKind::Circle || e->kind==modeling::EntityKind::Rectangle);});
@@ -41,6 +41,7 @@ void MainWindow::showRelationsContext(QPoint position){
     m_relationsToolbar->move(location);m_relationsToolbar->show();m_relationsToolbar->raise();
 }
 bool MainWindow::eventFilter(QObject* watched,QEvent* event){
+    if(sketchModifierEvent(watched,event))return true;
     if(solidFeatureEvent(watched,event))return true;
     if(referenceGeometryEvent(watched,event))return true;
     if(operationKeyEvent(watched,event))return true;

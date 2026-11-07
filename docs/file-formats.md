@@ -6,14 +6,15 @@ inputs: conversion saves to a separate .thepart path, retaining the original fil
 No assembly/drawing reader or placeholder is implemented. Internal serialization
 is provisional and versioned; filename conventions are permanent.
 
-## Current part structure (versions 16–19)
+## Current part structure (versions 16–20)
 
-The UTF-8 JSON root contains exactly format: "TheCAD.Part", version: 16, 17, 18 or 19, units:
+The UTF-8 JSON root contains exactly format: "TheCAD.Part", version: 16 through 20, units:
 "mm", features (ordered array) and resultFeature (last solid feature ID, or empty
 for empty/sketch/reference-only documents). Writers use the highest version
-required by the part. Sweeps require 19, Linear Pattern and Mirror require 18,
-revolve/fillet/chamfer require 17, and earlier feature sets use 16. Readers accept
-versions 1–19 and reject unknown versions, fields, units and unsupported features.
+required by the part. Linked sketch projections and copies require 20, sweeps
+require 19, solid Linear Pattern and Mirror require 18, revolve/fillet/chamfer
+require 17, and earlier feature sets use 16. Readers accept versions 1–20 and
+reject unknown versions, fields, units and unsupported features.
 
 Every feature has stable id, printable name, type and explicit dependencies.
 Types and additional fields:
@@ -21,7 +22,7 @@ Types and additional fields:
 | Type | Fields |
 | --- | --- |
 | box | parameters: width/depth/height; legacy editable box |
-| sketch | plane: XY/XZ/YZ, space: planar2d, entities, relations, dimensions, polygons; optional attachment OR referencePlane |
+| sketch | plane: XY/XZ/YZ, space: planar2d, entities, relations, dimensions, polygons; optional attachment OR referencePlane; optional projections and replications (schema 20) |
 | reference | definition: method, references, position, direction, value |
 | extrude | sketch ID, contour OR contours, length, direction: positive/negative |
 | cut | Extrude fields plus Boolean throughAll; specified length retained |
@@ -44,6 +45,16 @@ feature contribute dependencies in that order, with duplicates removed.
 Sweeps depend on the profile sketch, path sketch, and preceding solid when one
 exists, in that order. Regeneration follows the full open path and resolves the
 selected region by its stored boundary references.
+
+A projection stores the sketch `entity` ID, the earlier solid `feature` ID,
+its persistent `edge` name, and `startVertex` when a named endpoint is
+available. Projections update the matching entities in the sketch frame before
+solving. Source features add dependencies in first-use order.
+
+A replication links existing `source` and `target` entity IDs in the same
+sketch. `mirror` identifies a line for reflection. Otherwise it is empty and
+the copy is rotated by `angle` radians and translated by `x` and `y` mm.
+References between copies follow the ordered replication list.
 
 ## Reference geometry (version 13)
 

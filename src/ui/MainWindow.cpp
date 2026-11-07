@@ -269,11 +269,19 @@ MainWindow::MainWindow(QWidget* parent)
     m_polygon->setToolTip("Regular hexagon: click the center, then set size and orientation");
     commandGroup(sketchButtons, "Modify", modifyGrid);
     const QList<QPair<QString, const char*>> modifyCommands = {
-        {"Trim Entities", "actionTrimEntities"}, {"Convert Entities", "actionConvertEntities"},
-        {"Offset Entities", "actionOffsetEntities"}, {"Mirror Entities", "actionMirrorEntities"},
-        {"Linear Sketch Pattern", "actionLinearSketchPattern"}, {"Move Entities", "actionMoveEntities"}};
+        {"Trim Entities", "actionTrimEntities"}, {"Offset Entities", "actionOffsetEntities"},
+        {"Move Entities", "actionMoveEntities"}};
     for (int i = 0; i < modifyCommands.size(); ++i)
         commandButton(unavailable(modifyCommands[i].first, modifyCommands[i].second), modifyGrid, i % 3, i / 3);
+    using Modifier = modeling::SketchModifier;
+    commandButton(action("Convert Entities", "actionConvertEntities",
+                         [this] { startSketchModifier(Modifier::Convert); }), modifyGrid, 0, 1);
+    commandButton(action("Mirror Entities", "actionMirrorEntities",
+                         [this] { startSketchModifier(Modifier::Mirror); }), modifyGrid, 1, 1);
+    commandButton(action("Linear Sketch Pattern", "actionLinearSketchPattern",
+                         [this] { startSketchModifier(Modifier::LinearPattern); }), modifyGrid, 0, 2);
+    commandButton(action("Circular Sketch Pattern", "actionCircularSketchPattern",
+                         [this] { startSketchModifier(Modifier::CircularPattern); }), modifyGrid, 1, 2);
     commandGroup(sketchButtons, "Relations / inspection", relationGrid);
     commandButton(action("Display/Delete Relations", "actionDisplayDeleteRelations", [this]{startConstraints();}), relationGrid, 0, 0);
     commandButton(unavailable("Repair Sketch", "actionRepairSketch"), relationGrid, 1, 0);
@@ -453,7 +461,7 @@ MainWindow::MainWindow(QWidget* parent)
             .arg(role == int(modeling::PointRole::Second) ? "Endpoint" : role == int(modeling::PointRole::Center) ? "Center" : "Start point", id);
         statusBar()->showMessage(pointName + " selected. Snapping uses exact sketch coordinates.");
     });
-    connect(m_viewport,&CadViewport::sketchSelectionChanged,this,[this]{hideRelationsContext();updateActions();if(m_constraints && m_viewport->selectedSketchRelation().empty())updateConstraintDraft();});
+    connect(m_viewport,&CadViewport::sketchSelectionChanged,this,[this]{hideRelationsContext();updateActions();if(m_constraints && m_viewport->selectedSketchRelation().empty())updateConstraintDraft();if(m_sketchModifier)refreshSketchModifier(true);});
     connect(m_viewport,&CadViewport::relationsContextRequested,this,&MainWindow::showRelationsContext);
     qApp->installEventFilter(this);
     connect(m_viewport,&CadViewport::sketchRelationDeleteRequested,this,[this](const QString& id){deleteRelation(id.toStdString());});
@@ -462,8 +470,9 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_viewport,&CadViewport::constraintPickingCanceled,this,[this]{closeConstraints();closeSmartDimension();});
     connect(m_viewport,&CadViewport::dimensionPlacementRequested,this,[this](modeling::Point2 point){placeSmartDimension(point);});
     connect(m_viewport,&CadViewport::dimensionReferencePicked,this,[this](const QString& id,int role){smartReferencePicked(id,role);});
+    connect(m_viewport,&CadViewport::dimensionBodyReferencePicked,this,&MainWindow::smartBodyReferencePicked);
     connect(m_viewport,&CadViewport::dimensionPointerMoved,this,[this](modeling::Point2 point){updateSmartPreview(point);});
-    connect(m_viewport,&CadViewport::dimensionVariantRequested,this,[this](bool radius){if(m_smartDimension && !m_smartDimension->editor){m_smartDimension->radius=radius;if(m_smartDimension->pending)updateSmartPreview(modeling::dimensionAnnotationPosition(*m_session.editingSketch(),*m_smartDimension->pending));}});
+    connect(m_viewport,&CadViewport::dimensionVariantRequested,this,[this](bool radius){if(m_smartDimension && !m_smartDimension->editor){m_smartDimension->radius=radius;if(m_smartDimension->pending)updateSmartPreview(modeling::dimensionAnnotationPosition(smartDimensionSketch(),*m_smartDimension->pending));}});
     connect(m_viewport,&CadViewport::dimensionEditRequested,this,[this](const QString& id){if(m_session.editingSketch())editSmartDimension(id.toStdString());});
     connect(m_viewport, &CadViewport::sketchChanged, this, [this](const modeling::Sketch& sketch) {
         if (!m_session.editingSketch()) return;
@@ -505,7 +514,7 @@ MainWindow::MainWindow(QWidget* parent)
 
     auto* cancelFeature = new QAction("Cancel feature", this);
     cancelFeature->setObjectName("actionCancelFeature");cancelFeature->setShortcut(QKeySequence(Qt::Key_Escape));
-    addAction(cancelFeature);connect(cancelFeature,&QAction::triggered,this,[this]{if(m_solidFeature)finishSolidFeature(false);else if(m_referenceDraft)finishReferenceGeometry(false);else finishOperation(false);});
+    addAction(cancelFeature);connect(cancelFeature,&QAction::triggered,this,[this]{if(m_sketchModifier)finishSketchModifier(false);else if(m_solidFeature)finishSolidFeature(false);else if(m_referenceDraft)finishReferenceGeometry(false);else finishOperation(false);});
     statusBar()->showMessage("Orbit: middle drag | Pan: Ctrl + middle | Zoom: Shift + middle / wheel | Normal To: Ctrl+8 | Fit: F");
     m_dimensions = new QLabel(this);
     statusBar()->addPermanentWidget(m_dimensions);
@@ -812,6 +821,8 @@ void MainWindow::updateDocumentUi()
 {
     std::string bodyId;for(const auto& feature:m_session.document().features())if(document::isSolidFeature(feature.kind))bodyId=feature.id;
     m_viewport->setSelectionFeatureIds(bodyId,m_session.editingSketchId());
+    if (m_session.editingSketch())
+        m_viewport->setSketchBoundaryReferences(m_session.document().sketchBoundaryReferences(*m_session.editingSketch()));
     refreshReferenceGeometry();
     const QString name = m_session.path().isEmpty() ? "Untitled.thepart" : QFileInfo(m_session.path()).fileName();
     setWindowTitle(name + "[*] - TheCAD");
@@ -841,7 +852,7 @@ void MainWindow::updateEntityList()
 
 void MainWindow::updateSketchToolActions()
 {
-    const bool editing=m_mode==WorkspaceMode::EditingSketch && !m_constraints && !m_operation;
+    const bool editing=m_mode==WorkspaceMode::EditingSketch && !m_constraints && !m_operation && !m_sketchModifier;
     const auto tool=m_viewport->sketchTool();
     findChild<QAction*>("actionSmartDimension")->setChecked(editing && m_viewport->smartDimensionActive());
     m_selectEntity->setChecked(editing && !tool && !m_viewport->smartDimensionActive());
@@ -860,6 +871,17 @@ void MainWindow::updateActions()
     findChild<QAction*>("actionSmartDimension")->setEnabled(editing && !operation);
     findChild<QAction*>("actionDisplayDeleteRelations")->setEnabled(editing && !operation);
     const bool selecting = m_selectingPlane;
+    const std::array modifierNames{"actionConvertEntities", "actionMirrorEntities",
+                                   "actionLinearSketchPattern", "actionCircularSketchPattern"};
+    for (std::size_t i = 0; i < modifierNames.size(); ++i)
+    {
+        auto* command = findChild<QAction*>(modifierNames[i]);
+        const bool active = m_sketchModifier && int(m_sketchModifier->kind) == int(i);
+        command->setCheckable(true);
+        command->setChecked(active);
+        command->setEnabled(active || (editing && !operation && !(m_smartDimension && m_smartDimension->editor) &&
+                                      (i != 0 || !m_session.document().shape().IsNull())));
+    }
     for(auto* reference:{m_referencePoint,m_referenceAxis,m_referencePlane})reference->setEnabled(!operation&&!m_session.editingSketch()&&!selecting);
     m_tabs->setEnabled(!operation);
     findChild<QAction*>("actionCancelFeature")->setEnabled(operation);
@@ -990,7 +1012,7 @@ void MainWindow::startSketchEditing(const document::Feature& feature)
 
 bool MainWindow::finishSketch()
 {
-    if(m_constraints)return false;
+    if(m_constraints || m_sketchModifier)return false;
     closeSmartDimension();
     if (!m_session.editingSketch()) return true;
     try {
@@ -1079,7 +1101,7 @@ void MainWindow::editSketchEntity()
 
 void MainWindow::deleteSketchEntity()
 {
-    if(!m_session.editingSketch() || m_operation || m_constraints || (m_smartDimension && m_smartDimension->editor))return;
+    if(!m_session.editingSketch() || m_operation || m_constraints || m_sketchModifier || (m_smartDimension && m_smartDimension->editor))return;
     if(!m_viewport->selectedSketchRelation().empty()){deleteRelation(m_viewport->selectedSketchRelation());return;}
     auto entities=m_viewport->selectedSketchEntities();const auto dimensions=m_viewport->selectedSketchDimensions();
     if(entities.empty() && dimensions.empty() && m_entities->currentRow()>=0)

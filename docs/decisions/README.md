@@ -58,6 +58,8 @@ approved scope do not need repeated approval.
 
 - [0033: Swept Boss/Base and Swept Cut](0033-swept-boss-and-cut.md) — solid features driven by a profile region and an open sketch path.
 
+- [0034: Sketch patterns, mirror and body projections](0034-sketch-patterns-and-convert.md) — linked copies and supporting-face references.
+
 ## Pending owner decisions
 
 - Resilient face references beyond the approved conservative planar-face strategy.

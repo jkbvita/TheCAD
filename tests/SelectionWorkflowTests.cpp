@@ -10,9 +10,11 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QDoubleSpinBox>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QToolBar>
@@ -32,6 +34,155 @@ class SelectionWorkflowTest:public QObject {
     void treeSelect(SelectionWindow& w,const std::string& id){auto* tree=w.findChild<QTreeWidget*>("featureTree");for(QTreeWidgetItemIterator it(tree);*it;++it)if((*it)->data(0,Qt::UserRole).toString().toStdString()==id){tree->setCurrentItem(*it);return;}QFAIL("Feature not found in tree");}
     void hover(CadViewport* v,QPoint p){QMouseEvent e(QEvent::MouseMove,p,v->mapToGlobal(p),Qt::NoButton,Qt::NoButton,Qt::NoModifier);QApplication::sendEvent(v,&e);}
 private slots:
+    void convertAndReferenceBodyBoundary()
+    {
+        using namespace modeling;
+        QTemporaryDir temp;
+        auto part = document::PartDocument::createBox({60, 40, 10});
+        const auto options = part.referenceOptions();
+        const auto top = std::find_if(options.begin(), options.end(), [](const auto& option) {
+            return option.reference.source == ReferenceSource::BodyFace &&
+                   option.geometry.kind == DatumKind::Plane &&
+                   std::abs(option.geometry.frame.Location().Z() - 10) < 1e-6 &&
+                   std::abs(option.geometry.frame.Direction().Z()) > .99;
+        });
+        QVERIFY(top != options.end());
+        const auto id = part.addSketch(part.sketchOnFace(top->reference.index));
+        SelectionWindow window;
+        window.path = temp.filePath("convert.thepart");
+        part.save(window.path);
+        window.showMaximized();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        QVERIFY(window.openPartFile(window.path));
+        auto* v = window.findChild<CadViewport*>();
+        QTRY_VERIFY(v->isReady());
+        treeSelect(window, id);
+        command(window, "actionEditFeature");
+        QCOMPARE(v->m_sketchBoundaryReferences.size(), std::size_t(4));
+        const auto& edge = v->m_sketchBoundaryReferences.front().geometry;
+        const Point2 midpoint{(edge.first.x + edge.second.x) / 2, (edge.first.y + edge.second.y) / 2};
+        const auto click = [&](Point2 p) {
+            QTest::mouseClick(v, Qt::LeftButton, Qt::NoModifier, v->screenPoint(p).toPoint());
+        };
+        command(window, "actionPoint");
+        hover(v, v->screenPoint(midpoint).toPoint() + QPoint(2, 1));
+        QVERIFY(v->m_boundarySnap);
+        QCOMPARE(v->m_boundarySnap->role, std::optional<PointRole>(PointRole::Midpoint));
+        click(midpoint);
+        QCOMPARE(v->m_sketch->projections.size(), std::size_t(1));
+        QCOMPARE(v->m_sketch->relations.front().kind, RelationKind::Midpoint);
+        QVERIFY(v->m_sketch->entities.front().construction);
+        command(window, "actionUndo");
+        QVERIFY(v->m_sketch->entities.empty());
+        command(window, "actionLine");
+        click(midpoint);
+        click({-11, 7});
+        QCOMPARE(v->m_sketch->projections.size(), std::size_t(1));
+        QCOMPARE(v->m_sketch->relations.front().kind, RelationKind::Midpoint);
+        QCOMPARE(v->m_sketch->entities.front().kind, EntityKind::Line);
+        QVERIFY(!v->m_sketch->entities.front().construction);
+        command(window, "actionUndo");
+        QVERIFY(v->m_sketch->entities.empty());
+
+        command(window, "actionSmartDimension");
+        click(midpoint);
+        QCOMPARE(v->m_sketch->projections.size(), std::size_t(1));
+        QTest::keyClick(v, Qt::Key_Escape);
+        QVERIFY(v->m_sketch->projections.empty());
+        command(window, "actionSmartDimension");
+        click(midpoint);
+        click({-30, -35});
+        auto* editor = window.findChild<QDialogButtonBox*>("smartDimensionButtons");
+        QVERIFY(editor);
+        QVERIFY(!window.findChild<QDoubleSpinBox*>("smartDimensionValue")->isEnabled());
+        editor->button(QDialogButtonBox::Ok)->click();
+        QCOMPARE(v->m_sketch->dimensions.size(), std::size_t(1));
+        QVERIFY(!v->m_sketch->dimensions.front().driving);
+        QTest::keyClick(v, Qt::Key_Escape);
+        command(window, "actionUndo");
+        QVERIFY(v->m_sketch->entities.empty());
+
+        const Handle(Graphic3d_Camera) camera = new Graphic3d_Camera(v->m_graphics.view()->Camera());
+        command(window, "actionConvertEntities");
+        QTest::mouseClick(v, Qt::LeftButton, Qt::NoModifier, project(v, {30, 20, 10}));
+        QCOMPARE(v->selection().size(), std::size_t(1));
+        QCOMPARE(v->selection().front().kind, SelectionKind::Face);
+        auto* buttons = window.findChild<QDialogButtonBox*>("sketchModifierButtons");
+        QVERIFY(buttons && buttons->button(QDialogButtonBox::Ok)->isEnabled());
+        QVERIFY(v->m_sketch->entities.empty());
+        buttons->button(QDialogButtonBox::Ok)->click();
+        QCOMPARE(v->m_sketch->projections.size(), std::size_t(4));
+        QCOMPARE(closedContours(*v->m_sketch).size(), std::size_t(1));
+        QVERIFY(camera->Eye().IsEqual(v->m_graphics.view()->Camera()->Eye(), 1e-9));
+        QCOMPARE(camera->Scale(), v->m_graphics.view()->Camera()->Scale());
+        command(window, "actionFinishSketch");
+        command(window, "actionSave");
+        QCOMPARE(document::PartDocument::load(window.path).features().back().sketch.projections.size(),
+                 std::size_t(4));
+        QVERIFY2(window.errors.isEmpty(), qPrintable(window.errors.join('\n')));
+    }
+
+    void sketchMirrorAndPatternPanels()
+    {
+        using namespace modeling;
+        QTemporaryDir temp;
+        auto part = document::PartDocument::createEmpty();
+        Sketch sketch;
+        sketch.entities = {{EntityKind::Line, {0, -30}, {0, 35}, 1, "axis", true},
+                           {EntityKind::Circle, {20, 10}, {}, 3, "seed"}};
+        const auto id = part.addSketch(sketch);
+        SelectionWindow window;
+        window.path = temp.filePath("patterns.thepart");
+        part.save(window.path);
+        window.showMaximized();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        QVERIFY(window.openPartFile(window.path));
+        auto* v = window.findChild<CadViewport*>();
+        QTRY_VERIFY(v->isReady());
+        treeSelect(window, id);
+        command(window, "actionEditFeature");
+        v->selectSketchTool();
+        v->selectSketchEntity("seed");
+        command(window, "actionMirrorEntities");
+        window.findChild<QPushButton*>("pickMirrorSketchAxis")->click();
+        QTest::mouseClick(v, Qt::LeftButton, Qt::NoModifier, v->screenPoint({0, 18}).toPoint());
+        auto* buttons = window.findChild<QDialogButtonBox*>("sketchModifierButtons");
+        QVERIFY(buttons && buttons->button(QDialogButtonBox::Ok)->isEnabled());
+        buttons->button(QDialogButtonBox::Ok)->click();
+        QCOMPARE(v->m_sketch->replications.size(), std::size_t(1));
+        QVERIFY(std::abs(v->m_sketch->entities.back().first.x + 20) < 1e-6);
+
+        v->selectSketchEntity("seed");
+        command(window, "actionLinearSketchPattern");
+        window.findChild<QSpinBox*>("sketchPatternCount")->setValue(3);
+        window.findChild<QDoubleSpinBox*>("sketchPatternSpacing")->setValue(15);
+        buttons = window.findChild<QDialogButtonBox*>("sketchModifierButtons");
+        QVERIFY(buttons && buttons->button(QDialogButtonBox::Ok)->isEnabled());
+        buttons->button(QDialogButtonBox::Ok)->click();
+        QCOMPARE(v->m_sketch->replications.size(), std::size_t(3));
+        QVERIFY(std::abs(v->m_sketch->entities.back().first.x - 50) < 1e-6);
+        command(window, "actionUndo");
+        QCOMPARE(v->m_sketch->replications.size(), std::size_t(1));
+        command(window, "actionRedo");
+        QCOMPARE(v->m_sketch->replications.size(), std::size_t(3));
+
+        v->selectSketchEntity("seed");
+        command(window, "actionCircularSketchPattern");
+        buttons = window.findChild<QDialogButtonBox*>("sketchModifierButtons");
+        QVERIFY(buttons && buttons->button(QDialogButtonBox::Ok)->isEnabled());
+        QTest::keyClick(v, Qt::Key_Escape);
+        QCOMPARE(v->m_sketch->replications.size(), std::size_t(3));
+        v->selectSketchEntity("seed");
+        command(window, "actionCircularSketchPattern");
+        QTest::keyClick(v, Qt::Key_Return);
+        QCOMPARE(v->m_sketch->replications.size(), std::size_t(6));
+        command(window, "actionFinishSketch");
+        command(window, "actionSave");
+        QCOMPARE(document::PartDocument::load(window.path).features().back().sketch.replications.size(),
+                 std::size_t(6));
+        QVERIFY2(window.errors.isEmpty(), qPrintable(window.errors.join('\n')));
+    }
+
     void overlappingOriginPlanesAndAnnotations(){
         using namespace modeling;SelectionWindow window;window.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&window));auto* v=window.findChild<CadViewport*>();QTRY_VERIFY(v->isReady());
         const auto origin=project(v,{0,0,0});auto candidates=v->selectionCandidates(origin,true);

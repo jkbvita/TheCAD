@@ -1,6 +1,7 @@
 #include "modeling/RelationCommands.h"
 #include "modeling/PlanarRegions.h"
 #include "modeling/SketchTools.h"
+#include "modeling/SketchModifiers.h"
 #include <BRepTools.hxx>
 #include <BRep_Tool.hxx>
 #include <TopExp.hxx>
@@ -266,7 +267,8 @@ TopoDS_Face simpleProfileFace(const Sketch& sketch,TopologyNames* names=nullptr)
     validate(sketch);
     if(std::any_of(sketch.entities.begin(),sketch.entities.end(),[](const auto& e){return e.construction || e.kind==EntityKind::Point;})){
         auto boundary=sketch;boundary.entities.erase(std::remove_if(boundary.entities.begin(),boundary.entities.end(),[](const auto& e){return e.construction || e.kind==EntityKind::Point;}),boundary.entities.end());
-        boundary.relations.clear();boundary.dimensions.clear();boundary.polygons.clear();return profileFace(boundary);
+        boundary.relations.clear();boundary.dimensions.clear();boundary.polygons.clear();
+        boundary.projections.clear();boundary.replications.clear();return profileFace(boundary);
     }
     if (sketch.entities.empty()) {
         fail("The sketch is empty. Draw a closed profile before extruding.");
@@ -515,6 +517,7 @@ std::vector<Contour> closedContours(const Sketch& sketch)
             auto boundary=sketch;for(std::size_t i=0;i<boundary.entities.size();++i)if(boundary.entities[i].id.empty())boundary.entities[i].id="entity-"+std::to_string(i+1);
             boundary.entities.erase(std::remove_if(boundary.entities.begin(),boundary.entities.end(),[](const auto& e){return e.construction || e.kind==EntityKind::Point;}),boundary.entities.end());
             boundary.relations.clear();boundary.dimensions.clear();boundary.polygons.clear();
+            boundary.projections.clear();boundary.replications.clear();
             return closedContours(boundary);
         }
         std::vector<std::string> identifiers;
@@ -986,7 +989,7 @@ void validateSketchConstraintReferences(const Sketch& sketch)
 {
     validateRelationGroups(sketch);
     if(sketch.relations.size()>4000 || sketch.dimensions.size()>4000)fail("Sketch exceeds the prototype constraint limit.");
-    (void)sketchPoints(sketch);validatePolygons(sketch,false);std::set<std::string> ids;
+    (void)sketchPoints(sketch);validatePolygons(sketch,false);validateSketchModifiers(sketch);std::set<std::string> ids;
     for(const auto& relation:sketch.relations) {
         if(relation.first.role==PointRole::Midpoint || relation.second.role==PointRole::Midpoint)fail("Midpoint snaps must use a Midpoint relation with real point references.");
         if(!stableIdentifier(relation.id) || !ids.insert(relation.id).second)fail("Constraint IDs must be valid and unique.");
@@ -1019,6 +1022,11 @@ Sketch canonicalizeSketchEqualities(const Sketch& sketch,const std::vector<std::
     const auto anchor=[&](const SketchPointRef& ref,Point2 point){const auto index=groups.index(ref);x[EqualityGroups::root(groups.x,index)]=point.x;y[EqualityGroups::root(groups.y,index)]=point.y;};
     anchor({},{});for(const auto& r:sketch.relations)if(r.kind==RelationKind::FixedPoint)anchor(r.first,r.fixedPosition);
     for(const auto& r:sketch.relations)if(r.kind==RelationKind::FixedEntity){anchor(r.first,r.fixedPosition);const auto& e=referencedEntity(sketch,r.first);if(e.kind==EntityKind::Line)anchor({e.id,PointRole::Second},r.fixedSecond);}
+    for (const auto& link : sketch.projections) {
+        const auto& e = referencedEntity(sketch, {link.entityId, PointRole::First});
+        anchor({e.id, e.kind == EntityKind::Circle ? PointRole::Center : PointRole::First}, e.first);
+        if (e.kind == EntityKind::Line) anchor({e.id, PointRole::Second}, e.second);
+    }
     for(const auto& a:extraAnchors)anchor(a.first,a.second);
     for(std::size_t i=1;i<groups.points.size();++i){const auto px=EqualityGroups::root(groups.x,i),py=EqualityGroups::root(groups.y,i);const auto point=groups.points[i].second;if(!x.count(px))x[px]=point.x;if(!y.count(py))y[py]=point.y;}
     for(std::size_t i=1;i<groups.points.size();++i)setPoint(result,groups.points[i].first,{x[EqualityGroups::root(groups.x,i)],y[EqualityGroups::root(groups.y,i)]});
@@ -1092,7 +1100,7 @@ Sketch editSketchEntity(const Sketch& sketch, const SketchEntity& replacement)
     const auto old = std::find_if(sketch.entities.begin(), sketch.entities.end(), [&](const SketchEntity& entity) { return entity.id == replacement.id; });
     if (replacement.id.empty() || old == sketch.entities.end()) fail("Cannot edit a sketch entity without its existing stable ID.");
     if (old->kind != replacement.kind) fail("Editing cannot change a sketch entity type.");
-    const bool solverConstraints=!sketch.polygons.empty() || !sketch.dimensions.empty() || std::any_of(sketch.relations.begin(),sketch.relations.end(),[](const auto& r){return int(r.kind)>=int(RelationKind::FixedPoint);});
+    const bool solverConstraints=!sketch.projections.empty() || !sketch.replications.empty() || !sketch.polygons.empty() || !sketch.dimensions.empty() || std::any_of(sketch.relations.begin(),sketch.relations.end(),[](const auto& r){return int(r.kind)>=int(RelationKind::FixedPoint);});
     if(solverConstraints) {
         SolveOptions options;
         const auto target=[&](PointRole role,Point2 before,Point2 after){if(before.x!=after.x || before.y!=after.y)options.pointTargets.push_back({{replacement.id,role},after,true});};
@@ -1156,13 +1164,14 @@ Sketch moveSketchPoint(const Sketch& sketch, const SketchPointRef& reference, Po
                       const std::optional<SketchPointRef>& target, bool preserveCircleRadius)
 {
     validate(sketch);
-    if(reference.role==PointRole::Origin) fail("The sketch origin is fixed and cannot be dragged.");
+    if(reference.role==PointRole::Origin || sketchProjection(sketch,reference.entityId))
+        fail("Reference geometry is fixed and cannot be dragged.");
     (void)sketchPointValue(sketch,reference);
     if(target) {
         if(pointKey(reference)==pointKey(*target)) fail("A point cannot be joined to itself.");
         position=sketchPointValue(sketch,*target);
     }
-    const bool solverConstraints=!sketch.polygons.empty() || !sketch.dimensions.empty() || std::any_of(sketch.relations.begin(),sketch.relations.end(),[](const auto& r){return int(r.kind)>=int(RelationKind::FixedPoint);});
+    const bool solverConstraints=!sketch.projections.empty() || !sketch.replications.empty() || !sketch.polygons.empty() || !sketch.dimensions.empty() || std::any_of(sketch.relations.begin(),sketch.relations.end(),[](const auto& r){return int(r.kind)>=int(RelationKind::FixedPoint);});
     const bool midpointTarget=target && target->role==PointRole::Midpoint;
     if(reference.role==PointRole::Midpoint)fail("Drag an endpoint or attached point to change a line midpoint.");
     if(solverConstraints || preserveCircleRadius || midpointTarget) {
@@ -1221,6 +1230,11 @@ Sketch removeSketchEntity(const Sketch& sketch, const std::string& entityId)
     const auto found = std::find_if(candidate.entities.begin(), candidate.entities.end(), [&](const SketchEntity& entity) { return entity.id == entityId; });
     if (entityId.empty() || found == candidate.entities.end()) fail("Cannot remove an unknown sketch entity.");
     candidate.entities.erase(found);
+    candidate.projections.erase(std::remove_if(candidate.projections.begin(), candidate.projections.end(),
+        [&](const auto& p) { return p.entityId == entityId; }), candidate.projections.end());
+    candidate.replications.erase(std::remove_if(candidate.replications.begin(), candidate.replications.end(),
+        [&](const auto& p) { return p.source == entityId || p.target == entityId || p.mirrorLine == entityId; }),
+        candidate.replications.end());
     candidate.polygons.erase(std::remove_if(candidate.polygons.begin(),candidate.polygons.end(),[&](const auto& g){return g.centerId==entityId || std::find(g.edges.begin(),g.edges.end(),entityId)!=g.edges.end();}),candidate.polygons.end());
     candidate.relations.erase(std::remove_if(candidate.relations.begin(), candidate.relations.end(), [&](const SketchRelation& relation) {
         return relation.first.entityId == entityId || relation.second.entityId == entityId;

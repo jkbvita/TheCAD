@@ -21,6 +21,7 @@ class QTabWidget;
 class QAction;
 class QGroupBox;
 class QDoubleSpinBox;
+class QSpinBox;
 class QPushButton;
 class QDockWidget;
 class QStackedWidget;
@@ -33,6 +34,7 @@ namespace thecad::ui {
 class CadViewport;
 class FeatureTreePresenter;
 class SolidFeaturePanel;
+class PropertyManagerPage;
 
 class MainWindow : public QMainWindow {
 public:
@@ -59,6 +61,8 @@ private:
     void startSmartDimension();
     void closeSmartDimension();
     void smartReferencePicked(const QString& id,int role);
+    void smartBodyReferencePicked(const modeling::SketchProjection& projection,int role);
+    const modeling::Sketch& smartDimensionSketch() const;
     void updateSmartPreview(modeling::Point2 point);
     void placeSmartDimension(modeling::Point2 point);
     void editSmartDimension(const std::string& id);
@@ -69,6 +73,7 @@ private:
         std::vector<std::string> entities;
         QDialog* editor = nullptr;
         std::optional<modeling::SketchDimension> pending;
+        std::optional<modeling::Sketch> projectedSketch;
         bool radius = false;
         bool resume = true;
         bool editingExisting = false;
@@ -146,12 +151,29 @@ private:
     void editSelectedFeature();
     void startSketchEditing(const document::Feature& feature);
     bool finishSketch();
+    void startSketchModifier(modeling::SketchModifier kind);
+    void refreshSketchModifier(bool viewportSelection = false);
+    void finishSketchModifier(bool accepted);
+    bool sketchModifierEvent(QObject* watched, QEvent* event);
+    struct SketchModifierDraft {
+        modeling::SketchModifier kind = modeling::SketchModifier::Convert;
+        PropertyManagerPage* page = nullptr;
+        QLabel* selection = nullptr;
+        QComboBox* axis = nullptr;
+        QPushButton* pickAxis = nullptr;
+        QDoubleSpinBox *spacing = nullptr, *angle = nullptr, *centerX = nullptr, *centerY = nullptr;
+        QSpinBox* count = nullptr;
+        QCheckBox *reverse = nullptr, *innerLoops = nullptr, *construction = nullptr;
+        std::vector<std::string> seeds;
+        std::optional<modeling::Sketch> candidate;
+    };
+    std::unique_ptr<SketchModifierDraft> m_sketchModifier;
 
     void editSketchEntity();
     void deleteSketchEntity();
     void toggleConstruction();
     void extrude(bool cut);
-    bool featureDraftActive() const {return bool(m_operation)||bool(m_referenceDraft)||m_solidFeature;}
+    bool featureDraftActive() const {return bool(m_operation)||bool(m_referenceDraft)||m_solidFeature||bool(m_sketchModifier);}
     void startSolidFeature(document::FeatureKind kind,const document::Feature* editing=nullptr);
     void finishSolidFeature(bool accepted);
     void syncSolidFeaturePicking();

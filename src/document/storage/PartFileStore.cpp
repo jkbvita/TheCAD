@@ -488,9 +488,9 @@ PartDocument PartFileStore::load(const QString& path)
     if (root.value("units") != QJsonValue("mm"))
         fail("Unsupported units; this prototype supports millimeters only.");
     const auto versionValue = root.value("version");
-    if (!versionValue.isDouble() || versionValue.toDouble() < 1 || versionValue.toDouble() > 19 ||
+    if (!versionValue.isDouble() || versionValue.toDouble() < 1 || versionValue.toDouble() > 20 ||
         versionValue.toDouble() != std::floor(versionValue.toDouble()))
-        fail("Unsupported part document version; expected versions 1 through 19.");
+        fail("Unsupported part document version; expected versions 1 through 20.");
     const int version = versionValue.toInt();
     if (!root.value("features").isArray())
         fail("Part features must be an ordered array.");
@@ -565,6 +565,10 @@ PartDocument PartFileStore::load(const QString& path)
                     expected.insert("attachment");
                 if (version >= 13 && object.contains("referencePlane"))
                     expected.insert("referencePlane");
+                if (version >= 20)
+                    for (const auto* key : {"projections", "replications"})
+                        if (object.contains(key))
+                            expected.insert(key);
                 fields(object, expected, "Sketch feature");
                 feature.kind = FeatureKind::Sketch;
                 feature.sketch.plane = readPlane(object.value("plane"));
@@ -627,6 +631,46 @@ PartDocument PartFileStore::load(const QString& path)
                     fail("Sketch entities must be an array of no more than 1000 elements.");
                 for (const auto& entity : object.value("entities").toArray())
                     feature.sketch.entities.push_back(readEntity(entity, version));
+                if (object.contains("projections"))
+                {
+                    const auto list = object["projections"].toArray();
+                    if (!object["projections"].isArray() || list.size() > int(maximumEntities))
+                        fail("Invalid sketch projection list.");
+                    for (const auto& entry : list)
+                    {
+                        const auto link = entry.toObject();
+                        fields(link, {"entity", "feature", "edge", "startVertex"}, "Sketch projection");
+                        const auto id = stringValue(link["entity"], "Projected entity");
+                        const auto source = stringValue(link["feature"], "Projection source");
+                        validId(id.toStdString());
+                        validId(source.toStdString());
+                        if (!link["startVertex"].isString())
+                            fail("Invalid projected endpoint name.");
+                        feature.sketch.projections.push_back({
+                            id.toStdString(), source.toStdString(),
+                            stringValue(link["edge"], "Projected edge").toStdString(),
+                            link["startVertex"].toString().toStdString()});
+                    }
+                }
+                if (object.contains("replications"))
+                {
+                    const auto list = object["replications"].toArray();
+                    if (!object["replications"].isArray() || list.size() > int(maximumEntities))
+                        fail("Invalid sketch replication list.");
+                    for (const auto& entry : list)
+                    {
+                        const auto copy = entry.toObject();
+                        fields(copy, {"source", "target", "mirror", "x", "y", "angle"}, "Sketch replication");
+                        if (!copy["mirror"].isString())
+                            fail("Invalid mirror line ID.");
+                        feature.sketch.replications.push_back({
+                            stringValue(copy["source"], "Seed entity").toStdString(),
+                            stringValue(copy["target"], "Copy entity").toStdString(),
+                            copy["mirror"].toString().toStdString(),
+                            {number(copy["x"], "Copy offset X"), number(copy["y"], "Copy offset Y")},
+                            number(copy["angle"], "Copy rotation")});
+                    }
+                }
                 if (version >= 8)
                 {
                     if (!object.value("polygons").isArray() ||
@@ -852,6 +896,23 @@ void PartFileStore::save(const PartDocument& document, const QString& path)
                     QJsonObject{{"id", q(g.id)}, {"center", q(g.centerId)}, {"edges", edges}});
             }
             object["polygons"] = polygons;
+            if (!feature.sketch.projections.empty())
+            {
+                QJsonArray links;
+                for (const auto& link : feature.sketch.projections)
+                    links.append(QJsonObject{{"entity", q(link.entityId)}, {"feature", q(link.sourceFeature)},
+                                             {"edge", q(link.edgeName)}, {"startVertex", q(link.startVertex)}});
+                object["projections"] = links;
+            }
+            if (!feature.sketch.replications.empty())
+            {
+                QJsonArray copies;
+                for (const auto& copy : feature.sketch.replications)
+                    copies.append(QJsonObject{{"source", q(copy.source)}, {"target", q(copy.target)},
+                                              {"mirror", q(copy.mirrorLine)}, {"x", copy.offset.x},
+                                              {"y", copy.offset.y}, {"angle", copy.angle}});
+                object["replications"] = copies;
+            }
             QJsonArray dimensions;
             for (const auto& d : feature.sketch.dimensions)
                 dimensions.append(writeDimension(feature.sketch, d));
@@ -942,12 +1003,15 @@ void PartFileStore::save(const PartDocument& document, const QString& path)
     int version = 16;
     for (const auto& feature : document.features())
     {
-        if (isSweepFeature(feature.kind))
+        if (feature.kind == FeatureKind::Sketch &&
+            (!feature.sketch.projections.empty() || !feature.sketch.replications.empty()))
         {
-            version = 19;
+            version = 20;
             break;
         }
-        if (isPatternFeature(feature.kind))
+        if (isSweepFeature(feature.kind))
+            version = 19;
+        else if (version < 18 && isPatternFeature(feature.kind))
             version = 18;
         else if (version < 17 && (isRevolveFeature(feature.kind) || isEdgeFeature(feature.kind)))
             version = 17;

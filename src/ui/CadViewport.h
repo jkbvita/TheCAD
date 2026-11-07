@@ -1,6 +1,7 @@
 #pragma once
 
 #include "modeling/Sketch.h"
+#include "modeling/SketchModifiers.h"
 #include "viewport/GraphicsScene.h"
 #include "viewport/CameraNavigation.h"
 #include "viewport/DimensionPresenter.h"
@@ -67,6 +68,12 @@ public:
     void cancelSketchMultiSelection();
     void selectSketchEntity(const QString& id);
     void setSketch(const modeling::Sketch& sketch);
+    void setSketchBoundaryReferences(std::vector<modeling::SketchProjection> references);
+    void setSketchModifierPicking(bool enabled, bool convert = false) {
+        m_sketchModifierPicking = enabled;
+        m_sketchConversionPicking = enabled && convert;
+    }
+    void setSketchModifierPreview(const modeling::Sketch* candidate);
     void beginContourSelection(const modeling::Sketch& sketch);
     void endContourSelection();
     void setSelectedContourFaces(const std::vector<TopoDS_Face>& faces);
@@ -122,6 +129,7 @@ signals:
     void sketchDeleteRequested();
     void sketchToolChanged();
     void dimensionReferencePicked(const QString& id,int role);
+    void dimensionBodyReferencePicked(const thecad::modeling::SketchProjection& projection,int role);
     void dimensionPointerMoved(thecad::modeling::Point2 point);
     void dimensionVariantRequested(bool radius);
     void constraintPickingCanceled();
@@ -255,6 +263,18 @@ private:
     void updateInteractionPresentation();
     void clearInteractionPresentation();
     void resetSketchInference();
+    struct BoundarySnap {
+        std::size_t index;
+        std::optional<modeling::PointRole> role;
+        modeling::Point2 point;
+    };
+    std::optional<BoundarySnap> boundarySnapAt(const QPointF& position, modeling::Point2 local) const;
+    void attachBoundarySnap(modeling::Sketch& sketch, modeling::SketchPointRef point,
+                            const BoundarySnap& snap);
+    std::vector<modeling::SketchProjection> m_sketchBoundaryReferences;
+    std::optional<BoundarySnap> m_boundarySnap, m_firstBoundarySnap;
+    bool m_sketchModifierPicking = false, m_sketchConversionPicking = false;
+    Handle(AIS_Shape) m_sketchModifierPreview;
     void commitDrawing(modeling::Point2 point, const std::optional<modeling::SketchPointRef>& reference);
     QPoint nativePosition(const QPointF& position) const;
 

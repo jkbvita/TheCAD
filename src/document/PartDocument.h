@@ -2,6 +2,8 @@
 
 #include "modeling/Sketch.h"
 #include "modeling/ReferenceGeometry.h"
+#include "modeling/Selection.h"
+#include "modeling/SketchModifiers.h"
 #include <QString>
 #include <TopoDS_Shape.hxx>
 #include <string>
@@ -69,6 +71,10 @@ public:
     const TopoDS_Shape& shape() const { return m_shape; }
     const std::vector<Feature>& features() const { return m_features; }
     modeling::Sketch sketchOnFace(int faceIndex) const;
+    std::vector<modeling::SketchProjection> sketchBoundaryReferences(const modeling::Sketch& sketch) const;
+    modeling::Sketch convertSketchGeometry(const std::string& sketchId, const modeling::Sketch& sketch,
+                                          const std::vector<modeling::SelectionRef>& selection,
+                                          bool innerLoops, bool construction) const;
     modeling::Sketch sketchOnReferencePlane(const std::string& id) const;
     std::string addReferenceGeometry(const modeling::DatumDefinition& definition);
     modeling::DatumGeometry resolveReference(const modeling::GeometryReference& reference) const;
