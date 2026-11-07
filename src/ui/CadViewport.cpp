@@ -669,6 +669,7 @@ void CadViewport::setDimensionSelection(const std::vector<std::string>& entities
 void CadViewport::setConstraintErrors(const std::vector<std::string>& ids){m_constraintErrors=ids;updateConstraintPresentation();update();}
 void CadViewport::setConstraintPicking(bool enabled) {selectSketchTool();m_tools.relations(enabled);emit sketchToolChanged();}
 void CadViewport::mouseDoubleClickEvent(QMouseEvent* event) {
+    if(m_sketchLineEditPicking && event->button()==Qt::LeftButton){event->accept();return;}
     if(m_sketchEditing && m_sketch && isReady() && event->button()==Qt::LeftButton) {
         cancelPointDrag();
         cancelDimensionDrag();
@@ -824,7 +825,7 @@ void CadViewport::updateSketchPresentation(const std::optional<modeling::SketchE
             }
             for(const bool construction:{false,true})for(const bool defined:{false,true}){
                 auto group=visible;group.relations.clear();group.dimensions.clear();group.polygons.clear();
-                group.projections.clear();group.replications.clear();
+                group.projections.clear();group.replications.clear();group.offsets.clear();
                 group.entities.erase(std::remove_if(group.entities.begin(),group.entities.end(),[&](const auto& e){const bool fixed=std::find(m_definition.definedCurves.begin(),m_definition.definedCurves.end(),e.id)!=m_definition.definedCurves.end();return e.kind==modeling::EntityKind::Point || e.construction!=construction || fixed!=defined;}),group.entities.end());
                 if(group.entities.empty())continue;
                 Handle(AIS_Shape) batch=new AIS_Shape(modeling::sketchShape(group));
@@ -955,7 +956,7 @@ void CadViewport::updatePointPresentation()
     if(m_sketchEditing && m_sketch) {
         if(!m_hoveredEntity.empty()) {
             auto only=*m_sketch;only.entities.clear();only.relations.clear();only.dimensions.clear();only.polygons.clear();
-            only.projections.clear();only.replications.clear();
+            only.projections.clear();only.replications.clear();only.offsets.clear();
             for(const auto& e:m_sketch->entities)if(e.id==m_hoveredEntity)only.entities.push_back(e);
             if(!only.entities.empty()) {
                 m_hoveredEntityPresentation=new AIS_Shape(modeling::sketchShape(only));
@@ -1232,6 +1233,12 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
     if (!isReady() || m_camera.mode() != Navigation::None) {
         return;
     }
+    if (event->button() == Qt::LeftButton && m_sketchLineEditPicking) {
+        setFocus(Qt::MouseFocusReason);
+        pointAtSketchLineEdit(event->position(), true);
+        event->accept();
+        return;
+    }
     if(event->button()==Qt::LeftButton && m_sketchEditing && !event->modifiers().testFlag(Qt::ShiftModifier)){
         if(const auto id=relationAt(event->position())){setFocus(Qt::MouseFocusReason);selectSketchRelation(*id);event->accept();return;}
         m_selectedRelation.clear();
@@ -1385,6 +1392,10 @@ void CadViewport::mouseMoveEvent(QMouseEvent* event)
         m_planeClickCandidate = false;
     }
     if (isReady() && m_sketchEditing && m_camera.mode() == Navigation::None) {
+        if (m_sketchLineEditPicking) {
+            pointAtSketchLineEdit(event->position(), false);
+            return;
+        }
         if (m_sketchConversionPicking) {
             updateSelectionHover(event->position());
             return;
@@ -1448,6 +1459,8 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* event)
 
 bool CadViewport::event(QEvent* event)
 {
+    if (event->type() == QEvent::Leave && m_sketchLineEditPicking)
+        emit sketchLineEditPointed({}, {}, false);
     if(event->type()==QEvent::Leave)previewCandidate({});
     if(event->type()==QEvent::Leave&&isReady()){
         m_hoveredDatum.clear();updateDatumStyles();

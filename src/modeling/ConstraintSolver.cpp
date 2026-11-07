@@ -1,5 +1,6 @@
 #include "modeling/ConstraintSolver.h"
 #include "modeling/SketchModifiers.h"
+#include "modeling/SketchOffset.h"
 #include "GCS.h"
 #include <Standard_Failure.hxx>
 #include <algorithm>
@@ -207,6 +208,37 @@ public:
             }
         }
     }
+    void addOffsets(GCS::System& system) {
+        for (const auto& group : sketch.offsets) {
+            const auto& first = group.segments.front();
+            const int id = tag("offset:" + first.target);
+            if (circles.count(first.source)) {
+                auto& source = circles.at(first.source);
+                auto& target = circles.at(first.target);
+                system.addConstraintP2PCoincident(source.center, target.center, id);
+                system.addConstraintDifference(source.rad, target.rad, constant(group.distance), id);
+                continue;
+            }
+            for (std::size_t i = 0; i < group.segments.size(); ++i) {
+                const auto& segment = group.segments[i];
+                auto source = lines.at(segment.source);
+                if (segment.reversed)
+                    std::swap(source.p1, source.p2);
+                auto& target = lines.at(segment.target);
+                system.addConstraintL2LAngle(source, target, constant(0), id);
+                system.addConstraintP2LDistance(target.p1, source, constant(std::abs(group.distance)),
+                                                 group.distance > 0, id);
+                if (i + 1 < group.segments.size() || group.closed) {
+                    const auto& next = group.segments[(i + 1) % group.segments.size()];
+                    system.addConstraintP2PCoincident(target.p2, lines.at(next.target).p1, id);
+                }
+                if (!group.closed && i == 0)
+                    system.addConstraintPerpendicular(source.p1, target.p1, source, id);
+                if (!group.closed && i + 1 == group.segments.size())
+                    system.addConstraintPerpendicular(source.p2, target.p2, source, id);
+            }
+        }
+    }
     bool parallelImplied(const SketchDimension& dimension,const std::string& except={}) const {
         // Avoid introducing a duplicate derived parallel equation where existing
         // orientation relations already imply it. No owner constraint is removed.
@@ -285,7 +317,8 @@ SketchSolveResult solvePlanarSketch(const Sketch& input,const SolveOptions& opti
         WorkingSketch work(input);GCS::System system;
         system.maxIter=options.maximumIterations;system.maxIterRedundant=options.maximumIterations;
         system.convergence=options.tolerance;system.debugMode=GCS::NoDebug;
-        work.addRelations(system);work.addPolygons(system);work.addReplications(system);work.addDimensions(system);work.addTargets(system,options);
+        work.addRelations(system);work.addPolygons(system);work.addReplications(system);work.addOffsets(system);
+        work.addDimensions(system);work.addTargets(system,options);
         system.declareUnknowns(work.unknowns);solving=true;system.initSolution();
         const auto status=system.solve();
         if(status==GCS::SolveStatus::Success || status==GCS::SolveStatus::Converged)system.applySolution();
@@ -307,6 +340,7 @@ SketchSolveResult solvePlanarSketch(const Sketch& input,const SolveOptions& opti
         std::vector<std::pair<SketchPointRef,Point2>> anchors;
         for(const auto& target:options.pointTargets)if(target.hard)anchors.push_back({target.point,target.position});
         auto candidate=canonicalizeSketchEqualities(work.sketch,anchors);
+        validateSketchOffsetGeometry(candidate);
         for(auto& d:candidate.dimensions)if(!d.driving)d.value=dimensionMeasurement(candidate,d);
         (void)sketchShape(candidate);
         result.sketch=std::move(candidate);result.success=true;
@@ -327,7 +361,8 @@ SketchDefinition analyzeSketchDefinition(const Sketch& sketch){
         if(sketch.space!=SketchSpace::Planar2D)return result;
         validateSketchConstraintReferences(sketch);
         (void)sketchShape(sketch);WorkingSketch work(sketch);GCS::System system;system.debugMode=GCS::NoDebug;
-        work.addRelations(system);work.addPolygons(system);work.addReplications(system);work.addDimensions(system);
+        work.addRelations(system);work.addPolygons(system);work.addReplications(system);work.addOffsets(system);
+        work.addDimensions(system);
         system.declareUnknowns(work.unknowns);system.diagnose();
         GCS::VEC_I conflicts,redundant;system.getConflicting(conflicts);system.getRedundant(redundant);
         if(!conflicts.empty() || !redundant.empty())return result;

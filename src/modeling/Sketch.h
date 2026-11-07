@@ -79,6 +79,13 @@ struct Sketch {
         double angle = 0; // Radians, for affine rotation and translation.
     };
     std::vector<Replication> replications;
+    struct Offset {
+        struct Segment { std::string source, target; bool reversed = false; };
+        std::vector<Segment> segments;
+        double distance = 0; // Signed left offset for lines, signed radial change for a circle.
+        bool closed = false;
+    };
+    std::vector<Offset> offsets;
 };
 // Point references address the immutable local origin or stable entity IDs.
 Point2 sketchPointValue(const Sketch& sketch, const SketchPointRef& reference);

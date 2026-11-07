@@ -328,7 +328,7 @@ void CadViewport::showSelectOther(const QPoint& point){
     connect(menu,&QMenu::aboutToHide,this,[this]{previewCandidate({});update();});menu->popup(mapToGlobal(point));menu->setActiveAction(menu->actions().front());
 }
 void CadViewport::contextMenuEvent(QContextMenuEvent* event){
-    if(m_tools.drawing()||m_dimensionDrag||m_pointDrag||m_regionSelecting||!m_referenceCandidates.empty()){event->ignore();return;}
+    if(m_sketchLineEditPicking||m_tools.drawing()||m_dimensionDrag||m_pointDrag||m_regionSelecting||!m_referenceCandidates.empty()){event->ignore();return;}
     if(!m_contextClick&&event->reason()!=QContextMenuEvent::Keyboard){event->ignore();return;}
     m_contextClick=false;auto* menu=new QMenu(this);menu->setObjectName("geometryContextMenu");menu->setAttribute(Qt::WA_DeleteOnClose);
     const auto position=event->reason()==QContextMenuEvent::Keyboard?rect().center():event->pos();

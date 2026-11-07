@@ -488,9 +488,9 @@ PartDocument PartFileStore::load(const QString& path)
     if (root.value("units") != QJsonValue("mm"))
         fail("Unsupported units; this prototype supports millimeters only.");
     const auto versionValue = root.value("version");
-    if (!versionValue.isDouble() || versionValue.toDouble() < 1 || versionValue.toDouble() > 20 ||
+    if (!versionValue.isDouble() || versionValue.toDouble() < 1 || versionValue.toDouble() > 21 ||
         versionValue.toDouble() != std::floor(versionValue.toDouble()))
-        fail("Unsupported part document version; expected versions 1 through 20.");
+        fail("Unsupported part document version; expected versions 1 through 21.");
     const int version = versionValue.toInt();
     if (!root.value("features").isArray())
         fail("Part features must be an ordered array.");
@@ -569,6 +569,8 @@ PartDocument PartFileStore::load(const QString& path)
                     for (const auto* key : {"projections", "replications"})
                         if (object.contains(key))
                             expected.insert(key);
+                if (version >= 21 && object.contains("offsets"))
+                    expected.insert("offsets");
                 fields(object, expected, "Sketch feature");
                 feature.kind = FeatureKind::Sketch;
                 feature.sketch.plane = readPlane(object.value("plane"));
@@ -669,6 +671,38 @@ PartDocument PartFileStore::load(const QString& path)
                             copy["mirror"].toString().toStdString(),
                             {number(copy["x"], "Copy offset X"), number(copy["y"], "Copy offset Y")},
                             number(copy["angle"], "Copy rotation")});
+                    }
+                }
+                if (object.contains("offsets"))
+                {
+                    const auto groups = object["offsets"].toArray();
+                    if (!object["offsets"].isArray() || groups.size() > int(maximumEntities))
+                        fail("Invalid sketch offset list.");
+                    std::size_t count = 0;
+                    for (const auto& entry : groups)
+                    {
+                        const auto data = entry.toObject();
+                        fields(data, {"distance", "closed", "segments"}, "Sketch offset");
+                        const auto segments = data["segments"].toArray();
+                        count += std::size_t(segments.size());
+                        if (!data["closed"].isBool() || !data["segments"].isArray() ||
+                            segments.isEmpty() || count > maximumEntities)
+                            fail("Invalid sketch offset segments.");
+                        modeling::Sketch::Offset group;
+                        group.distance = number(data["distance"], "Offset distance");
+                        group.closed = data["closed"].toBool();
+                        for (const auto& member : segments)
+                        {
+                            const auto segment = member.toObject();
+                            fields(segment, {"source", "target", "reversed"}, "Offset segment");
+                            if (!segment["reversed"].isBool())
+                                fail("Invalid offset segment direction.");
+                            group.segments.push_back({
+                                stringValue(segment["source"], "Offset source").toStdString(),
+                                stringValue(segment["target"], "Offset target").toStdString(),
+                                segment["reversed"].toBool()});
+                        }
+                        feature.sketch.offsets.push_back(std::move(group));
                     }
                 }
                 if (version >= 8)
@@ -913,6 +947,20 @@ void PartFileStore::save(const PartDocument& document, const QString& path)
                                               {"y", copy.offset.y}, {"angle", copy.angle}});
                 object["replications"] = copies;
             }
+            if (!feature.sketch.offsets.empty())
+            {
+                QJsonArray groups;
+                for (const auto& group : feature.sketch.offsets)
+                {
+                    QJsonArray segments;
+                    for (const auto& segment : group.segments)
+                        segments.append(QJsonObject{{"source", q(segment.source)}, {"target", q(segment.target)},
+                                                     {"reversed", segment.reversed}});
+                    groups.append(QJsonObject{{"distance", group.distance}, {"closed", group.closed},
+                                               {"segments", segments}});
+                }
+                object["offsets"] = groups;
+            }
             QJsonArray dimensions;
             for (const auto& d : feature.sketch.dimensions)
                 dimensions.append(writeDimension(feature.sketch, d));
@@ -1003,13 +1051,15 @@ void PartFileStore::save(const PartDocument& document, const QString& path)
     int version = 16;
     for (const auto& feature : document.features())
     {
-        if (feature.kind == FeatureKind::Sketch &&
-            (!feature.sketch.projections.empty() || !feature.sketch.replications.empty()))
+        if (feature.kind == FeatureKind::Sketch && !feature.sketch.offsets.empty())
         {
-            version = 20;
+            version = 21;
             break;
         }
-        if (isSweepFeature(feature.kind))
+        if (feature.kind == FeatureKind::Sketch &&
+            (!feature.sketch.projections.empty() || !feature.sketch.replications.empty()))
+            version = 20;
+        else if (version < 19 && isSweepFeature(feature.kind))
             version = 19;
         else if (version < 18 && isPatternFeature(feature.kind))
             version = 18;

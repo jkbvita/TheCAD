@@ -1,5 +1,6 @@
 #include "ui/MainWindow.h"
 #include "ui/CadViewport.h"
+#include "modeling/SketchContourEdits.h"
 #include <QAction>
 #include <QDataStream>
 #include <QIODevice>
@@ -18,12 +19,16 @@ void MainWindow::rememberSketchChange(EditState previous) {
 }
 void MainWindow::updateHistoryActions() {
     if(!m_undo || !m_redo)return;
-    const bool ready=!featureDraftActive() && !m_selectingPlane && !(m_smartDimension && m_smartDimension->editor);
+    const bool clickingLines=m_sketchModifier && modeling::isSketchLineEdit(m_sketchModifier->kind);
+    const bool ready=(!featureDraftActive() || clickingLines) && !m_selectingPlane &&
+        !(m_smartDimension && m_smartDimension->editor);
     m_undo->setEnabled(ready && m_session.canUndo());m_redo->setEnabled(ready && m_session.canRedo());
 }
 void MainWindow::traverseHistory(bool redo) {
     updateHistoryActions();
     if(!(redo?m_redo:m_undo)->isEnabled())return;
+    if(m_sketchModifier && modeling::isSketchLineEdit(m_sketchModifier->kind))
+        finishSketchModifier(false);
     auto previous=editState();const auto target=m_session.historyTarget(redo);
     const bool sameSketch=m_session.editingSketch() && target.sketch && m_session.editingSketchId()==target.sketchId;
     const bool constructionTool=m_viewport->constructionTool();

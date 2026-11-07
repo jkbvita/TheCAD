@@ -45,6 +45,14 @@ QByteArray sketchKey(const modeling::Sketch& sketch)
         point(copy.offset);
         out << copy.angle;
     }
+    out << quint64(sketch.offsets.size());
+    for (const auto& group : sketch.offsets)
+    {
+        out << group.distance << group.closed << quint64(group.segments.size());
+        for (const auto& segment : group.segments)
+            out << QString::fromStdString(segment.source) << QString::fromStdString(segment.target)
+                << segment.reversed;
+    }
     out << quint64(sketch.relations.size());
     for (const auto& r : sketch.relations)
     {

@@ -239,7 +239,7 @@ private slots:
         auto* commands = window.findChild<QToolBar*>("modelingToolbar");
         QVERIFY(commands && !commands->isMovable() && !commands->isFloatable());
         for (const auto* name : {"actionArc", "actionSpline",
-                "actionTrimEntities", "actionOffsetEntities", "actionMoveEntities",
+                "actionMoveEntities",
                 "actionRepairSketch", "actionShadedSketchContours",
                 "actionMeasure", "actionMassProperties", "actionCheckGeometry"}) {
             auto* tool = window.findChild<QAction*>(name);
@@ -249,7 +249,9 @@ private slots:
             QVERIFY(!tool->icon().isNull());
         }
         for (const auto* name : {"actionConvertEntities", "actionMirrorEntities",
-                                 "actionLinearSketchPattern", "actionCircularSketchPattern"}) {
+                                 "actionLinearSketchPattern", "actionCircularSketchPattern",
+                                 "actionTrimEntities", "actionExtendEntities", "actionSplitEntities",
+                                 "actionOffsetEntities"}) {
             auto* tool = window.findChild<QAction*>(name);
             QVERIFY2(tool, name);
             QVERIFY(!tool->isEnabled());

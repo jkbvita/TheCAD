@@ -153,6 +153,7 @@ private:
     bool finishSketch();
     void startSketchModifier(modeling::SketchModifier kind);
     void refreshSketchModifier(bool viewportSelection = false);
+    void updateSketchLineEdit(const QString& id, modeling::Point2 point, bool apply);
     void finishSketchModifier(bool accepted);
     bool sketchModifierEvent(QObject* watched, QEvent* event);
     struct SketchModifierDraft {
@@ -164,6 +165,7 @@ private:
         QDoubleSpinBox *spacing = nullptr, *angle = nullptr, *centerX = nullptr, *centerY = nullptr;
         QSpinBox* count = nullptr;
         QCheckBox *reverse = nullptr, *innerLoops = nullptr, *construction = nullptr;
+        QCheckBox *bothSides = nullptr, *selectChain = nullptr;
         std::vector<std::string> seeds;
         std::optional<modeling::Sketch> candidate;
     };

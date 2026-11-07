@@ -4,7 +4,7 @@
 
 namespace thecad::modeling
 {
-enum class SketchModifier { Convert, Mirror, LinearPattern, CircularPattern };
+enum class SketchModifier { Convert, Mirror, LinearPattern, CircularPattern, Trim, Extend, Split, Offset };
 
 struct SketchPattern
 {

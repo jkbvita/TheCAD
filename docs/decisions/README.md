@@ -60,6 +60,8 @@ approved scope do not need repeated approval.
 
 - [0034: Sketch patterns, mirror and body projections](0034-sketch-patterns-and-convert.md) — linked copies and supporting-face references.
 
+- [0035: Sketch Trim, Extend, Split and Offset](0035-sketch-contour-tools.md) — viewport contour editing and linked sketch offsets.
+
 ## Pending owner decisions
 
 - Resilient face references beyond the approved conservative planar-face strategy.

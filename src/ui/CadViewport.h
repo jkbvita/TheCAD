@@ -69,11 +69,14 @@ public:
     void selectSketchEntity(const QString& id);
     void setSketch(const modeling::Sketch& sketch);
     void setSketchBoundaryReferences(std::vector<modeling::SketchProjection> references);
-    void setSketchModifierPicking(bool enabled, bool convert = false) {
+    void setSketchModifierPicking(bool enabled, bool convert = false, bool lineEdit = false) {
         m_sketchModifierPicking = enabled;
         m_sketchConversionPicking = enabled && convert;
+        m_sketchLineEditPicking = enabled && lineEdit;
     }
-    void setSketchModifierPreview(const modeling::Sketch* candidate);
+    void setSketchModifierPreview(const modeling::Sketch* candidate,
+                                 const std::optional<modeling::SketchEntity>& removed = {},
+                                 const std::optional<modeling::Point2>& split = {});
     void beginContourSelection(const modeling::Sketch& sketch);
     void endContourSelection();
     void setSelectedContourFaces(const std::vector<TopoDS_Face>& faces);
@@ -126,6 +129,7 @@ signals:
     void sketchRelationSelected(const QString& id);
     void sketchRelationDeleteRequested(const QString& id);
     void sketchSelectionChanged();
+    void sketchLineEditPointed(const QString& id, thecad::modeling::Point2 point, bool apply);
     void sketchDeleteRequested();
     void sketchToolChanged();
     void dimensionReferencePicked(const QString& id,int role);
@@ -273,8 +277,10 @@ private:
                             const BoundarySnap& snap);
     std::vector<modeling::SketchProjection> m_sketchBoundaryReferences;
     std::optional<BoundarySnap> m_boundarySnap, m_firstBoundarySnap;
-    bool m_sketchModifierPicking = false, m_sketchConversionPicking = false;
-    Handle(AIS_Shape) m_sketchModifierPreview;
+    bool m_sketchModifierPicking = false, m_sketchConversionPicking = false, m_sketchLineEditPicking = false;
+    Handle(AIS_Shape) m_sketchModifierPreview, m_sketchRemovalPreview;
+    Handle(AIS_Point) m_sketchSplitPreview;
+    void pointAtSketchLineEdit(const QPointF& position, bool apply);
     void commitDrawing(modeling::Point2 point, const std::optional<modeling::SketchPointRef>& reference);
     QPoint nativePosition(const QPointF& position) const;
 

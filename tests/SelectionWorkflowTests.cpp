@@ -34,6 +34,88 @@ class SelectionWorkflowTest:public QObject {
     void treeSelect(SelectionWindow& w,const std::string& id){auto* tree=w.findChild<QTreeWidget*>("featureTree");for(QTreeWidgetItemIterator it(tree);*it;++it)if((*it)->data(0,Qt::UserRole).toString().toStdString()==id){tree->setCurrentItem(*it);return;}QFAIL("Feature not found in tree");}
     void hover(CadViewport* v,QPoint p){QMouseEvent e(QEvent::MouseMove,p,v->mapToGlobal(p),Qt::NoButton,Qt::NoButton,Qt::NoModifier);QApplication::sendEvent(v,&e);}
 private slots:
+    void sketchContourTools()
+    {
+        using namespace modeling;
+        QTemporaryDir temp;
+        auto part = document::PartDocument::createEmpty();
+        Sketch sketch;
+        sketch.entities = {{EntityKind::Line, {-42, 20}, {35, 20}, 1, "trim"},
+                           {EntityKind::Line, {-20, 8}, {-20, 32}, 1, "left-boundary"},
+                           {EntityKind::Line, {15, 8}, {15, 32}, 1, "right-boundary"},
+                           {EntityKind::Line, {-42, -20}, {-20, -20}, 1, "extend"},
+                           {EntityKind::Line, {10, -35}, {10, -5}, 1, "stop"},
+                           {EntityKind::Line, {-42, 48}, {-10, 48}, 1, "split"},
+                           {EntityKind::Circle, {40, -20}, {}, 6, "ring"}};
+        const auto id = part.addSketch(sketch);
+        SelectionWindow window;
+        window.path = temp.filePath("contour-tools.thepart");
+        part.save(window.path);
+        window.showMaximized();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        QVERIFY(window.openPartFile(window.path));
+        auto* v = window.findChild<CadViewport*>();
+        QTRY_VERIFY(v->isReady());
+        treeSelect(window, id);
+        command(window, "actionEditFeature");
+        const Handle(Graphic3d_Camera) camera = new Graphic3d_Camera(v->m_graphics.view()->Camera());
+        const auto pixel = [&](Point2 p) { return v->screenPoint(p).toPoint(); };
+        const auto click = [&](Point2 p) { QTest::mouseClick(v, Qt::LeftButton, Qt::NoModifier, pixel(p)); };
+
+        command(window, "actionTrimEntities");
+        hover(v, pixel({-33, 20}));
+        QVERIFY(!v->m_sketchRemovalPreview.IsNull());
+        QCOMPARE(v->m_sketch->entities.front().first.x, -42.);
+        click({-33, 20});
+        QCOMPARE(v->m_sketch->entities.front().first.x, -20.);
+        QVERIFY(window.findChild<QAction*>("actionTrimEntities")->isChecked());
+        click({27, 20});
+        QCOMPARE(v->m_sketch->entities.front().second.x, 15.);
+        QTest::keyClick(v, Qt::Key_Z, Qt::ControlModifier);
+        QCOMPARE(v->m_sketch->entities.front().second.x, 35.);
+        QVERIFY(!window.findChild<QAction*>("actionTrimEntities")->isChecked());
+        command(window, "actionRedo");
+        QCOMPARE(v->m_sketch->entities.front().second.x, 15.);
+
+        command(window, "actionExtendEntities");
+        hover(v, pixel({-23, -20}));
+        QVERIFY(!v->m_sketchModifierPreview.IsNull());
+        QCOMPARE(v->m_sketch->entities[3].second.x, -20.);
+        click({-23, -20});
+        QCOMPARE(v->m_sketch->entities[3].second.x, 10.);
+        QTest::keyClick(v, Qt::Key_Escape);
+
+        command(window, "actionSplitEntities");
+        hover(v, pixel({-24, 48}));
+        QVERIFY(!v->m_sketchSplitPreview.IsNull());
+        QCOMPARE(v->m_sketch->entities.size(), std::size_t(7));
+        click({-24, 48});
+        QCOMPARE(v->m_sketch->entities.size(), std::size_t(8));
+        QVERIFY(std::abs(v->m_sketch->entities[5].second.x + 24) < .5);
+        QTest::keyClick(v, Qt::Key_Escape);
+
+        v->selectSketchEntity("ring");
+        command(window, "actionOffsetEntities");
+        auto* distance = window.findChild<QDoubleSpinBox*>("sketchOffsetDistance");
+        QVERIFY(distance);
+        distance->setValue(2);
+        window.findChild<QCheckBox*>("sketchOffsetReverse")->setChecked(true);
+        QVERIFY(!v->m_sketchModifierPreview.IsNull());
+        auto* buttons = window.findChild<QDialogButtonBox*>("sketchModifierButtons");
+        QVERIFY(buttons && buttons->button(QDialogButtonBox::Ok)->isEnabled());
+        QCOMPARE(v->m_sketch->entities.size(), std::size_t(8));
+        buttons->button(QDialogButtonBox::Ok)->click();
+        QCOMPARE(v->m_sketch->offsets.size(), std::size_t(1));
+        QVERIFY(std::abs(v->m_sketch->entities.back().radius - 4) < 1e-6);
+        QVERIFY(camera->Eye().IsEqual(v->m_graphics.view()->Camera()->Eye(), 1e-9));
+        QCOMPARE(camera->Scale(), v->m_graphics.view()->Camera()->Scale());
+        command(window, "actionFinishSketch");
+        command(window, "actionSave");
+        QVERIFY(window.openPartFile(window.path));
+        QCOMPARE(window.document().features().back().sketch.offsets.size(), std::size_t(1));
+        QVERIFY2(window.errors.isEmpty(), qPrintable(window.errors.join('\n')));
+    }
+
     void convertAndReferenceBodyBoundary()
     {
         using namespace modeling;

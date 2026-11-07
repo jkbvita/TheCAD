@@ -1,6 +1,8 @@
 #include "ui/MainWindow.h"
 #include "ui/CadViewport.h"
 #include "ui/PropertyManagerPage.h"
+#include "modeling/SketchContourEdits.h"
+#include "modeling/SketchOffset.h"
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
@@ -32,6 +34,10 @@ QString modifierTitle(Modifier kind)
     case Modifier::Mirror: return "Mirror Entities";
     case Modifier::LinearPattern: return "Linear Sketch Pattern";
     case Modifier::CircularPattern: return "Circular Sketch Pattern";
+    case Modifier::Trim: return "Trim Entities";
+    case Modifier::Extend: return "Extend Entities";
+    case Modifier::Split: return "Split Entities";
+    case Modifier::Offset: return "Offset Entities";
     }
     return {};
 }
@@ -55,8 +61,13 @@ void MainWindow::startSketchModifier(Modifier kind)
     draft.kind = kind;
     draft.seeds = m_viewport->selectedSketchEntities();
     const bool convert = kind == Modifier::Convert;
+    const bool lineEdit = modeling::isSketchLineEdit(kind);
+    if (lineEdit)
+        m_viewport->clearSelection();
     draft.page = new PropertyManagerPage(modifierTitle(kind),
         convert ? "Pick a planar face or edges in the viewport. Ctrl-click adds to the selection."
+                : lineEdit ? "Hover over a straight line to preview. Each click applies one edit. Esc exits."
+                : kind == Modifier::Offset ? "Select a circle or connected line chain. Set a distance and confirm the preview."
                 : "Select seed geometry in the viewport. Ctrl-click adds or removes a seed.",
         m_managerStack);
     draft.page->setObjectName("sketchModifierPanel");
@@ -86,10 +97,26 @@ void MainWindow::startSketchModifier(Modifier kind)
         connect(input, &QDoubleSpinBox::valueChanged, this, [this] { refreshSketchModifier(); });
         return input;
     };
-    if (convert)
+    if (lineEdit)
+    {
+        draft.page->buttons->button(QDialogButtonBox::Ok)->setText("Done");
+        draft.page->buttons->button(QDialogButtonBox::Cancel)->hide();
+        draft.page->setStatus("Hover over a line to preview the edit.");
+    }
+    else if (convert)
     {
         draft.innerLoops = check("Include inner loops", "convertInnerLoops");
         draft.construction = check("For construction", "convertConstruction");
+    }
+    else if (kind == Modifier::Offset)
+    {
+        draft.spacing = number("Offset distance", "sketchOffsetDistance", 0.000002, 1e9, 5, " mm");
+        draft.reverse = check("Reverse", "sketchOffsetReverse");
+        draft.bothSides = check("Both sides", "sketchOffsetBothSides");
+        draft.selectChain = check("Select chain", "sketchOffsetSelectChain");
+        draft.construction = check("For construction", "sketchOffsetConstruction");
+        const QSignalBlocker block(draft.selectChain);
+        draft.selectChain->setChecked(true);
     }
     else if (kind == Modifier::Mirror)
     {
@@ -137,13 +164,19 @@ void MainWindow::startSketchModifier(Modifier kind)
     draft.page->settings->addStretch();
     connect(draft.page->buttons, &QDialogButtonBox::accepted, this, [this] { finishSketchModifier(true); });
     connect(draft.page->buttons, &QDialogButtonBox::rejected, this, [this] { finishSketchModifier(false); });
-    m_viewport->setSketchModifierPicking(true, convert);
+    m_viewport->setSketchModifierPicking(true, convert, lineEdit);
     m_managerStack->addWidget(draft.page);
     m_managerStack->setCurrentWidget(draft.page);
     m_historyDock->setWindowTitle("PropertyManager");
     refreshSketchModifier();
     updateActions();
-    m_viewport->setFocus();
+    if (kind == Modifier::Offset && !draft.seeds.empty())
+    {
+        draft.spacing->setFocus();
+        draft.spacing->selectAll();
+    }
+    else
+        m_viewport->setFocus();
 }
 
 void MainWindow::refreshSketchModifier(bool viewportSelection)
@@ -151,6 +184,8 @@ void MainWindow::refreshSketchModifier(bool viewportSelection)
     if (!m_sketchModifier || !m_session.editingSketch())
         return;
     auto& draft = *m_sketchModifier;
+    if (modeling::isSketchLineEdit(draft.kind))
+        return;
     const auto& sketch = *m_session.editingSketch();
     draft.candidate.reset();
     try
@@ -165,6 +200,18 @@ void MainWindow::refreshSketchModifier(bool viewportSelection)
                                                        : QString("%1 model references selected").arg(selection.size()));
             draft.candidate = m_session.document().convertSketchGeometry(m_session.editingSketchId(),
                 sketch, selection, draft.innerLoops->isChecked(), draft.construction->isChecked());
+        }
+        else if (draft.kind == Modifier::Offset)
+        {
+            if (viewportSelection)
+                draft.seeds = m_viewport->selectedSketchEntities();
+            draft.selection->setText(QString("%1 source entities selected").arg(draft.seeds.size()));
+            draft.reverse->setEnabled(!draft.bothSides->isChecked());
+            if (!draft.spacing->hasAcceptableInput())
+                throw std::runtime_error("Enter a valid offset distance.");
+            draft.candidate = modeling::offsetSketchEntities(sketch, draft.seeds,
+                {draft.spacing->value(), draft.reverse->isChecked(), draft.bothSides->isChecked(),
+                 draft.selectChain->isChecked(), draft.construction->isChecked()});
         }
         else
         {
@@ -218,11 +265,75 @@ void MainWindow::refreshSketchModifier(bool viewportSelection)
     draft.page->buttons->button(QDialogButtonBox::Ok)->setEnabled(draft.candidate.has_value());
 }
 
+void MainWindow::updateSketchLineEdit(const QString& id, modeling::Point2 point, bool apply)
+{
+    if (!m_sketchModifier || !m_session.editingSketch() ||
+        !modeling::isSketchLineEdit(m_sketchModifier->kind))
+        return;
+    auto& draft = *m_sketchModifier;
+    const auto& sketch = *m_session.editingSketch();
+    if (id.isEmpty())
+    {
+        m_viewport->setSketchModifierPreview(nullptr);
+        draft.page->setStatus("Hover over a line to preview the edit.");
+        return;
+    }
+    try
+    {
+        const auto entityId = id.toStdString();
+        auto candidate = modeling::editSketchLine(sketch, draft.kind, entityId, point);
+        if (apply)
+        {
+            acceptConstrainedSketch(candidate);
+            m_viewport->setSketch(*m_session.editingSketch());
+            m_viewport->setSketchModifierPreview(nullptr);
+            setWindowModified(true);
+            updateEntityList();
+            updateActions();
+            draft.page->setStatus("Edit applied. Pick another line or press Esc.");
+            return;
+        }
+        const auto source = std::find_if(sketch.entities.begin(), sketch.entities.end(),
+                                        [&](const auto& item) { return item.id == entityId; });
+        const auto& changed = candidate.entities[std::size_t(source - sketch.entities.begin())];
+        std::optional<modeling::SketchEntity> removed;
+        std::optional<modeling::Point2> split;
+        if (draft.kind == Modifier::Trim)
+        {
+            removed = *source;
+            if (candidate.entities.size() > sketch.entities.size())
+            {
+                removed->first = changed.second;
+                removed->second = candidate.entities.back().first;
+            }
+            else if (changed.first.x != source->first.x || changed.first.y != source->first.y)
+                removed->second = changed.first;
+            else
+                removed->first = changed.second;
+        }
+        else if (draft.kind == Modifier::Split)
+            split = changed.second;
+        m_viewport->setSketchModifierPreview(&candidate, removed, split);
+        draft.page->setStatus(removed ? "Red shows the portion to remove. Click to trim."
+                                      : "Click to apply the preview.");
+    }
+    catch (const std::exception& error)
+    {
+        m_viewport->setSketchModifierPreview(nullptr);
+        draft.page->setStatus(QString::fromUtf8(error.what()), true);
+    }
+}
+
 void MainWindow::finishSketchModifier(bool accepted)
 {
-    if (!m_sketchModifier || (accepted && !m_sketchModifier->candidate))
+    if (!m_sketchModifier)
         return;
-    if (accepted)
+    const bool lineEdit = modeling::isSketchLineEdit(m_sketchModifier->kind);
+    if (accepted && m_sketchModifier->kind == Modifier::Offset)
+        refreshSketchModifier();
+    if (accepted && !lineEdit && !m_sketchModifier->candidate)
+        return;
+    if (accepted && !lineEdit)
     {
         try
         {
@@ -246,7 +357,7 @@ void MainWindow::finishSketchModifier(bool accepted)
     page->setParent(nullptr);
     page->deleteLater();
     m_historyDock->setWindowTitle("FeatureManager");
-    if (accepted)
+    if (accepted && !lineEdit)
     {
         m_viewport->setSketch(*m_session.editingSketch());
         setWindowModified(true);
@@ -254,7 +365,8 @@ void MainWindow::finishSketchModifier(bool accepted)
     }
     updateActions();
     m_viewport->setFocus();
-    statusBar()->showMessage(accepted ? title + " applied." : title + " canceled.", 3000);
+    statusBar()->showMessage(lineEdit ? title + " closed."
+                                    : accepted ? title + " applied." : title + " canceled.", 3000);
 }
 
 bool MainWindow::sketchModifierEvent(QObject* watched, QEvent* event)
@@ -267,7 +379,9 @@ bool MainWindow::sketchModifierEvent(QObject* watched, QEvent* event)
     const auto* key = static_cast<QKeyEvent*>(event);
     if (key->key() == Qt::Key_Escape)
         finishSketchModifier(false);
-    else if (widget == m_viewport && (key->key() == Qt::Key_Enter || key->key() == Qt::Key_Return))
+    else if ((key->key() == Qt::Key_Enter || key->key() == Qt::Key_Return) &&
+             (widget == m_viewport || (m_sketchModifier->kind == Modifier::Offset &&
+                 (widget == m_sketchModifier->spacing || m_sketchModifier->spacing->isAncestorOf(widget)))))
         finishSketchModifier(true);
     else
         return false;

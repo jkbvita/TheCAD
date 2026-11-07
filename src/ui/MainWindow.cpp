@@ -268,20 +268,24 @@ MainWindow::MainWindow(QWidget* parent)
     commandButton(m_point,drawGrid,2,2);commandButton(m_polygon,drawGrid,0,3);
     m_polygon->setToolTip("Regular hexagon: click the center, then set size and orientation");
     commandGroup(sketchButtons, "Modify", modifyGrid);
-    const QList<QPair<QString, const char*>> modifyCommands = {
-        {"Trim Entities", "actionTrimEntities"}, {"Offset Entities", "actionOffsetEntities"},
-        {"Move Entities", "actionMoveEntities"}};
-    for (int i = 0; i < modifyCommands.size(); ++i)
-        commandButton(unavailable(modifyCommands[i].first, modifyCommands[i].second), modifyGrid, i % 3, i / 3);
     using Modifier = modeling::SketchModifier;
+    commandButton(action("Trim Entities", "actionTrimEntities",
+                         [this] { startSketchModifier(Modifier::Trim); }), modifyGrid, 0, 0);
+    commandButton(action("Extend Entities", "actionExtendEntities",
+                         [this] { startSketchModifier(Modifier::Extend); }), modifyGrid, 1, 0);
+    commandButton(action("Split Entities", "actionSplitEntities",
+                         [this] { startSketchModifier(Modifier::Split); }), modifyGrid, 2, 0);
     commandButton(action("Convert Entities", "actionConvertEntities",
                          [this] { startSketchModifier(Modifier::Convert); }), modifyGrid, 0, 1);
+    commandButton(action("Offset Entities", "actionOffsetEntities",
+                         [this] { startSketchModifier(Modifier::Offset); }), modifyGrid, 1, 1);
     commandButton(action("Mirror Entities", "actionMirrorEntities",
-                         [this] { startSketchModifier(Modifier::Mirror); }), modifyGrid, 1, 1);
+                         [this] { startSketchModifier(Modifier::Mirror); }), modifyGrid, 2, 1);
     commandButton(action("Linear Sketch Pattern", "actionLinearSketchPattern",
                          [this] { startSketchModifier(Modifier::LinearPattern); }), modifyGrid, 0, 2);
     commandButton(action("Circular Sketch Pattern", "actionCircularSketchPattern",
                          [this] { startSketchModifier(Modifier::CircularPattern); }), modifyGrid, 1, 2);
+    commandButton(unavailable("Move Entities", "actionMoveEntities"), modifyGrid, 2, 2);
     commandGroup(sketchButtons, "Relations / inspection", relationGrid);
     commandButton(action("Display/Delete Relations", "actionDisplayDeleteRelations", [this]{startConstraints();}), relationGrid, 0, 0);
     commandButton(unavailable("Repair Sketch", "actionRepairSketch"), relationGrid, 1, 0);
@@ -462,6 +466,7 @@ MainWindow::MainWindow(QWidget* parent)
         statusBar()->showMessage(pointName + " selected. Snapping uses exact sketch coordinates.");
     });
     connect(m_viewport,&CadViewport::sketchSelectionChanged,this,[this]{hideRelationsContext();updateActions();if(m_constraints && m_viewport->selectedSketchRelation().empty())updateConstraintDraft();if(m_sketchModifier)refreshSketchModifier(true);});
+    connect(m_viewport, &CadViewport::sketchLineEditPointed, this, &MainWindow::updateSketchLineEdit);
     connect(m_viewport,&CadViewport::relationsContextRequested,this,&MainWindow::showRelationsContext);
     qApp->installEventFilter(this);
     connect(m_viewport,&CadViewport::sketchRelationDeleteRequested,this,[this](const QString& id){deleteRelation(id.toStdString());});
@@ -872,7 +877,9 @@ void MainWindow::updateActions()
     findChild<QAction*>("actionDisplayDeleteRelations")->setEnabled(editing && !operation);
     const bool selecting = m_selectingPlane;
     const std::array modifierNames{"actionConvertEntities", "actionMirrorEntities",
-                                   "actionLinearSketchPattern", "actionCircularSketchPattern"};
+                                   "actionLinearSketchPattern", "actionCircularSketchPattern",
+                                   "actionTrimEntities", "actionExtendEntities", "actionSplitEntities",
+                                   "actionOffsetEntities"};
     for (std::size_t i = 0; i < modifierNames.size(); ++i)
     {
         auto* command = findChild<QAction*>(modifierNames[i]);

@@ -54,6 +54,35 @@ QIcon commandIcon(const QString& name)
             painter.drawEllipse(point, 2.5, 2.5);
         painter.drawPoint(QPointF(16, 16));
     }
+    else if (name == "Trim Entities" || name == "Extend Entities" || name == "Split Entities")
+    {
+        painter.drawLine(5, 19, name == "Trim Entities" ? 18 : 27, 19);
+        if (name == "Split Entities")
+        {
+            painter.drawLine(16, 8, 16, 26);
+            painter.drawEllipse(QPointF(16, 19), 2.8, 2.8);
+        }
+        else
+        {
+            painter.drawLine(18, 7, 18, 26);
+            if (name == "Extend Entities")
+            {
+                painter.drawLine(23, 15, 27, 19);
+                painter.drawLine(23, 23, 27, 19);
+            }
+            else
+            {
+                painter.setPen(QPen(QColor("#b83b42"), 1.6, Qt::DashLine));
+                painter.drawLine(19, 19, 28, 19);
+            }
+        }
+    }
+    else if (name == "Offset Entities")
+    {
+        painter.drawPolyline(QPolygonF{QPointF(5, 25), QPointF(12, 13), QPointF(27, 13)});
+        painter.drawPolyline(QPolygonF{QPointF(5, 15), QPointF(10, 6), QPointF(27, 6)});
+        painter.drawLine(22, 6, 22, 13);
+    }
     else if (name == "Convert Entities")
     {
         painter.drawPolygon(QPolygonF{QPointF(4, 8), QPointF(19, 4), QPointF(27, 11), QPointF(11, 15)});

@@ -37,9 +37,9 @@ stores projection and replication definitions.
 
 ## Remaining toolbar research
 
-Trim, Extend and Split form a useful next batch for editing intersecting
-contours. Offset needs loop selection and join rules. Move, Copy, Rotate and
-Scale need explicit rules for retaining relations and dimensions. Sketch
+The [contour tools decision](0035-sketch-contour-tools.md) covers Trim, Extend,
+Split and Offset. Move, Copy, Rotate and Scale need explicit rules for retaining
+relations and dimensions. Sketch
 fillets, chamfers, slots and broader conversion support depend on additional
 curve types and geometry-specific interactions.
 
