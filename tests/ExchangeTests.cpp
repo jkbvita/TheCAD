@@ -4,6 +4,7 @@
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepGProp.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <BRepPrimAPI_MakeCone.hxx>
 #include <BRepBndLib.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepCheck_Analyzer.hxx>
@@ -18,11 +19,14 @@
 #include <QCoreApplication>
 #include <QTemporaryDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QDataStream>
 #include <QDir>
 #include <array>
+#include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <map>
 #include <stdexcept>
 using namespace thecad;
 namespace
@@ -68,7 +72,11 @@ std::vector<Handle(Poly_Triangulation)> meshes(const TopoDS_Shape& s)
     }
     return result;
 }
-void checkStl(const QString& path, const TopoDS_Shape& source)
+struct ConeSection
+{
+    double bottom, top, slope;
+};
+void checkStl(const QString& path, const TopoDS_Shape& source, std::optional<ConeSection> cone = {})
 {
     QFile file(path);
     require(file.open(QIODevice::ReadOnly), "Cannot open STL");
@@ -81,7 +89,12 @@ void checkStl(const QString& path, const TopoDS_Shape& source)
     require(count > 0 && file.size() == 84 + qint64(count) * 50,
             "Invalid binary STL triangle count/length");
     double signedVolume = 0;
+    double maxConeNormalError = 0;
+    unsigned measuredFacets = 0;
+    using Vertex = std::array<double, 3>;
+    std::map<std::pair<Vertex, Vertex>, int> edgeUse;
     Bnd_Box meshBounds;
+    const auto original = bounds(source);
     for (quint32 i = 0; i < count; ++i)
     {
         float nx, ny, nz;
@@ -98,6 +111,37 @@ void checkStl(const QString& path, const TopoDS_Shape& source)
         }
         quint16 attribute;
         stream >> attribute;
+        const gp_Vec facet = gp_Vec(p[0], p[1]).Crossed(gp_Vec(p[0], p[2]));
+        require(facet.SquareMagnitude() > 0, "STL contains a zero-area triangle");
+        const gp_Vec normal(nx, ny, nz);
+        require(normal.SquareMagnitude() > 0 && normal.Angle(facet) < 0.0001,
+                "STL normal disagrees with the stored triangle");
+        if (cone)
+        {
+            const auto vertex = [](const gp_Pnt& point)
+            { return Vertex{point.X(), point.Y(), point.Z()}; };
+            for (int edge = 0; edge < 3; ++edge)
+            {
+                const auto a = vertex(p[edge]);
+                const auto b = vertex(p[(edge + 1) % 3]);
+                ++edgeUse[std::minmax(a, b)];
+            }
+            const bool inSection = std::all_of(
+                p.begin(), p.end(), [&](const gp_Pnt& point)
+                { return point.Z() >= cone->bottom - 1e-5 && point.Z() <= cone->top + 1e-5; });
+            const bool atRim =
+                std::abs(p[0].Z() - cone->bottom) < 1e-5 || std::abs(p[0].Z() - cone->top) < 1e-5;
+            const bool onCap = atRim && p[0].Z() == p[1].Z() && p[1].Z() == p[2].Z();
+            if (inSection && !onCap)
+            {
+                const double x = (p[0].X() + p[1].X() + p[2].X()) / 3;
+                const double y = (p[0].Y() + p[1].Y() + p[2].Y()) / 3;
+                const double radial = std::hypot(x, y);
+                const gp_Vec exact(x / radial, y / radial, -cone->slope);
+                maxConeNormalError = std::max(maxConeNormalError, facet.Angle(exact));
+                ++measuredFacets;
+            }
+        }
         signedVolume +=
             gp_Vec(gp_Pnt(), p[0]).Dot(gp_Vec(gp_Pnt(), p[1]).Crossed(gp_Vec(gp_Pnt(), p[2]))) / 6;
     }
@@ -105,7 +149,17 @@ void checkStl(const QString& path, const TopoDS_Shape& source)
     const auto expected = volume(source);
     require(signedVolume > 0 && std::abs(signedVolume - expected) < std::max(1e-5, expected * 0.01),
             "STL volume/winding/units changed");
-    const auto original = bounds(source);
+    if (cone)
+    {
+        std::cout << QFileInfo(path).fileName().toStdString() << ": " << count
+                  << " facets, maximum lateral normal error "
+                  << maxConeNormalError * 180 / std::acos(-1.0) << " degrees\n";
+        require(measuredFacets > 0 && maxConeNormalError < 0.01,
+                "STL facets deviate from the smooth cone");
+        require(std::all_of(edgeUse.begin(), edgeUse.end(),
+                            [](const auto& edge) { return edge.second == 2; }),
+                "Conical STL has open or non-manifold edges");
+    }
     std::array<double, 6> b;
     meshBounds.Get(b[0], b[1], b[2], b[3], b[4], b[5]);
     for (int i = 0; i < 6; ++i)
@@ -163,6 +217,39 @@ int main(int argc, char** argv)
         const auto circleSketch = multiple.addSketch(circles);
         multiple.addExtrudeRegions(circleSketch, {{"a"}, {"b"}}, 14, modeling::Direction::Negative);
         fixtures.push_back(multiple);
+        // Close to the proportions of the reported wrinkled taper. The exact
+        // cone gives an independent normal for every point on the lateral face.
+        const double lowerRadius = 10.75, upperRadius = 39.87, height = 43.04;
+        const auto cone = BRepPrimAPI_MakeCone(lowerRadius, upperRadius, height).Shape();
+        const auto conePath = QDir(output).filePath("smooth-taper.stl");
+        exchange::ShapeExporter::write(cone, conePath);
+        checkStl(conePath, cone, ConeSection{0, height, (upperRadius - lowerRadius) / height});
+        // A taper bounded by two other revolved surfaces can have differently
+        // sampled rims. This exercises the face interior between them.
+        auto taperedPart = document::PartDocument::createEmpty();
+        modeling::Sketch taper;
+        taper.plane = modeling::SketchPlane::XZ;
+        const std::array<modeling::Point2, 5> profilePoints{
+            {{0, 0}, {10.74784, 1.20963}, {39.87075, 44.24596}, {39, 47.61}, {0, 47.61}}};
+        document::Feature revolve;
+        revolve.kind = document::FeatureKind::Revolve;
+        for (std::size_t i = 0; i < profilePoints.size(); ++i)
+        {
+            const auto id = "side-" + std::to_string(i);
+            taper.entities.push_back({modeling::EntityKind::Line, profilePoints[i],
+                                      profilePoints[(i + 1) % profilePoints.size()], 1, id});
+            revolve.contour.push_back(id);
+        }
+        revolve.sketchId = taperedPart.addSketch(taper);
+        modeling::GeometryReference axis;
+        axis.source = modeling::ReferenceSource::BaseAxis;
+        axis.index = 2;
+        revolve.axis = axis;
+        taperedPart.addSolidFeature(revolve);
+        const auto taperPath = QDir(output).filePath("revolved-taper.stl");
+        exchange::ShapeExporter::write(taperedPart.shape(), taperPath);
+        checkStl(taperPath, taperedPart.shape(),
+                 ConeSection{1.20963, 44.24596, (39.87075 - 10.74784) / (44.24596 - 1.20963)});
         for (std::size_t i = 0; i < fixtures.size(); ++i)
         {
             const auto& part = fixtures[i];
@@ -208,6 +295,21 @@ int main(int argc, char** argv)
             require(failed && bytes(protectedPath) == "keep existing contents",
                     "Failed export overwrote existing file");
         }
+        gp_Trsf farFromOrigin;
+        farFromOrigin.SetTranslation(gp_Vec(1e9, 0, 0));
+        bool collapsed = false;
+        try
+        {
+            exchange::ShapeExporter::write(
+                fixtures.front().shape().Moved(TopLoc_Location(farFromOrigin)), protectedPath);
+        }
+        catch (const std::exception& error)
+        {
+            collapsed =
+                QString::fromUtf8(error.what()).contains("collapses at STL coordinate precision");
+        }
+        require(collapsed && bytes(protectedPath) == "keep existing contents",
+                "STL precision loss silently removed faces or overwrote the previous file");
         bool failed = false;
         try
         {

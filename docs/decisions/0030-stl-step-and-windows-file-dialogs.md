@@ -27,10 +27,10 @@ part of this request.
 ## Implementation and dependencies
 
 A QWidget-independent exchange::ShapeExporter receives geometric values and
-writes an isolated deep copy. STL triangulation uses at most 0.05 mm chordal
-error (scaled down for small models) and 0.1 rad angular deflection. Every face
-must have triangulation; incomplete STL meshes are rejected. STEP uses the pinned
-OCCT translator, AP214 defaults and explicit millimeter input/output units.
+writes an isolated deep copy. STL triangulation originally targeted 0.05 mm
+chordal deflection and 0.1 rad angular deflection. The curved-surface correction
+below describes the current settings. STEP uses the pinned OCCT translator,
+AP214 defaults and explicit millimeter input/output units.
 
 Both writers finish into a private temporary file before QSaveFile atomically
 replaces the target. Failures preserve existing destination contents. Unicode
@@ -72,6 +72,34 @@ PATH. Package: 77.4 MiB, 59 runtime DLLs. The built/package executable SHA-256:
 2C54A834D4241865B36825EAFB5FAE1969AC88369B21C00852FCB2D78ED6716D.
 The optional owner-model startup test was not configured; synthetic fixtures were
 used. Native dialog visual checks remain on the manual checklist.
+
+## Curved-surface correction
+
+On 2026-11-07 the owner reported ripples in a revolved STL. The supplied mesh had
+neighboring facets on a tapered surface with normal changes of about 4.6 degrees
+and one collapsed triangle at the tip. The native source was unavailable, so
+verification used a frustum and a separate revolved profile with similar dimensions.
+
+The STL exporter now targets 0.01 mm linear deflection (scaled down for small
+parts) and 0.025 rad angular deflection on boundaries and face interiors.
+OCCT checks interior deflection on analytic surfaces as well as other surface
+types. Finer triangulation increases the size of curved STL files. The exporter
+assembles the mesh at STL's stored float precision and omits zero-area facets.
+If a whole face collapses at that precision, export fails before replacing the
+destination. Binary output still uses the OCCT writer from the same SDK.
+
+On the frustum fixture, peak facet-normal error relative to the exact cone
+decreased from 0.92 to 0.39 degrees. The revolved taper also measured 0.39 degrees.
+Both fixtures passed closed-edge checks. Tests also check normals against the
+written coordinates and verify safe rejection of a face collapsed by float
+precision. The Release build and all 43 CTest targets passed.
+
+The updated executable was packaged with the verified runtime and source bundle
+from the prior build. Its solver DLL matched the Release DLL byte for byte.
+The runtime import scan, isolated STL/STEP probe and saved-file startup passed.
+The desktop shortcut points to build/package/TheCAD-Smoother-STL/TheCAD.exe.
+
+[OCCT meshing parameters](https://github.com/Open-Cascade-SAS/OCCT/blob/V7_9_3/src/IMeshTools/IMeshTools_Parameters.hxx)
 
 The desktop shortcut now targets build/package/TheCAD-STL-STEP-Export/TheCAD.exe.
 Its previous link was backed up under build/desktop-shortcut-backup/

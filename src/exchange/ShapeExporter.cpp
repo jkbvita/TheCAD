@@ -5,13 +5,14 @@
 #include <BRepBndLib.hxx>
 #include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
+#include <IMeshTools_Parameters.hxx>
 #include <Poly_Triangulation.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <STEPControl_Writer.hxx>
 #include <StepData_StepModel.hxx>
 #include <DESTEP_Parameters.hxx>
-#include <StlAPI_Writer.hxx>
+#include <RWStl.hxx>
 #include <Standard_Failure.hxx>
 #include <QDir>
 #include <QFile>
@@ -26,6 +27,7 @@
 #include <fstream>
 #include <limits>
 #include <stdexcept>
+#include <vector>
 namespace thecad::exchange
 {
 namespace
@@ -34,17 +36,30 @@ namespace
 {
     throw std::runtime_error(message.toUtf8().constData());
 }
-void meshForStl(const TopoDS_Shape& shape)
+Handle(Poly_Triangulation) meshForStl(const TopoDS_Shape& shape)
 {
     Bnd_Box bounds;
     BRepBndLib::Add(shape, bounds, Standard_False);
     double x0, y0, z0, x1, y1, z1;
     bounds.Get(x0, y0, z0, x1, y1, z1);
     const double diagonal = gp_Pnt(x0, y0, z0).Distance(gp_Pnt(x1, y1, z1));
-    const double deflection = std::clamp(diagonal * 0.001, 1e-6, 0.05);
-    BRepMesh_IncrementalMesh mesher(shape, deflection, Standard_False, 0.1, Standard_True);
+    IMeshTools_Parameters parameters;
+    parameters.Deflection = std::clamp(diagonal * 0.0002, 1e-6, 0.01);
+    parameters.DeflectionInterior = parameters.Deflection;
+    parameters.Angle = 0.025;
+    parameters.AngleInterior = parameters.Angle;
+    parameters.EnableControlSurfaceDeflectionAllSurfaces = true;
+    parameters.InParallel = true;
+    BRepMesh_IncrementalMesh mesher(shape, parameters);
     if (!mesher.IsDone())
         fail("The solid could not be triangulated for STL.");
+    struct FaceMesh
+    {
+        Handle(Poly_Triangulation) mesh;
+        gp_Trsf transform;
+        bool reversed;
+    };
+    std::vector<FaceMesh> faceMeshes;
     std::uint64_t nodes = 0, triangles = 0;
     for (TopExp_Explorer faces(shape, TopAbs_FACE); faces.More(); faces.Next())
     {
@@ -52,12 +67,56 @@ void meshForStl(const TopoDS_Shape& shape)
         const auto mesh = BRep_Tool::Triangulation(TopoDS::Face(faces.Current()), location);
         if (mesh.IsNull() || mesh->NbTriangles() == 0)
             fail("STL export could not triangulate every face. No partial mesh was saved.");
+        faceMeshes.push_back(
+            {mesh, location.Transformation(), faces.Current().Orientation() == TopAbs_REVERSED});
         nodes += mesh->NbNodes();
         triangles += mesh->NbTriangles();
     }
     if (triangles == 0 || nodes > std::uint64_t(std::numeric_limits<Standard_Integer>::max()) ||
         triangles > std::uint64_t(std::numeric_limits<Standard_Integer>::max()))
         fail("The STL mesh exceeds the supported triangle or vertex count.");
+
+    Handle(Poly_Triangulation) output =
+        new Poly_Triangulation(static_cast<int>(nodes), static_cast<int>(triangles), false);
+    int nodeOffset = 0;
+    int written = 0;
+    for (const auto& face : faceMeshes)
+    {
+        for (int i = 0; i < face.mesh->NbNodes(); ++i)
+        {
+            const auto point = face.mesh->Node(i + 1).Transformed(face.transform);
+            // STL stores float coordinates. Use those same coordinates for
+            // the degeneracy check and for the writer's normal calculation.
+            const float x = static_cast<float>(point.X());
+            const float y = static_cast<float>(point.Y());
+            const float z = static_cast<float>(point.Z());
+            if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z))
+                fail("A vertex is outside the coordinate range of STL.");
+            output->SetNode(nodeOffset + i + 1, gp_Pnt(x, y, z));
+        }
+        const int beforeFace = written;
+        for (int i = 0; i < face.mesh->NbTriangles(); ++i)
+        {
+            int a, b, c;
+            face.mesh->Triangle(i + 1).Get(a, b, c);
+            if (face.reversed)
+                std::swap(b, c);
+            a += nodeOffset;
+            b += nodeOffset;
+            c += nodeOffset;
+            const auto start = output->Node(a);
+            const gp_Vec ab(start, output->Node(b));
+            const gp_Vec ac(start, output->Node(c));
+            if (ab.Crossed(ac).SquareMagnitude() > 0)
+                output->SetTriangle(++written, Poly_Triangle(a, b, c));
+        }
+        if (written == beforeFace)
+            fail("A face collapses at STL coordinate precision. Export STEP to preserve it.");
+        nodeOffset += face.mesh->NbNodes();
+    }
+    if (written != static_cast<int>(triangles))
+        output->ResizeTriangles(written, true);
+    return output;
 }
 void replaceAtomically(const QString& temporary, const QString& path)
 {
@@ -111,10 +170,8 @@ void ShapeExporter::write(const TopoDS_Shape& source, const QString& path)
         temporary.close();
         if (*format == ExportFormat::Stl)
         {
-            meshForStl(shape);
-            StlAPI_Writer writer;
-            writer.ASCIIMode() = Standard_False;
-            if (!writer.Write(shape, temporaryPath.toUtf8().constData()))
+            if (!RWStl::WriteBinary(meshForStl(shape),
+                                    OSD_Path(temporaryPath.toUtf8().constData())))
                 fail("The STL mesh could not be written.");
         }
         else
