@@ -1,9 +1,17 @@
 #include "modeling/Box.h"
+#include "document/PartDocument.h"
+#include "presentation/SelectionAppearance.h"
 #include "ui/CadViewport.h"
 
+#include <BRepAdaptor_Surface.hxx>
+#include <BRep_Tool.hxx>
+#include <gp_Cone.hxx>
 #include <Graphic3d_Camera.hxx>
 #include <OpenGl_View.hxx>
 #include <OpenGl_Window.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Edge.hxx>
 #include <QMainWindow>
 #include <QApplication>
 #include <QDir>
@@ -91,6 +99,93 @@ private slots:
         const auto previousShape = viewport->m_shape;
         QVERIFY(viewport->setShape(TopoDS_Shape()));
         QVERIFY(viewport->m_shape.IsNull());
+        QVERIFY(viewport->setShape(modeling::makeBox(100, 70, 40)));
+    }
+
+    void fullRevolveHidesSeamAndShadesTip()
+    {
+        auto part = document::PartDocument::createEmpty();
+        modeling::Sketch sketch;
+        sketch.entities = {{modeling::EntityKind::Line, {0, 0}, {-35, 0}, 1, "base"},
+                           {modeling::EntityKind::Line, {-35, 0}, {-35, 37}, 1, "axis"},
+                           {modeling::EntityKind::Line, {-35, 37}, {0, 0}, 1, "taper"}};
+        document::Feature revolve;
+        revolve.kind = document::FeatureKind::Revolve;
+        revolve.sketchId = part.addSketch(sketch);
+        revolve.contour = {"base", "axis", "taper"};
+        modeling::GeometryReference axis;
+        axis.source = modeling::ReferenceSource::SketchLine;
+        axis.featureId = revolve.sketchId;
+        axis.entityId = "axis";
+        revolve.axis = axis;
+        part.addSolidFeature(revolve);
+        const auto sample = qEnvironmentVariable("THECAD_TEST_REVOLVE_PART");
+        const auto shape = sample.isEmpty() ? part.shape() : document::PartDocument::load(sample).shape();
+        TopExp_Explorer solids(shape, TopAbs_SOLID);
+        QVERIFY(solids.More());
+        solids.Next();
+        QVERIFY(!solids.More());
+        const auto outline = presentation::selectionOutline(shape);
+        TopExp_Explorer rim(outline, TopAbs_EDGE);
+        QVERIFY(rim.More());
+        QVERIFY(BRep_Tool::IsClosed(TopoDS::Edge(rim.Current())));
+        rim.Next();
+        QVERIFY(!rim.More());
+
+        QVERIFY(viewport->setShape(shape));
+        QVERIFY(viewport->displayedShape().IsSame(shape));
+        QVERIFY(!viewport->m_presentation->Attributes()->FaceBoundaryDraw());
+        int tipFacets = 0;
+        TopoDS_Face coneFace;
+        Handle(Poly_Triangulation) coneMesh;
+        for (TopExp_Explorer faces(shape, TopAbs_FACE); faces.More(); faces.Next())
+        {
+            const auto face = TopoDS::Face(faces.Current());
+            const BRepAdaptor_Surface surface(face);
+            if (surface.GetType() != GeomAbs_Cone)
+                continue;
+            coneFace = face;
+            TopLoc_Location location;
+            coneMesh = BRep_Tool::Triangulation(face, location);
+            QVERIFY(!coneMesh.IsNull() && coneMesh->HasNormals());
+            const auto apex = surface.Cone().Apex().Transformed(location.Transformation().Inverted());
+            for (int i = 1; i <= coneMesh->NbTriangles(); ++i)
+            {
+                int nodes[3];
+                coneMesh->Triangle(i).Get(nodes[0], nodes[1], nodes[2]);
+                int tip = -1, tips = 0;
+                for (int j = 0; j < 3; ++j)
+                {
+                    if (coneMesh->Node(nodes[j]).SquareDistance(apex) <= Precision::SquareConfusion())
+                    {
+                        tip = j;
+                        ++tips;
+                    }
+                }
+                if (tips != 1)
+                    continue;
+                const auto expected = gp_Vec(coneMesh->Normal(nodes[(tip + 1) % 3])) +
+                                      gp_Vec(coneMesh->Normal(nodes[(tip + 2) % 3]));
+                QVERIFY(coneMesh->Normal(nodes[tip]).Angle(gp_Dir(expected)) < 1e-5);
+                ++tipFacets;
+            }
+        }
+        QVERIFY(tipFacets > 100);
+        const int nodeCount = coneMesh->NbNodes();
+        QVERIFY(viewport->setShape(shape));
+        TopLoc_Location location;
+        QVERIFY(BRep_Tool::Triangulation(coneFace, location) == coneMesh);
+        QCOMPARE(coneMesh->NbNodes(), nodeCount);
+        const auto output = qEnvironmentVariable("THECAD_TEST_ARTIFACT_DIR");
+        if (!sample.isEmpty() && !output.isEmpty())
+        {
+            viewport->m_graphics.view()->SetProj(1, 0.3, 0.8);
+            viewport->fitAll();
+            viewport->m_graphics.view()->Redraw();
+            QVERIFY(QDir().mkpath(output));
+            QVERIFY(viewport->m_graphics.view()->Dump(
+                (output + "/revolve-viewport.png").toUtf8().constData()));
+        }
         QVERIFY(viewport->setShape(modeling::makeBox(100, 70, 40)));
     }
     void referenceGraphicsHandleLargeValidPart()

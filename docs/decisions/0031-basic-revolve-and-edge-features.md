@@ -74,3 +74,29 @@ performed for this batch. No proprietary icons, graphics or code were copied.
 
 Verification and the manual checklist are recorded in
 [the feature testing guide](../testing/revolve-fillet-chamfer.md).
+
+## Viewport correction for full revolves
+
+On 2026-11-07 the owner reported a visible line and a shading wedge on a cone.
+The supplied part regenerates as one solid. Its periodic seam was included in
+the viewport's face-boundary drawing. The solid presentation now draws a filtered
+outline that skips periodic seams and degenerate edges while retaining real rims
+and corners. Solid previews and selection highlights use the same outline.
+
+The viewport uses finer, model-scaled tessellation and per-pixel lighting. At a
+cone tip, each triangle receives the limiting normal from its own sector.
+The coincident tip vertices share the same position. This only changes display
+triangulation. Feature history, topology references and export geometry still
+come from the exact part shape.
+
+The regression covers a full revolve with one visible rim and checks normals at
+the tip, including redisplay without repeated tessellation or extra vertices.
+It passed against both the synthetic fixture and the owner's original part.
+An existing circular-rim picking regression also verifies that finer edge
+sampling respects the cursor tolerance. The picker measures the nearest
+displayed segment when the native hit point falls outside that tolerance.
+
+All 43 CTest targets passed. The standalone package also opened the owner's
+model, and a rendered view of its tapered side showed continuous shading and
+the real circular rim. The original part's file hash matched after testing.
+The desktop shortcut points to build/package/TheCAD-Smooth-Revolve-20261107.

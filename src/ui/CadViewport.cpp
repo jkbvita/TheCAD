@@ -1,4 +1,5 @@
 #include "presentation/SelectionAppearance.h"
+#include "presentation/SolidPresentation.h"
 #include "ui/Theme.h"
 #include <QToolTip>
 #include "modeling/RelationCommands.h"
@@ -262,11 +263,9 @@ bool CadViewport::setShape(const TopoDS_Shape& shape)
         m_shape = shape;
         return true;
     }
-    Handle(AIS_Shape) candidate = new AIS_Shape(shape);
+    Handle(AIS_Shape) candidate;
     try {
-        candidate->SetMaterial(Graphic3d_NOM_PLASTIC);
-        candidate->SetColor(modelGray());
-        candidate->Attributes()->SetFaceBoundaryDraw(Standard_True);
+        candidate = makeSolidPresentation(shape);
         m_graphics.context()->Display(candidate, Standard_False);
         m_graphics.context()->Deactivate(candidate);
         for(const auto type:{TopAbs_FACE,TopAbs_EDGE,TopAbs_VERTEX,TopAbs_SOLID})
@@ -278,7 +277,7 @@ bool CadViewport::setShape(const TopoDS_Shape& shape)
         // without discarding the user's current sketch zoom and pan.
         // Redisplay and selection preserve the camera.
     } catch (const Standard_Failure& failure) {
-        m_graphics.context()->Remove(candidate, Standard_False);
+        if (!candidate.IsNull()) m_graphics.context()->Remove(candidate, Standard_False);
         if (!m_presentation.IsNull()) {
             m_graphics.context()->Display(m_presentation, Standard_False);
         }
@@ -569,16 +568,13 @@ void CadViewport::previewShape(const TopoDS_Shape& shape,const modeling::Materia
 {
     if (!isReady() || shape.IsNull()) { return; }
     clearPreview();
-    m_previewPresentation = new AIS_Shape(shape);
-    m_previewPresentation->SetMaterial(Graphic3d_NOM_PLASTIC);
-    m_previewPresentation->SetColor(modelGray());
-    m_previewPresentation->Attributes()->SetFaceBoundaryDraw(Standard_True);
+    m_previewPresentation = makeSolidPresentation(shape);
     if (!m_presentation.IsNull()) { m_graphics.context()->Erase(m_presentation, Standard_False); }
     m_graphics.context()->Display(m_previewPresentation,AIS_Shaded,-1,Standard_False);
     const auto displayChange=[&](const TopoDS_Shape& material,const Quantity_Color& color){
         if(material.IsNull())return;
-        Handle(AIS_Shape) presentation=new AIS_Shape(material);presentation->SetColor(color);presentation->SetTransparency(0.25);
-        presentation->Attributes()->SetFaceBoundaryDraw(Standard_True);presentation->SetZLayer(Graphic3d_ZLayerId_Topmost);
+        auto presentation=makeSolidPresentation(material);presentation->SetColor(color);presentation->SetTransparency(0.25);
+        presentation->SetZLayer(Graphic3d_ZLayerId_Topmost);
         m_graphics.context()->Display(presentation,AIS_Shaded,-1,Standard_False);m_materialPreviewPresentations.push_back(presentation);
     };
     displayChange(changes.added,Quantity_Color(1.0,0.74,0.20,Quantity_TOC_RGB));

@@ -4,6 +4,10 @@
 #include <TopoDS.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS_Compound.hxx>
+#include <TopoDS_Edge.hxx>
+#include <TopoDS_Face.hxx>
+#include <TopExp.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
 #include <Prs3d_LineAspect.hxx>
 #include <Prs3d_PointAspect.hxx>
 #include <Prs3d_ShadingAspect.hxx>
@@ -30,10 +34,22 @@ TopoDS_Shape selectionOutline(const TopoDS_Shape& source)
     BRep_Builder builder;
     TopoDS_Compound edges;
     builder.MakeCompound(edges);
-    for (TopExp_Explorer e(source, TopAbs_EDGE); e.More(); e.Next())
-        if (source.ShapeType() != TopAbs_FACE ||
-            !BRep_Tool::IsClosed(TopoDS::Edge(e.Current()), TopoDS::Face(source)))
-            builder.Add(edges, e.Current());
+    TopTools_IndexedMapOfShape seams;
+    for (TopExp_Explorer faces(source, TopAbs_FACE); faces.More(); faces.Next())
+    {
+        const auto face = TopoDS::Face(faces.Current());
+        for (TopExp_Explorer boundary(face, TopAbs_EDGE); boundary.More(); boundary.Next())
+            if (BRep_Tool::IsClosed(TopoDS::Edge(boundary.Current()), face))
+                seams.Add(boundary.Current());
+    }
+    TopTools_IndexedMapOfShape uniqueEdges;
+    TopExp::MapShapes(source, TopAbs_EDGE, uniqueEdges);
+    for (int i = 1; i <= uniqueEdges.Extent(); ++i)
+    {
+        const auto edge = TopoDS::Edge(uniqueEdges(i));
+        if (!seams.Contains(edge) && !BRep_Tool::Degenerated(edge))
+            builder.Add(edges, edge);
+    }
     return edges;
 }
 void styleReferencePlane(const Handle(AIS_Shape) & shape, bool selected, bool hovered, int variant)
@@ -58,7 +74,6 @@ void styleSelectedShape(const Handle(AIS_Shape) & shape, double ratio)
     shape->SetWidth(2.5 * ratio);
     shape->Attributes()->SetPointAspect(
         new Prs3d_PointAspect(Aspect_TOM_POINT, selectionBlue(), 9 * ratio));
-    shape->Attributes()->SetFaceBoundaryDraw(Standard_True);
     shape->Attributes()->SetFaceBoundaryAspect(
         new Prs3d_LineAspect(selectionBlue(), Aspect_TOL_SOLID, 2 * ratio));
     shape->SetTransparency(0);

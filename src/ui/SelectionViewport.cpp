@@ -1,11 +1,13 @@
 #include <IntCurvesFace_ShapeIntersector.hxx>
 #include "presentation/SelectionAppearance.h"
+#include "presentation/SolidPresentation.h"
 #include "ui/CadViewport.h"
 #include <BRep_Tool.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <Graphic3d_Camera.hxx>
 #include <Graphic3d_ZLayerId.hxx>
 #include <Prs3d_PointAspect.hxx>
+#include <Poly_PolygonOnTriangulation.hxx>
 #include <SelectMgr_ViewerSelector.hxx>
 #include <StdSelect_BRepOwner.hxx>
 #include <TopExp.hxx>
@@ -22,6 +24,7 @@
 #include <BRepAdaptor_Surface.hxx>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace thecad::ui {
 using namespace presentation;
@@ -29,6 +32,51 @@ using modeling::SelectionKind;
 using modeling::SelectionRef;
 namespace {
 SelectionKind datumSelectionKind(modeling::DatumKind kind){return kind==modeling::DatumKind::Point?SelectionKind::ReferencePoint:kind==modeling::DatumKind::Axis?SelectionKind::ReferenceAxis:SelectionKind::ReferencePlane;}
+
+struct EdgeHit
+{
+    gp_Pnt point;
+    double distance;
+};
+
+std::optional<EdgeHit> closestDisplayedEdgePoint(const TopoDS_Edge& edge,
+                                                  const Handle(V3d_View)& view,
+                                                  const QPointF& cursor, double ratio)
+{
+    Handle(Poly_PolygonOnTriangulation) polygon;
+    Handle(Poly_Triangulation) mesh;
+    TopLoc_Location location;
+    BRep_Tool::PolygonOnTriangulation(edge, polygon, mesh, location);
+    if (polygon.IsNull() || mesh.IsNull() || polygon->NbNodes() < 2)
+        return {};
+    const auto project = [&](const gp_Pnt& point) {
+        int x, y;
+        view->Convert(point.X(), point.Y(), point.Z(), x, y);
+        return QPointF(x / ratio, y / ratio);
+    };
+    const auto& nodes = polygon->Nodes();
+    const auto transform = location.Transformation();
+    auto a = mesh->Node(nodes.First()).Transformed(transform);
+    auto screenA = project(a);
+    EdgeHit best{a, std::numeric_limits<double>::infinity()};
+    for (int i = nodes.Lower() + 1; i <= nodes.Upper(); ++i)
+    {
+        const auto b = mesh->Node(nodes(i)).Transformed(transform);
+        const auto screenB = project(b);
+        const auto segment = screenB - screenA;
+        const double lengthSquared = QPointF::dotProduct(segment, segment);
+        const double t = lengthSquared > 0
+                             ? std::clamp(QPointF::dotProduct(cursor - screenA, segment) /
+                                              lengthSquared, 0.0, 1.0)
+                             : 0;
+        const double distance = QLineF(cursor, screenA + segment * t).length();
+        if (distance < best.distance)
+            best = {a.Translated(gp_Vec(a, b) * t), distance};
+        a = b;
+        screenA = screenB;
+    }
+    return best;
+}
 }
 std::vector<SelectionRef> CadViewport::selection() const {
     if(!m_sketchEditing){
@@ -120,8 +168,17 @@ std::vector<CadViewport::PickCandidate> CadViewport::selectionCandidates(const Q
                 if((type==TopAbs_EDGE&&m_seamEdges.count(index))||(type==TopAbs_VERTEX&&m_artificialVertices.count(index)))continue;
                 auto hit=type==TopAbs_VERTEX?BRep_Tool::Pnt(TopoDS::Vertex(shape)):selector->PickedPoint(n);bool onFace=false;
                 if(type==TopAbs_FACE||type==TopAbs_SOLID){double x,y,z,dx,dy,dz;m_graphics.view()->ConvertWithProj(pixel.x(),pixel.y(),x,y,z,dx,dy,dz);IntCurvesFace_ShapeIntersector intersection;intersection.Load(shape,1e-7);intersection.Perform(gp_Lin(gp_Pnt(x,y,z),gp_Dir(dx,dy,dz)),-1e15,1e15);double nearest=1e100;for(int k=1;k<=intersection.NbPnt();++k){const auto p=intersection.Pnt(k);const double d=gp_Vec(m_graphics.view()->Camera()->Eye(),p).Dot(gp_Vec(m_graphics.view()->Camera()->Direction()));if(d>=0&&d<nearest){nearest=d;hit=p;onFace=true;}}}
+                int x,y;m_graphics.view()->Convert(hit.X(),hit.Y(),hit.Z(),x,y);double distance=onFace?0:QLineF(position,QPointF(x/devicePixelRatioF(),y/devicePixelRatioF())).length();
+                // OCCT may report a sampled endpoint instead of the closest
+                // point on a picked curve. Measure against the displayed segments.
+                if (type == TopAbs_EDGE && distance > m_pickingTolerance)
+                    if (const auto closest = closestDisplayedEdgePoint(
+                            TopoDS::Edge(shape), m_graphics.view(), position, devicePixelRatioF()))
+                    {
+                        hit = closest->point;
+                        distance = closest->distance;
+                    }
                 const double depth=gp_Vec(m_graphics.view()->Camera()->Eye(),hit).Dot(gp_Vec(m_graphics.view()->Camera()->Direction()));
-                int x,y;m_graphics.view()->Convert(hit.X(),hit.Y(),hit.Z(),x,y);const double distance=onFace?0:QLineF(position,QPointF(x/devicePixelRatioF(),y/devicePixelRatioF())).length();
                 if(distance>m_pickingTolerance)continue;
                 frontDepth=std::min(frontDepth,depth);
                 append({{kind,m_bodyFeatureId,{},modeling::PointRole::First,index,m_shapeGeneration},distance,depth},shape,owner,hit);
@@ -191,7 +248,16 @@ void CadViewport::refreshNativeSelection(){
     if(!isReady())return;m_graphics.context()->ClearSelected(Standard_False);
     for(const auto& item:m_nativeSelections)if(std::find(m_selection.items().begin(),m_selection.items().end(),item.value.reference)!=m_selection.items().end()&&!item.owner.IsNull())m_graphics.context()->AddOrRemoveSelected(item.owner,Standard_False);
     for(auto& item:m_selectionPresentations)m_graphics.context()->Remove(item,Standard_False);m_selectionPresentations.clear();
-    const auto display=[&](const TopoDS_Shape& shape){if(shape.IsNull())return;Handle(AIS_Shape) item=new AIS_Shape(shape);styleSelectedShape(item,devicePixelRatioF());const bool filled=shape.ShapeType()==TopAbs_FACE||shape.ShapeType()==TopAbs_SOLID||shape.ShapeType()==TopAbs_COMPOUND;m_graphics.context()->Display(item,filled?AIS_Shaded:AIS_WireFrame,-1,Standard_False);m_selectionPresentations.push_back(item);};
+    const auto display = [&](const TopoDS_Shape& shape) {
+        if (shape.IsNull())
+            return;
+        const auto type = shape.ShapeType();
+        const bool filled = type == TopAbs_FACE || type == TopAbs_SOLID || type == TopAbs_COMPOUND;
+        Handle(AIS_Shape) item = filled ? makeSolidPresentation(shape) : new AIS_Shape(shape);
+        styleSelectedShape(item, devicePixelRatioF());
+        m_graphics.context()->Display(item, filled ? AIS_Shaded : AIS_WireFrame, -1, Standard_False);
+        m_selectionPresentations.push_back(item);
+    };
     if(m_treeBodySelected)display(m_shape);else for(const auto& item:m_nativeSelections)if(std::find(m_selection.items().begin(),m_selection.items().end(),item.value.reference)!=m_selection.items().end())display(item.shape);
     if(m_selectedSolidFace>0&&m_nativeSelections.empty()){TopTools_IndexedMapOfShape faces;TopExp::MapShapes(m_shape,TopAbs_FACE,faces);if(m_selectedSolidFace<=faces.Extent())display(faces(m_selectedSolidFace));}
     updateDatumStyles();updatePlaneStyles();update();
