@@ -424,6 +424,7 @@ MainWindow::MainWindow(QWidget* parent)
     editMenu->addAction(m_editEntity);
     editMenu->addAction(m_deleteEntity);
     initializeSelectionUi(viewMenu);
+    editMenu->addAction(m_deleteFeatures);
     connect(m_tree, &QTreeWidget::itemSelectionChanged, this, [this] { selectionChanged(); });
     connect(m_tree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem*, int) { editSelectedFeature(); });
     connect(m_editFeature, &QAction::triggered, this, [this] { editSelectedFeature(); });
@@ -876,6 +877,9 @@ void MainWindow::updateActions()
     findChild<QAction*>("actionSmartDimension")->setEnabled(editing && !operation);
     findChild<QAction*>("actionDisplayDeleteRelations")->setEnabled(editing && !operation);
     const bool selecting = m_selectingPlane;
+    if (m_deleteFeatures)
+        m_deleteFeatures->setEnabled(!m_session.editingSketch() && !operation &&
+                                     !selecting && !selectedFeatureIds().empty());
     const std::array modifierNames{"actionConvertEntities", "actionMirrorEntities",
                                    "actionLinearSketchPattern", "actionCircularSketchPattern",
                                    "actionTrimEntities", "actionExtendEntities", "actionSplitEntities",

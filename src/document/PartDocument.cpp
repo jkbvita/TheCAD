@@ -412,6 +412,44 @@ void PartDocument::replaceFeature(const Feature& feature)
     apply(std::move(candidate));
 }
 
+std::vector<Feature> PartDocument::featureDeletionDependents(const std::vector<std::string>& ids) const
+{
+    if (ids.empty())
+        fail("Select a sketch or feature to delete.");
+    for (const auto& id : ids)
+        if (std::none_of(m_features.begin(), m_features.end(),
+                         [&](const auto& feature) { return feature.id == id; }))
+            fail("Select an existing sketch or feature. Origin references are protected.");
+
+    std::set<std::string> removed(ids.begin(), ids.end());
+    std::vector<Feature> dependents;
+    // History references point backwards, so one forward pass finds the closure.
+    for (const auto& feature : m_features)
+        if (!removed.count(feature.id) &&
+            std::any_of(feature.dependencies.begin(), feature.dependencies.end(),
+                        [&](const auto& dependency) { return removed.count(dependency) != 0; }))
+        {
+            removed.insert(feature.id);
+            dependents.push_back(feature);
+        }
+    return dependents;
+}
+
+void PartDocument::deleteFeatures(const std::vector<std::string>& ids, bool includeDependents)
+{
+    const auto dependents = featureDeletionDependents(ids);
+    if (!dependents.empty() && !includeDependents)
+        fail("This selection has dependent features. Confirm their deletion first.");
+    std::set<std::string> removed(ids.begin(), ids.end());
+    for (const auto& dependent : dependents)
+        removed.insert(dependent.id);
+    auto candidate = m_features;
+    candidate.erase(std::remove_if(candidate.begin(), candidate.end(),
+                                   [&](const auto& feature) { return removed.count(feature.id) != 0; }),
+                    candidate.end());
+    apply(std::move(candidate));
+}
+
 PartDocument PartDocument::load(const QString& path){return PartFileStore::load(path);}
 void PartDocument::save(const QString& path)const{PartFileStore::save(*this,path);}
 }

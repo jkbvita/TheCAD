@@ -90,7 +90,10 @@ public:
     std::string addCutRegions(const std::string& sketchId,const modeling::RegionReferences& contours,double depth,bool throughAll,modeling::Direction direction);
     std::string addSolidFeature(Feature feature);
     void replaceFeature(const Feature& feature);
-    // Ordered transitive closure, excluding explicitly selected references.
+    // Ordered transitive closure, excluding explicitly selected features.
+    std::vector<Feature> featureDeletionDependents(const std::vector<std::string>& ids) const;
+    void deleteFeatures(const std::vector<std::string>& ids, bool includeDependents = false);
+    // Reference-only entry points retain their custom-datum restriction.
     std::vector<Feature> referenceDeletionDependents(const std::vector<std::string>& ids) const;
     void deleteReferenceGeometry(const std::vector<std::string>& ids,bool includeDependents=false);
 

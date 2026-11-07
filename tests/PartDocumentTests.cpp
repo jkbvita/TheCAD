@@ -204,6 +204,23 @@ int main(int argc, char* argv[])
         closeVolume(part, (40 * 30 - pi * 16) * 20);
         require(part.features()[1].dependencies == std::vector<std::string>{sketchId}, "Extrude must depend on its sketch");
         require(part.features()[3].dependencies == std::vector<std::string>({circleId, extrudeId}), "Cut must depend on sketch and prior body");
+        auto deletion = part;
+        const auto children = deletion.featureDeletionDependents({sketchId});
+        require(children.size() == 2 && children[0].id == extrudeId && children[1].id == cutId,
+                "A sketch deletion must report its direct and transitive dependents in history order");
+        const auto oldResult = deletion.shape();
+        rejected([&] { deletion.deleteFeatures({sketchId}); });
+        rejected([&] { deletion.deleteFeatures({cutId, "origin:XY"}, true); });
+        require(deletion.features().size() == 4 && deletion.shape().IsSame(oldResult),
+                "An unconfirmed or protected deletion must leave the part intact");
+        deletion.deleteFeatures({cutId});
+        require(deletion.features().size() == 3 && deletion.features().back().id == circleId,
+                "Deleting a cut must retain its source sketch");
+        closeVolume(deletion, 40 * 30 * 20);
+        deletion.deleteFeatures({sketchId}, true);
+        require(deletion.features().size() == 1 && deletion.features().front().id == circleId &&
+                    deletion.shape().IsNull(),
+                "Deleting a sketch and its dependents must retain unrelated sketches");
         auto extrude = part.features()[1];
         extrude.length = 30;
         part.replaceFeature(extrude);

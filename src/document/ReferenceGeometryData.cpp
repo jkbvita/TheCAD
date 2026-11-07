@@ -15,7 +15,6 @@
 #include <cmath>
 #include <algorithm>
 #include <stdexcept>
-#include <set>
 namespace thecad::document {
 using namespace modeling;
 namespace {
@@ -122,19 +121,27 @@ std::vector<ReferenceOption> PartDocument::referenceOptions() const{
     if(!bodyId.empty()){const auto body=m_bodies.at(bodyId);const auto signature=referenceBodySignature(body);for(const auto type:{TopAbs_VERTEX,TopAbs_EDGE,TopAbs_FACE}){TopTools_IndexedMapOfShape shapes;TopExp::MapShapes(body,type,shapes);for(int i=1;i<=shapes.Extent();++i){GeometryReference ref;ref.source=type==TopAbs_VERTEX?ReferenceSource::BodyVertex:type==TopAbs_EDGE?ReferenceSource::BodyEdge:ReferenceSource::BodyFace;ref.featureId=bodyId;ref.index=i;ref.signature=signature;add(std::string(type==TopAbs_VERTEX?"Vertex ":type==TopAbs_EDGE?"Edge ":"Face ")+std::to_string(i),ref);if(type==TopAbs_EDGE){ref.source=ReferenceSource::BodyCircleCenter;add("Center of circular edge "+std::to_string(i),ref);}}}}
     return result;
 }
-std::vector<Feature> PartDocument::referenceDeletionDependents(const std::vector<std::string>& ids) const{
+namespace {
+void requireCustomReferences(const std::vector<Feature>& features, const std::vector<std::string>& ids)
+{
     require(!ids.empty(),"Select a custom reference plane, axis or point to delete.");
-    std::set<std::string> selected(ids.begin(),ids.end()),closure=selected;
-    for(const auto& id:ids){const auto f=std::find_if(m_features.begin(),m_features.end(),[&](const auto& f){return f.id==id;});require(f!=m_features.end()&&f->kind==FeatureKind::ReferenceGeometry,"Only user-created references can be deleted. Origin references are protected.");}
-    bool changed=true;while(changed){changed=false;for(const auto& f:m_features)if(!closure.count(f.id)&&std::any_of(f.dependencies.begin(),f.dependencies.end(),[&](const auto& dep){return closure.count(dep)>0;})){closure.insert(f.id);changed=true;}}
-    std::vector<Feature> result;for(const auto& f:m_features)if(closure.count(f.id)&&!selected.count(f.id))result.push_back(f);return result;
+    for (const auto& id : ids)
+    {
+        const auto feature = std::find_if(features.begin(), features.end(),
+                                          [&](const auto& entry) { return entry.id == id; });
+        require(feature != features.end() && feature->kind == FeatureKind::ReferenceGeometry,
+                "Only user-created references can be deleted here. Origin references are protected.");
+    }
+}
+}
+std::vector<Feature> PartDocument::referenceDeletionDependents(const std::vector<std::string>& ids) const
+{
+    requireCustomReferences(m_features, ids);
+    return featureDeletionDependents(ids);
 }
 void PartDocument::deleteReferenceGeometry(const std::vector<std::string>& ids,bool includeDependents){
-    const auto dependents=referenceDeletionDependents(ids);
-    require(includeDependents||dependents.empty(),"Reference has dependent features. Explicit confirmation is required before deleting them.");
-    std::set<std::string> removed(ids.begin(),ids.end());for(const auto& f:dependents)removed.insert(f.id);
-    auto candidate=m_features;candidate.erase(std::remove_if(candidate.begin(),candidate.end(),[&](const auto& f){return removed.count(f.id)>0;}),candidate.end());
-    apply(std::move(candidate)); // Regenerate entirely before committing document state.
+    requireCustomReferences(m_features, ids);
+    deleteFeatures(ids, includeDependents);
 }
 
 }

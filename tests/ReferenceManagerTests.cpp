@@ -6,6 +6,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QContextMenuEvent>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QLabel>
@@ -33,7 +34,7 @@ protected:
     QString chooseSavePath(bool) override{return savePath;}
     UnsavedChoice confirmUnsaved() override{return UnsavedChoice::Discard;}
     void reportError(const QString& error) override{errors<<error;}
-    bool confirmReferenceDeletion(const std::vector<std::string>& ids,const std::vector<document::Feature>& dependents) override{askedDependents=dependents;if(realDeletionDialog)return MainWindow::confirmReferenceDeletion(ids,dependents);return allowDeletion;}
+    bool confirmFeatureDeletion(const std::vector<std::string>& ids,const std::vector<document::Feature>& dependents) override{askedDependents=dependents;if(realDeletionDialog)return MainWindow::confirmFeatureDeletion(ids,dependents);return allowDeletion;}
 };
 class ReferenceManagerTest:public QObject {
     Q_OBJECT
@@ -70,14 +71,97 @@ private slots:
     void deleteUndoRedoMultiSelectionAndDependencyCancellation(){
         QTemporaryDir dir;auto doc=PartDocument::createEmpty();const auto p=xyz(doc,DatumKind::Point,{15,10,0}),a=xyz(doc,DatumKind::Axis,{30,0,0}),pl=xyz(doc,DatumKind::Plane,{0,0,20});const auto path=dir.filePath("delete.thepart");doc.save(path);ReferenceWindow w;auto* v=show(w);QVERIFY(v);QVERIFY(w.openPartFile(path));
         for(const auto& id:{p,a,pl}){select(w,id);v->setFocus();QTest::keyClick(v,Qt::Key_Delete);QCOMPARE(w.document().features().size(),std::size_t(2));QVERIFY(std::none_of(v->m_datums.begin(),v->m_datums.end(),[&](const auto& d){return d.id==id;}));QTest::keyClick(v,Qt::Key_Z,Qt::ControlModifier);QCOMPARE(w.document().features().size(),std::size_t(3));QTest::keyClick(v,Qt::Key_Y,Qt::ControlModifier);QCOMPARE(w.document().features().size(),std::size_t(2));QTest::keyClick(v,Qt::Key_Z,Qt::ControlModifier);}
-        select(w,"origin:XY");QVERIFY(!w.findChild<QAction*>("actionDeleteReferences")->isEnabled());select(w,"origin:");QVERIFY(!w.findChild<QAction*>("actionDeleteReferences")->isEnabled());
-        select(w,p);auto* tree=w.findChild<QTreeWidget*>("featureTree");item(w,a)->setSelected(true);QVERIFY(w.findChild<QAction*>("actionDeleteReferences")->isEnabled());tree->setFocus();QTest::keyClick(tree,Qt::Key_Delete);QCOMPARE(w.document().features().size(),std::size_t(1));command(w,"actionUndo");QCOMPARE(w.document().features().size(),std::size_t(3));
+        select(w,"origin:XY");QVERIFY(!w.findChild<QAction*>("actionDeleteFeatures")->isEnabled());select(w,"origin:");QVERIFY(!w.findChild<QAction*>("actionDeleteFeatures")->isEnabled());
+        select(w,p);auto* tree=w.findChild<QTreeWidget*>("featureTree");item(w,a)->setSelected(true);QVERIFY(w.findChild<QAction*>("actionDeleteFeatures")->isEnabled());tree->setFocus();QTest::keyClick(tree,Qt::Key_Delete);QCOMPARE(w.document().features().size(),std::size_t(1));command(w,"actionUndo");QCOMPARE(w.document().features().size(),std::size_t(3));
         // Viewport selection uses the same deletion command as the tree.
         v->clearSelection();v->setSelectionFilters(FilterReferences);v->m_graphics.view()->SetAt(0,0,0);v->m_graphics.view()->SetProj(0,0,1);v->m_graphics.view()->SetUp(0,1,0);v->m_graphics.view()->Camera()->SetScale(100);QTest::mouseClick(v,Qt::LeftButton,Qt::NoModifier,project(v,{15,10,0}));QCOMPARE(v->selection()[0].featureId,p);v->setFocus();QTest::keyClick(v,Qt::Key_Delete);QCOMPARE(w.document().features().size(),std::size_t(2));command(w,"actionUndo");
-        auto dependent=doc;auto profile=dependent.sketchOnReferencePlane(pl);profile.entities={{EntityKind::Rectangle,{0,0},{15,10},1,"profile"}};const auto sid=dependent.addSketch(profile);const auto boss=dependent.addExtrude(sid,{"profile"},5,Direction::Positive);dependent.save(path);QVERIFY(w.openPartFile(path));select(w,pl);command(w,"actionDeleteReferences");QCOMPARE(w.document().features().size(),std::size_t(5));QCOMPARE(w.askedDependents.size(),std::size_t(2));QCOMPARE(w.askedDependents[0].id,sid);QCOMPARE(w.askedDependents[1].id,boss);
-        w.realDeletionDialog=true;bool sawDialog=false;QTimer::singleShot(0,&w,[&]{auto* box=w.findChild<QMessageBox*>();if(!box)return;sawDialog=box->text().contains(QString::fromStdString(sid))&&box->text().contains(QString::fromStdString(boss))&&box->defaultButton()==box->button(QMessageBox::Cancel);box->button(QMessageBox::Cancel)->click();});command(w,"actionDeleteReferences");QVERIFY(sawDialog);QCOMPARE(w.document().features().size(),std::size_t(5));w.realDeletionDialog=false;
-        w.allowDeletion=true;command(w,"actionDeleteReferences");QCOMPARE(w.document().features().size(),std::size_t(2));QVERIFY(w.document().shape().IsNull());command(w,"actionUndo");QCOMPARE(w.document().features().size(),std::size_t(5));QVERIFY(!w.document().shape().IsNull());command(w,"actionRedo");QCOMPARE(w.document().features().size(),std::size_t(2));w.savePath=dir.filePath("deleted.thepart");command(w,"actionSaveAs");QVERIFY(w.openPartFile(w.savePath));QCOMPARE(w.document().features().size(),std::size_t(2));QVERIFY(w.errors.isEmpty());w.close();
+        auto dependent=doc;auto profile=dependent.sketchOnReferencePlane(pl);profile.entities={{EntityKind::Rectangle,{0,0},{15,10},1,"profile"}};const auto sid=dependent.addSketch(profile);const auto boss=dependent.addExtrude(sid,{"profile"},5,Direction::Positive);dependent.save(path);QVERIFY(w.openPartFile(path));select(w,pl);command(w,"actionDeleteFeatures");QCOMPARE(w.document().features().size(),std::size_t(5));QCOMPARE(w.askedDependents.size(),std::size_t(2));QCOMPARE(w.askedDependents[0].id,sid);QCOMPARE(w.askedDependents[1].id,boss);
+        w.realDeletionDialog=true;bool sawDialog=false;QTimer::singleShot(0,&w,[&]{auto* box=w.findChild<QMessageBox*>();if(!box)return;sawDialog=box->text().contains(QString::fromStdString(sid))&&box->text().contains(QString::fromStdString(boss))&&box->defaultButton()==box->button(QMessageBox::Cancel);box->button(QMessageBox::Cancel)->click();});command(w,"actionDeleteFeatures");QVERIFY(sawDialog);QCOMPARE(w.document().features().size(),std::size_t(5));w.realDeletionDialog=false;
+        w.allowDeletion=true;command(w,"actionDeleteFeatures");QCOMPARE(w.document().features().size(),std::size_t(2));QVERIFY(w.document().shape().IsNull());command(w,"actionUndo");QCOMPARE(w.document().features().size(),std::size_t(5));QVERIFY(!w.document().shape().IsNull());command(w,"actionRedo");QCOMPARE(w.document().features().size(),std::size_t(2));w.savePath=dir.filePath("deleted.thepart");command(w,"actionSaveAs");QVERIFY(w.openPartFile(w.savePath));QCOMPARE(w.document().features().size(),std::size_t(2));QVERIFY(w.errors.isEmpty());w.close();
     }
+    void deleteSketchesAndSolidFeaturesFromTree()
+    {
+        QTemporaryDir dir;
+        auto part = PartDocument::createEmpty();
+        Sketch profile;
+        profile.entities = {{EntityKind::Rectangle, {0, 0}, {30, 20}, 1, "profile"}};
+        const auto profileId = part.addSketch(profile);
+        const auto bossId = part.addExtrude(profileId, {"profile"}, 12, Direction::Positive);
+        Sketch hole;
+        hole.entities = {{EntityKind::Circle, {10, 10}, {}, 3, "hole"}};
+        const auto holeId = part.addSketch(hole);
+        const auto cutId = part.addCut(holeId, {"hole"}, 12, true, Direction::Positive);
+        const auto unusedId = part.addSketch({});
+        const auto path = dir.filePath("features.thepart");
+        part.save(path);
+
+        ReferenceWindow window;
+        auto* viewport = show(window);
+        QVERIFY(viewport);
+        QVERIFY(window.openPartFile(path));
+        auto* tree = window.findChild<QTreeWidget*>("featureTree");
+        auto* remove = window.findChild<QAction*>("actionDeleteFeatures");
+        QVERIFY(tree && remove);
+        const CameraState camera(viewport);
+
+        select(window, holeId);
+        QCOMPARE(item(window, holeId)->parent(), item(window, cutId));
+        tree->setFocus();
+        QTest::keyClick(tree, Qt::Key_Delete);
+        QCOMPARE(window.askedDependents.size(), std::size_t(1));
+        QCOMPARE(window.askedDependents.front().id, cutId);
+        QCOMPARE(window.document().features().size(), std::size_t(5));
+        QVERIFY(!window.isWindowModified());
+
+        const auto* cutItem = item(window, cutId);
+        QVERIFY(cutItem);
+        const auto position = tree->visualItemRect(cutItem).center();
+        QContextMenuEvent event(QContextMenuEvent::Mouse, position,
+                                tree->viewport()->mapToGlobal(position));
+        QApplication::sendEvent(tree->viewport(), &event);
+        auto* menu = window.findChild<QMenu*>("featureTreeContextMenu");
+        QVERIFY(menu && menu->isVisible() && menu->actions().contains(remove));
+        QTest::mouseClick(menu, Qt::LeftButton, Qt::NoModifier, menu->actionGeometry(remove).center());
+        QCOMPARE(window.document().features().size(), std::size_t(4));
+        QVERIFY(!item(window, cutId));
+        QVERIFY(item(window, holeId) && item(window, holeId)->parent() == tree->topLevelItem(0));
+        QVERIFY(camera.unchanged(viewport));
+        command(window, "actionUndo");
+        QVERIFY(item(window, cutId));
+        command(window, "actionRedo");
+        QVERIFY(!item(window, cutId));
+
+        select(window, profileId);
+        item(window, "origin:XY")->setSelected(true);
+        QVERIFY(!remove->isEnabled());
+        select(window, profileId);
+        item(window, unusedId)->setSelected(true);
+        window.allowDeletion = true;
+        command(window, "actionDeleteFeatures");
+        QCOMPARE(window.askedDependents.size(), std::size_t(1));
+        QCOMPARE(window.askedDependents.front().id, bossId);
+        QCOMPARE(window.document().features().size(), std::size_t(1));
+        QCOMPARE(window.document().features().front().id, holeId);
+        QVERIFY(viewport->displayedShape().IsNull());
+        QVERIFY(!viewport->m_sketch);
+        QVERIFY(camera.unchanged(viewport));
+
+        window.savePath = dir.filePath("deleted-features.thepart");
+        command(window, "actionSaveAs");
+        QVERIFY(window.openPartFile(window.savePath));
+        QCOMPARE(window.document().features().size(), std::size_t(1));
+        select(window, holeId);
+        command(window, "actionEditFeature");
+        QVERIFY(!remove->isEnabled());
+        command(window, "actionFinishSketch");
+        select(window, holeId);
+        tree->setFocus();
+        QTest::keyClick(tree, Qt::Key_Delete);
+        QVERIFY(window.document().features().empty());
+        QVERIFY(!viewport->m_sketch);
+        QVERIFY2(window.errors.isEmpty(), qPrintable(window.errors.join('\n')));
+    }
+
     void inferMethodsFromTreeAndViewportAndPreserveInvalidSelections(){
         QTemporaryDir dir;auto doc=PartDocument::createEmpty();const auto p=xyz(doc,DatumKind::Point,{-20,-10,10}),q=xyz(doc,DatumKind::Point,{20,-10,10}),r=xyz(doc,DatumKind::Point,{0,20,10});const auto path=dir.filePath("methods.thepart");doc.save(path);ReferenceWindow w;auto* v=show(w);QVERIFY(v);QVERIFY(w.openPartFile(path));v->clearSelection();
         command(w,"actionReferencePlane");auto* buttons=w.findChild<QDialogButtonBox*>("referenceGeometryButtons");QVERIFY(!buttons->button(QDialogButtonBox::Ok)->isEnabled());for(const auto& id:{p,q,r})select(w,id);QCOMPARE(w.findChild<QComboBox*>("datumMethod")->currentData().toInt(),int(DatumMethod::PlaneThreePoints));QVERIFY(buttons->button(QDialogButtonBox::Ok)->isEnabled());confirm(w);const auto pl=w.document().features().back().id;

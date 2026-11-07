@@ -51,7 +51,8 @@ protected:
     virtual QString chooseSavePath(bool allowExport);
     virtual UnsavedChoice confirmUnsaved();
     virtual void reportError(const QString& message);
-    virtual bool confirmReferenceDeletion(const std::vector<std::string>& ids,const std::vector<document::Feature>& dependents);
+    virtual bool confirmFeatureDeletion(const std::vector<std::string>& ids,
+                                        const std::vector<document::Feature>& dependents);
     virtual bool chooseFeatureParameters(document::Feature& feature);
     virtual bool chooseEntityParameters(modeling::SketchEntity& entity);
     void closeEvent(QCloseEvent* event) override;
@@ -94,9 +95,9 @@ private:
     void updateConstructionControls();
     void setSelectionConstruction(bool construction);
     void toggleReferenceVisibility();
-    std::vector<std::string> selectedReferenceIds() const;
-    void deleteSelectedReferences();
-    QAction* m_deleteReferences=nullptr;
+    std::vector<std::string> selectedFeatureIds() const;
+    void deleteSelectedFeatures();
+    QAction* m_deleteFeatures=nullptr;
     QCheckBox* m_forConstruction=nullptr;
     QLabel* m_constructionSummary=nullptr;
     QGroupBox* m_constructionPanel=nullptr;

@@ -62,6 +62,8 @@ approved scope do not need repeated approval.
 
 - [0035: Sketch Trim, Extend, Split and Offset](0035-sketch-contour-tools.md) — viewport contour editing and linked sketch offsets.
 
+- [0036: FeatureManager deletion](0036-feature-tree-deletion.md) — transactional deletion for sketches and features with dependent confirmation.
+
 ## Pending owner decisions
 
 - Resilient face references beyond the approved conservative planar-face strategy.
