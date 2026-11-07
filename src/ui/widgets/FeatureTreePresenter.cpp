@@ -75,6 +75,8 @@ void FeatureTreePresenter::refresh(const document::PartDocument& document, const
                        : feature.kind == document::FeatureKind::RevolvedCut ? "Revolved Cut"
                        : feature.kind == document::FeatureKind::Fillet ? "Fillet"
                        : feature.kind == document::FeatureKind::Chamfer ? "Chamfer"
+                       : feature.kind == document::FeatureKind::LinearPattern ? "Linear Pattern"
+                       : feature.kind == document::FeatureKind::Mirror ? "Mirror"
                        : feature.kind == document::FeatureKind::Cut    ? "Extruded Cut"
                                                                        : "Extrude"));
             if (feature.id == selectedId &&

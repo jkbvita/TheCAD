@@ -6,12 +6,13 @@ inputs: conversion saves to a separate .thepart path, retaining the original fil
 No assembly/drawing reader or placeholder is implemented. Internal serialization
 is provisional and versioned; filename conventions are permanent.
 
-## Current part structure (versions 16/17)
+## Current part structure (versions 16–18)
 
-The UTF-8 JSON root contains exactly format: "TheCAD.Part", version: 16 or 17, units:
+The UTF-8 JSON root contains exactly format: "TheCAD.Part", version: 16, 17 or 18, units:
 "mm", features (ordered array) and resultFeature (last solid feature ID, or empty
-for empty/sketch/reference-only documents). Writers emit version 17 when the document contains revolve/fillet/chamfer
-features and version 16 otherwise. Readers accept versions 1–17 and reject unknown versions, fields, units and unsupported features.
+for empty/sketch/reference-only documents). Writers emit version 18 for Linear Pattern
+or Mirror, version 17 for revolve/fillet/chamfer, and version 16 otherwise. Readers
+accept versions 1–18 and reject unknown versions, fields, units and unsupported features.
 
 Every feature has stable id, printable name, type and explicit dependencies.
 Types and additional fields:
@@ -25,11 +26,18 @@ Types and additional fields:
 | cut | Extrude fields plus Boolean throughAll; specified length retained |
 | revolve / revolved-cut | sketch ID, contour OR contours, angle in degrees, direction, axis GeometryReference (schema 17) |
 | fillet / chamfer | positive size in mm (radius / equal distance), explicit edges array of named BodyEdge GeometryReferences (schema 17) |
+| linear-pattern | direction GeometryReference, Boolean wholePart, seeds array, positive spacing in mm, integer instances including seed, Boolean reverse (schema 18) |
+| mirror | planar GeometryReference, Boolean wholePart, seeds array (schema 18) |
 
-An initial sketch can be empty. A solid operation references an earlier sketch and
+An initial sketch can be empty. A profile-based solid operation references an earlier sketch and
 the previous solid result, in that order. Face-attached sketches depend on their
 supporting feature. resultFeature identifies the final solid-producing feature.
 The reader validates backward references and exact dependency order.
+
+Both copy operations store their GeometryReference in `reference`. Their
+`seeds` list contains distinct solid feature IDs in history order and is empty
+in `wholePart` mode. The preceding solid, selected seeds and source geometry
+feature contribute dependencies in that order, with duplicates removed.
 
 ## Reference geometry (version 13)
 

@@ -11,11 +11,24 @@
 namespace thecad::document {
 
 struct BoxParameters { double width = 100.0, depth = 70.0, height = 40.0; };
-enum class FeatureKind { Box, Sketch, Extrude, Cut, ReferenceGeometry, Revolve, RevolvedCut, Fillet, Chamfer };
+enum class FeatureKind { Box, Sketch, Extrude, Cut, ReferenceGeometry, Revolve, RevolvedCut, Fillet, Chamfer, LinearPattern, Mirror };
 inline bool isRevolveFeature(FeatureKind kind){return kind==FeatureKind::Revolve||kind==FeatureKind::RevolvedCut;}
 inline bool isEdgeFeature(FeatureKind kind){return kind==FeatureKind::Fillet||kind==FeatureKind::Chamfer;}
 inline bool usesProfile(FeatureKind kind){return kind==FeatureKind::Extrude||kind==FeatureKind::Cut||isRevolveFeature(kind);}
-inline bool isSolidFeature(FeatureKind kind){return kind==FeatureKind::Box||usesProfile(kind)||isEdgeFeature(kind);}
+inline bool isPatternFeature(FeatureKind kind)
+{
+    return kind == FeatureKind::LinearPattern || kind == FeatureKind::Mirror;
+}
+inline bool isSolidFeature(FeatureKind kind){return kind==FeatureKind::Box||usesProfile(kind)||isEdgeFeature(kind)||isPatternFeature(kind);}
+struct PatternParameters
+{
+    std::optional<modeling::GeometryReference> reference;
+    std::vector<std::string> seeds;
+    bool wholePart = false;
+    double spacing = 10;
+    int instances = 2;
+    bool reverse = false;
+};
 struct Feature {
     std::string id;
     std::string name;
@@ -32,6 +45,7 @@ struct Feature {
     double size = 2.0; // Constant fillet radius / equal chamfer distance, in mm.
     std::optional<modeling::GeometryReference> axis;
     std::vector<modeling::GeometryReference> edges;
+    PatternParameters pattern;
     std::vector<std::string> dependencies;
     modeling::DatumDefinition reference;
     modeling::DatumGeometry datum; // Derived by regeneration, not persisted.

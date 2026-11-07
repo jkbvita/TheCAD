@@ -54,6 +54,7 @@ public:
     void beginPlaneSelection();
     void cancelPlaneSelection();
     void showReferencePlanes(bool visible);
+    bool referencePlanesVisible() const { return m_planesVisible; }
     void setSelectedReferencePlane(std::optional<modeling::SketchPlane> plane);
     void setSelectedSolidFace(int index);
     int selectedSolidFace() const {return m_selectedSolidFace;}

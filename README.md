@@ -15,11 +15,13 @@ rules, build options and extension guidelines.
 ## Solid features
 
 The Features toolbar includes Extrude, Extruded Cut, Revolved Boss/Base, Revolved
-Cut, constant-radius edge Fillet and equal-distance Chamfer. Each opens a docked
-PropertyManager with selection, preview, numeric parameters and Confirm/Cancel.
+Cut, constant-radius edge Fillet, equal-distance Chamfer, Linear Pattern and Mirror.
+Each opens a docked PropertyManager with selection, preview and Confirm/Cancel.
 New features support editing, ten-action undo/redo and .thepart persistence.
 See the [manual checklist](docs/testing/revolve-fillet-chamfer.md) for the initial
 feature limits and verification steps.
+See the [Linear Pattern and Mirror decision](docs/decisions/0032-linear-pattern-and-mirror.md)
+for supported seeds and references.
 
 ## Save and export
 

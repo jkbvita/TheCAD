@@ -54,6 +54,8 @@ approved scope do not need repeated approval.
 
 - [0031: Basic revolve and edge features](0031-basic-revolve-and-edge-features.md) — approved Revolve, Revolved Cut, Fillet and Chamfer batch.
 
+- [0032: Linear Pattern and Mirror](0032-linear-pattern-and-mirror.md) — feature and whole-body copies with associative direction and plane references.
+
 ## Pending owner decisions
 
 - Resilient face references beyond the approved conservative planar-face strategy.

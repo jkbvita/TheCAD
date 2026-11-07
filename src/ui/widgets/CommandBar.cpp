@@ -39,6 +39,21 @@ QIcon commandIcon(const QString& name)
         painter.drawEllipse(QRectF(6, 6, 20, 20));
     else if (name.contains("Rectangle"))
         painter.drawRect(QRectF(5, 8, 22, 16));
+    else if (name == "Linear Pattern")
+    {
+        for (int x : {3, 13, 23})
+            painter.drawRect(QRectF(x, 8, 6, 8));
+        painter.drawLine(4, 23, 28, 23);
+        painter.drawLine(24, 19, 28, 23);
+        painter.drawLine(24, 27, 28, 23);
+    }
+    else if (name == "Mirror")
+    {
+        painter.drawPolygon(QPolygonF{QPointF(5, 25), QPointF(12, 25), QPointF(12, 7)});
+        painter.drawPolygon(QPolygonF{QPointF(27, 25), QPointF(20, 25), QPointF(20, 7)});
+        painter.setPen(QPen(themeColor(ThemeColor::Accent), 1.4, Qt::DashLine));
+        painter.drawLine(16, 4, 16, 28);
+    }
     else if (name.contains("Line"))
     {
         painter.drawLine(QPointF(5, 26), QPointF(27, 6));

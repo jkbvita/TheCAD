@@ -10,6 +10,7 @@
 #include "modeling/Box.h"
 #include "modeling/ConstraintSolver.h"
 #include "modeling/PlanarRegions.h"
+#include "modeling/PatternFeatures.h"
 
 #include <BRepCheck_Analyzer.hxx>
 #include <Standard_Failure.hxx>
@@ -487,9 +488,9 @@ PartDocument PartFileStore::load(const QString& path)
     if (root.value("units") != QJsonValue("mm"))
         fail("Unsupported units; this prototype supports millimeters only.");
     const auto versionValue = root.value("version");
-    if (!versionValue.isDouble() || versionValue.toDouble() < 1 || versionValue.toDouble() > 17 ||
+    if (!versionValue.isDouble() || versionValue.toDouble() < 1 || versionValue.toDouble() > 18 ||
         versionValue.toDouble() != std::floor(versionValue.toDouble()))
-        fail("Unsupported part document version; expected versions 1 through 17.");
+        fail("Unsupported part document version; expected versions 1 through 18.");
     const int version = versionValue.toInt();
     if (!root.value("features").isArray())
         fail("Part features must be an ordered array.");
@@ -663,6 +664,35 @@ PartDocument PartFileStore::load(const QString& path)
                         feature.sketch.relations.push_back(readRelation(relation, version));
                 }
             }
+            else if (version >= 18 && (type == "linear-pattern" || type == "mirror"))
+            {
+                const bool mirror = type == "mirror";
+                QSet<QString> expected{"id", "name", "type", "dependencies", "reference",
+                                       "wholePart", "seeds"};
+                if (!mirror)
+                    expected.unite({"spacing", "instances", "reverse"});
+                fields(object, expected, "Pattern or mirror feature");
+                feature.kind = mirror ? FeatureKind::Mirror : FeatureKind::LinearPattern;
+                auto& pattern = feature.pattern;
+                if (!object["reference"].isObject() || !object["wholePart"].isBool() ||
+                    !object["seeds"].isArray() ||
+                    object["seeds"].toArray().size() > modeling::maximumPatternInstances)
+                    fail("Invalid pattern references or seed selection.");
+                pattern.reference = readGeometryReference(object["reference"].toObject(), version);
+                pattern.wholePart = object["wholePart"].toBool();
+                for (const auto& seed : object["seeds"].toArray())
+                    pattern.seeds.push_back(stringValue(seed, "Pattern seed ID").toStdString());
+                if (!mirror)
+                {
+                    const auto count = number(object["instances"], "Instance count");
+                    if (count != std::floor(count) || count < 2 ||
+                        count > modeling::maximumPatternInstances || !object["reverse"].isBool())
+                        fail("Invalid linear pattern count or reverse direction.");
+                    pattern.instances = static_cast<int>(count);
+                    pattern.spacing = number(object["spacing"], "Pattern spacing");
+                    pattern.reverse = object["reverse"].toBool();
+                }
+            }
             else if (version >= 17 && (type == "fillet" || type == "chamfer"))
             {
                 fields(object,{"id","name","type","size","edges","dependencies"},"Edge treatment");
@@ -832,6 +862,24 @@ void PartFileStore::save(const PartDocument& document, const QString& path)
                 relations.append(writeRelation(relation));
             object["relations"] = relations;
         }
+        else if (isPatternFeature(feature.kind))
+        {
+            const auto& pattern = feature.pattern;
+            if (!pattern.reference)
+                fail("Missing pattern or mirror reference.");
+            object["reference"] = writeGeometryReference(*pattern.reference);
+            object["wholePart"] = pattern.wholePart;
+            QJsonArray seeds;
+            for (const auto& seed : pattern.seeds)
+                seeds.append(q(seed));
+            object["seeds"] = seeds;
+            if (feature.kind == FeatureKind::LinearPattern)
+            {
+                object["spacing"] = pattern.spacing;
+                object["instances"] = pattern.instances;
+                object["reverse"] = pattern.reverse;
+            }
+        }
         else if(isEdgeFeature(feature.kind))
         {
             object["size"]=feature.size;
@@ -870,8 +918,19 @@ void PartFileStore::save(const PartDocument& document, const QString& path)
             resultId = feature.id;
         features.append(object);
     }
+    int version = 16;
+    for (const auto& feature : document.features())
+    {
+        if (isPatternFeature(feature.kind))
+        {
+            version = 18;
+            break;
+        }
+        if (isRevolveFeature(feature.kind) || isEdgeFeature(feature.kind))
+            version = 17;
+    }
     const QJsonObject root{{"format", "TheCAD.Part"},
-                           {"version", std::any_of(document.features().begin(),document.features().end(),[](const auto& f){return isRevolveFeature(f.kind)||isEdgeFeature(f.kind);})?17:16},
+                           {"version", version},
                            {"units", "mm"},
                            {"features", features},
                            {"resultFeature", q(resultId)}};

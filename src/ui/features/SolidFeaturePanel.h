@@ -4,13 +4,16 @@
 #include <QWidget>
 #include <optional>
 class QComboBox;
+class QCheckBox;
 class QDoubleSpinBox;
+class QFormLayout;
 class QListWidget;
 class QPushButton;
+class QSpinBox;
 namespace thecad::ui
 {
 class PropertyManagerPage;
-// Owns the four feature forms and their uncommitted document candidate. The
+// Owns solid feature forms and their uncommitted document candidate. The
 // shell connects value-only selections/previews to the viewport and session.
 class SolidFeaturePanel final : public QWidget
 {
@@ -26,6 +29,7 @@ public:
     }
     const std::vector<document::ReferenceOption>& options() const { return m_options; }
     bool pickingContours() const { return m_contourMode; }
+    bool pickingMirrorPlane() const { return m_feature.kind == document::FeatureKind::Mirror; }
     const modeling::Sketch* sketch() const;
     std::vector<TopoDS_Face> selectedFaces() const;
     std::vector<TopoDS_Shape> selectedReferences() const;
@@ -42,6 +46,8 @@ signals:
     void pickingChanged();
 
 private:
+    void buildPatternForm(QFormLayout* form);
+    document::Feature readPattern() const;
     void sketchChanged();
     void setContourMode(bool);
     void rebuildOptions();
@@ -51,7 +57,11 @@ private:
     PropertyManagerPage* m_page;
     QComboBox *m_sketches = nullptr, *m_axis = nullptr, *m_direction = nullptr;
     QListWidget *m_regions = nullptr, *m_edges = nullptr;
-    QDoubleSpinBox* m_parameter;
+    QDoubleSpinBox* m_parameter = nullptr;
+    QComboBox *m_patternReference = nullptr, *m_patternScope = nullptr;
+    QListWidget* m_patternSeeds = nullptr;
+    QSpinBox* m_instances = nullptr;
+    QCheckBox* m_reverse = nullptr;
     QPushButton *m_pickAxis = nullptr, *m_pickRegions = nullptr;
     std::vector<modeling::Contour> m_contours;
     std::vector<document::ReferenceOption> m_options;

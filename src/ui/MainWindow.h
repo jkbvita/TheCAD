@@ -159,7 +159,9 @@ private:
     bool solidFeatureEvent(QObject*,QEvent*);
     SolidFeaturePanel* m_solidFeature=nullptr; // Owned by the PropertyManager stack.
     bool m_solidFromSketch=false;
+    bool m_solidPreviousPlanes=false;
     QAction *m_revolve=nullptr,*m_revolvedCut=nullptr,*m_fillet=nullptr,*m_chamfer=nullptr;
+    QAction *m_linearPattern=nullptr,*m_mirror=nullptr;
     void startOperation(document::Feature feature, bool editing);
     void finishOperation(bool accepted);
     void operationSketchChanged();

@@ -41,15 +41,20 @@ void MainWindow::startSolidFeature(document::FeatureKind kind, const document::F
         }
         else if (!editing)
         {
-            if (const auto* selected = selectedFeature();
-                selected && selected->kind == document::FeatureKind::Sketch)
-                feature.sketchId = selected->id;
+            if (const auto* selected = selectedFeature())
+            {
+                if (document::isPatternFeature(kind) && document::isSolidFeature(selected->kind))
+                    feature.pattern.seeds = {selected->id};
+                if (document::isRevolveFeature(kind) && selected->kind == document::FeatureKind::Sketch)
+                    feature.sketchId = selected->id;
+            }
         }
         const auto preselection = m_viewport->selection();
         auto* panel =
             new SolidFeaturePanel(std::move(source), feature, editing != nullptr, m_managerStack);
         m_solidFeature = panel;
         m_solidFromSketch = m_session.editingSketch().has_value();
+        m_solidPreviousPlanes = m_viewport->referencePlanesVisible();
         m_mode = WorkspaceMode::FeatureDraft;
         hideRelationsContext();
         m_viewport->clearSelection();
@@ -67,6 +72,8 @@ void MainWindow::startSolidFeature(document::FeatureKind kind, const document::F
             if (f.kind == document::FeatureKind::ReferenceGeometry)
                 datums.push_back({f.id, f.name, f.datum, f.referenceVisible});
         m_viewport->setDatums(datums);
+        if (kind == document::FeatureKind::Mirror)
+            m_viewport->showReferencePlanes(true);
         connect(panel, &SolidFeaturePanel::pickingChanged, this,
                 &MainWindow::syncSolidFeaturePicking);
         connect(panel, &SolidFeaturePanel::previewChanged, this,
@@ -139,6 +146,7 @@ void MainWindow::finishSolidFeature(bool accepted)
             return;
     }
     auto* panel = m_solidFeature;
+    const bool mirror = panel->pickingMirrorPlane();
     const bool resume = m_solidFromSketch && !accepted;
     m_solidFeature = nullptr;
     m_solidFromSketch = false;
@@ -171,6 +179,8 @@ void MainWindow::finishSolidFeature(bool accepted)
     }
     m_historyDock->setWindowTitle("FeatureManager");
     updateDocumentUi();
+    if (mirror)
+        m_viewport->showReferencePlanes(m_solidPreviousPlanes);
     m_viewport->setFocus();
 }
 bool MainWindow::solidFeatureEvent(QObject* watched, QEvent* event)
@@ -194,7 +204,7 @@ bool MainWindow::solidFeatureEvent(QObject* watched, QEvent* event)
         key->accept();
         return true;
     }
-    if (widget == m_viewport && !key->text().isEmpty() &&
+    if (widget == m_viewport && m_solidFeature->parameter() && !key->text().isEmpty() &&
         !(key->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)) &&
         (key->text().at(0).isDigit() || key->text() == "." || key->text() == ","))
     {

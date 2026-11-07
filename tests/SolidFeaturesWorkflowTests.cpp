@@ -13,6 +13,7 @@
 #include <QDoubleSpinBox>
 #include <QListWidget>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTreeWidget>
@@ -207,6 +208,84 @@ private slots:
         command(window, "actionRedo");
         QCOMPARE(window.document().features().size(), std::size_t(4));
         QVERIFY(!window.findChild<QAction*>("actionFinishSketch")->isEnabled());
+        QVERIFY2(window.errors.isEmpty(), qPrintable(window.errors.join('\n')));
+    }
+    void patternAndMirror()
+    {
+        QTemporaryDir temp;
+        auto doc = document::PartDocument::createBox({80, 40, 10});
+        modeling::Sketch hole;
+        hole.entities.push_back({modeling::EntityKind::Circle, {10, 12}, {}, 3, "hole"});
+        const auto sketchId = doc.addSketch(hole);
+        const auto cutId = doc.addCut(sketchId, {"hole"}, 10, true, modeling::Direction::Positive);
+        const auto path = temp.filePath("pattern-mirror.thepart");
+        doc.save(path);
+        SolidTestWindow window;
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* viewport = window.findChild<CadViewport*>("cadViewport");
+        QTRY_VERIFY(viewport->isReady());
+        QVERIFY(window.openPartFile(path));
+        const Handle(Graphic3d_Camera) camera =
+            new Graphic3d_Camera(viewport->m_graphics.view()->Camera());
+        select(window, cutId);
+        command(window, "actionLinearPattern");
+        auto* panel = window.findChild<SolidFeaturePanel*>("solidFeaturePanel");
+        QVERIFY(panel);
+        QCOMPARE(panel->findChild<QListWidget*>("patternSeeds")->selectedItems().size(), 1);
+        QVERIFY(!panel->candidate());
+        auto* direction = panel->findChild<QComboBox*>("patternReference");
+        const int xAxis = direction->findText("X axis");
+        QVERIFY(xAxis >= 0);
+        direction->setCurrentIndex(xAxis);
+        panel->parameter()->setValue(20);
+        panel->findChild<QSpinBox*>("patternInstances")->setValue(3);
+        QVERIFY(panel->candidate());
+        const double holeVolume = std::acos(-1.0) * 90;
+        const double patternedVolume = 32000 - 3 * holeVolume;
+        QVERIFY(std::abs(volume(panel->candidate()->document.shape()) - patternedVolume) < 1e-5);
+        QCOMPARE(window.document().features().size(), std::size_t(3));
+        sameCamera(camera, viewport->m_graphics.view()->Camera());
+        panel->page()->buttons->button(QDialogButtonBox::Ok)->click();
+        const auto patternId = window.document().features().back().id;
+        QCOMPARE(window.document().features().back().kind, document::FeatureKind::LinearPattern);
+        command(window, "actionUndo");
+        QCOMPARE(window.document().features().back().id, cutId);
+        command(window, "actionRedo");
+        QCOMPARE(window.document().features().back().id, patternId);
+        select(window, patternId);
+        command(window, "actionEditFeature");
+        panel = window.findChild<SolidFeaturePanel*>("solidFeaturePanel");
+        QVERIFY(panel && panel->candidate());
+        QCOMPARE(panel->parameter()->value(), 20.);
+        command(window, "actionCancelFeature");
+        QVERIFY(std::abs(volume(window.document().shape()) - patternedVolume) < 1e-5);
+
+        const bool planesWereVisible = viewport->referencePlanesVisible();
+        command(window, "actionMirror");
+        panel = window.findChild<SolidFeaturePanel*>("solidFeaturePanel");
+        QVERIFY(panel);
+        QVERIFY(viewport->referencePlanesVisible());
+        panel->findChild<QComboBox*>("patternScope")->setCurrentIndex(1);
+        select(window, "origin:YZ");
+        QVERIFY(panel->candidate());
+        sameCamera(camera, viewport->m_graphics.view()->Camera());
+        QTest::keyClick(viewport, Qt::Key_3);
+        QVERIFY(panel->candidate());
+        panel->page()->buttons->button(QDialogButtonBox::Ok)->click();
+        QCOMPARE(viewport->referencePlanesVisible(), planesWereVisible);
+        QCOMPARE(window.document().features().back().kind, document::FeatureKind::Mirror);
+        QVERIFY(std::abs(volume(window.document().shape()) - 2 * patternedVolume) < 1e-5);
+        window.document().save(path);
+        QVERIFY(window.openPartFile(path));
+        QVERIFY(std::abs(volume(window.document().shape()) - 2 * patternedVolume) < 1e-5);
+        select(window, window.document().features().back().id);
+        command(window, "actionEditFeature");
+        panel = window.findChild<SolidFeaturePanel*>("solidFeaturePanel");
+        QVERIFY(panel && panel->candidate());
+        QCOMPARE(panel->findChild<QComboBox*>("patternReference")->currentText(),
+                 QString("Right plane"));
+        command(window, "actionCancelFeature");
         QVERIFY2(window.errors.isEmpty(), qPrintable(window.errors.join('\n')));
     }
     void edgeTreatments_data()

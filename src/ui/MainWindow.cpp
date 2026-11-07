@@ -228,6 +228,10 @@ MainWindow::MainWindow(QWidget* parent)
     m_fillet=action("Fillet","actionFillet",[this]{startSolidFeature(document::FeatureKind::Fillet);});
     m_chamfer=action("Chamfer","actionChamfer",[this]{startSolidFeature(document::FeatureKind::Chamfer);});
     commandButton(m_fillet,finishGrid,0,0,true);commandButton(m_chamfer,finishGrid,0,1,true);
+    QGridLayout* patternGrid=nullptr;commandGroup(featureButtons,"Pattern / Mirror",patternGrid);
+    m_linearPattern=action("Linear Pattern","actionLinearPattern",[this]{startSolidFeature(document::FeatureKind::LinearPattern);});
+    m_mirror=action("Mirror","actionMirror",[this]{startSolidFeature(document::FeatureKind::Mirror);});
+    commandButton(m_linearPattern,patternGrid,0,0,true);commandButton(m_mirror,patternGrid,0,1,true);
     QGridLayout* referenceGrid=nullptr;commandGroup(featureButtons,"Reference Geometry",referenceGrid);
     m_referencePlane=action("Reference Plane","actionReferencePlane",[this]{startReferenceGeometry(modeling::DatumKind::Plane);});
     m_referenceAxis=action("Reference Axis","actionReferenceAxis",[this]{startReferenceGeometry(modeling::DatumKind::Axis);});
@@ -893,6 +897,7 @@ void MainWindow::updateActions()
     m_revolvedCut->setEnabled(m_revolve->isEnabled()&&!m_session.document().shape().IsNull());
     const bool edges=!operation&&!selecting&&!m_session.editingSketch()&&!m_session.document().shape().IsNull();
     m_fillet->setEnabled(edges);m_chamfer->setEnabled(edges);
+    m_linearPattern->setEnabled(edges);m_mirror->setEnabled(edges);
 }
 void MainWindow::createSketch()
 {
@@ -1093,7 +1098,8 @@ void MainWindow::editSelectedFeature()
 {
     const auto* selected = selectedFeature();
     if (!selected || m_session.editingSketch()) return;
-    if(document::isRevolveFeature(selected->kind)||document::isEdgeFeature(selected->kind)){startSolidFeature(selected->kind,selected);return;}
+    if(document::isRevolveFeature(selected->kind)||document::isEdgeFeature(selected->kind)||
+       document::isPatternFeature(selected->kind)){startSolidFeature(selected->kind,selected);return;}
     if (selected->kind == document::FeatureKind::Sketch) { startSketchEditing(*selected); return; }
     if(selected->kind==document::FeatureKind::ReferenceGeometry){startReferenceGeometry(selected->datum.kind,selected);return;}
     auto feature = *selected;

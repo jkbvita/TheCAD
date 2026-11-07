@@ -106,6 +106,11 @@ set_target_properties(thecad_reference_face_tests PROPERTIES AUTOMOC OFF)
 target_link_libraries(thecad_reference_face_tests PRIVATE thecad_document)
 add_test(NAME modeling.reference-faces-contours COMMAND thecad_reference_face_tests)
 
+add_executable(thecad_pattern_features_tests PatternFeaturesTests.cpp)
+set_target_properties(thecad_pattern_features_tests PROPERTIES AUTOMOC OFF)
+target_link_libraries(thecad_pattern_features_tests PRIVATE thecad_document)
+add_test(NAME modeling.pattern-features COMMAND thecad_pattern_features_tests)
+
 if(THECAD_BUILD_GUI AND THECAD_GUI_TESTS)
     add_executable(thecad_selection_workflow_tests SelectionWorkflowTests.cpp)
     target_link_libraries(thecad_selection_workflow_tests PRIVATE thecad_ui Qt6::Test)

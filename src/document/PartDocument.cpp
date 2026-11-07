@@ -7,6 +7,7 @@
 #include "modeling/Box.h"
 #include "modeling/ConstraintSolver.h"
 #include "modeling/PlanarRegions.h"
+#include "modeling/PatternFeatures.h"
 #include "modeling/SolidFeatures.h"
 
 #include <BRepCheck_Analyzer.hxx>
@@ -49,6 +50,7 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
     std::string bodyId;
     std::map<std::string, modeling::Sketch> sketches;
     std::map<std::string,TopoDS_Shape> bodies;
+    std::vector<std::pair<std::string, std::string>> solidHistory;
     std::map<std::string,modeling::TopologyNames> namedBodies;modeling::TopologyNames bodyNames;
     std::map<std::string,modeling::DatumGeometry> datums;
     std::set<std::string> ids;
@@ -60,6 +62,7 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
                 fail("Feature names must contain 1 to 128 printable characters.");
             if (!ids.insert(feature.id).second) fail("Duplicate feature ID: " + q(feature.id));
             std::vector<std::string> expected;
+            const auto previousBody = bodyId;
             if (feature.kind == FeatureKind::Box) {
                 if (!body.IsNull()) fail("A legacy box cannot replace an existing solid in the history.");
                 for (const double length : {feature.box.width, feature.box.depth, feature.box.height})
@@ -125,6 +128,67 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
                 feature.sketch=modeling::requireSolvedSketch(modeling::solvePlanarSketch(feature.sketch));
                 validSketch(feature.sketch);
                 sketches.emplace(feature.id, feature.sketch);
+            } else if (isPatternFeature(feature.kind)) {
+                if (bodyId.empty())
+                    fail("Pattern and Mirror require an earlier solid.");
+                auto& pattern = feature.pattern;
+                const bool mirror = feature.kind == FeatureKind::Mirror;
+                if (!pattern.reference)
+                    fail(mirror ? "Select a mirror plane or planar face." : "Select a pattern direction.");
+                auto& reference = *pattern.reference;
+                using Source = modeling::ReferenceSource;
+                const bool validReference = reference.source == Source::Datum ||
+                    (mirror ? reference.source == Source::BasePlane || reference.source == Source::BodyFace
+                            : reference.source == Source::BaseAxis || reference.source == Source::SketchLine ||
+                                  reference.source == Source::BodyEdge);
+                if (!validReference)
+                    fail("This geometry cannot define the selected pattern or mirror.");
+                bindGeometryReference(reference, bodies, namedBodies);
+                if ((reference.source == Source::BodyFace || reference.source == Source::BodyEdge) &&
+                    reference.topologyName.empty())
+                    fail("Select an edge or face with a unique persistent name.");
+                const auto geometry = resolveGeometryReference(reference, datums, sketches, bodies, namedBodies);
+                if (geometry.kind != (mirror ? modeling::DatumKind::Plane : modeling::DatumKind::Axis))
+                    fail(mirror ? "Mirror requires a plane or planar face." : "Pattern requires a straight direction.");
+
+                expected.push_back(bodyId);
+                const auto addDependency = [&](const std::string& id) {
+                    if (!id.empty() && std::find(expected.begin(), expected.end(), id) == expected.end())
+                        expected.push_back(id);
+                };
+                std::vector<modeling::PatternSeed> seeds;
+                if (pattern.wholePart)
+                {
+                    if (!pattern.seeds.empty())
+                        fail("Choose feature seeds or all solid bodies.");
+                    seeds.push_back({bodyId, {}, body, nullptr, &namedBodies.at(bodyId)});
+                }
+                else
+                {
+                    std::set<std::string> remaining(pattern.seeds.begin(), pattern.seeds.end());
+                    if (remaining.empty() || remaining.size() != pattern.seeds.size())
+                        fail("Select one or more distinct earlier solid features.");
+                    pattern.seeds.clear();
+                    for (const auto& [id, prior] : solidHistory)
+                    {
+                        if (!remaining.erase(id))
+                            continue;
+                        pattern.seeds.push_back(id);
+                        addDependency(id);
+                        seeds.push_back({id, prior.empty() ? TopoDS_Shape{} : bodies.at(prior),
+                                         bodies.at(id), prior.empty() ? nullptr : &namedBodies.at(prior),
+                                         &namedBodies.at(id)});
+                    }
+                    if (!remaining.empty())
+                        fail("A pattern seed is missing or later in history.");
+                }
+                addDependency(reference.featureId);
+                const auto transforms = mirror
+                    ? std::vector<gp_Trsf>{modeling::mirrorInstance(geometry.frame)}
+                    : modeling::linearInstances(geometry.frame.Direction(), pattern.spacing,
+                                                pattern.instances, pattern.reverse);
+                body = modeling::applyPattern(body, seeds, transforms, bodyNames, feature.id);
+                bodyId = feature.id;
             } else if (isRevolveFeature(feature.kind)) {
                 const auto source = sketches.find(feature.sketchId);
                 if(source==sketches.end()) fail("Revolve must reference an earlier sketch.");
@@ -180,7 +244,12 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
             if (validateDependencies && feature.dependencies != expected)
                 fail("Invalid dependencies or feature order for " + q(feature.id));
             feature.dependencies = std::move(expected);
-            if(isSolidFeature(feature.kind)){bodies[feature.id]=body;namedBodies[feature.id]=bodyNames;}
+            if (isSolidFeature(feature.kind))
+            {
+                bodies[feature.id] = body;
+                namedBodies[feature.id] = bodyNames;
+                solidHistory.emplace_back(feature.id, previousBody);
+            }
         }
     } catch (const Standard_Failure& error) {
         fail("Cannot regenerate part geometry: " + QString::fromUtf8(error.GetMessageString()));
@@ -278,9 +347,18 @@ std::string PartDocument::addCutRegions(const std::string& sketchId,const modeli
 
 std::string PartDocument::addSolidFeature(Feature feature)
 {
-    if(!isRevolveFeature(feature.kind)&&!isEdgeFeature(feature.kind))fail("Use the matching feature operation.");
     feature.id=nextId(feature.kind);
-    const char* label=feature.kind==FeatureKind::Revolve?"Revolve":feature.kind==FeatureKind::RevolvedCut?"RevolvedCut":feature.kind==FeatureKind::Fillet?"Fillet":"Chamfer";
+    const char* label = nullptr;
+    switch (feature.kind)
+    {
+    case FeatureKind::Revolve: label = "Revolve"; break;
+    case FeatureKind::RevolvedCut: label = "RevolvedCut"; break;
+    case FeatureKind::Fillet: label = "Fillet"; break;
+    case FeatureKind::Chamfer: label = "Chamfer"; break;
+    case FeatureKind::LinearPattern: label = "LinearPattern"; break;
+    case FeatureKind::Mirror: label = "Mirror"; break;
+    default: fail("Use the matching feature operation.");
+    }
     feature.name=std::string(label)+feature.id.substr(feature.id.find('-')+1);
     auto candidate=m_features;candidate.push_back(feature);apply(std::move(candidate));return feature.id;
 }
