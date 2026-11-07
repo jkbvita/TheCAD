@@ -13,14 +13,14 @@
 namespace thecad::document {
 
 struct BoxParameters { double width = 100.0, depth = 70.0, height = 40.0; };
-enum class FeatureKind { Box, Sketch, Extrude, Cut, ReferenceGeometry, Revolve, RevolvedCut, Fillet, Chamfer, LinearPattern, Mirror, Sweep, SweptCut };
+enum class FeatureKind { Box, Sketch, Extrude, Cut, ReferenceGeometry, Revolve, RevolvedCut, Fillet, Chamfer, LinearPattern, Mirror, Sweep, SweptCut, CircularPattern };
 inline bool isRevolveFeature(FeatureKind kind){return kind==FeatureKind::Revolve||kind==FeatureKind::RevolvedCut;}
 inline bool isEdgeFeature(FeatureKind kind){return kind==FeatureKind::Fillet||kind==FeatureKind::Chamfer;}
 inline bool isSweepFeature(FeatureKind kind){return kind==FeatureKind::Sweep||kind==FeatureKind::SweptCut;}
 inline bool usesProfile(FeatureKind kind){return kind==FeatureKind::Extrude||kind==FeatureKind::Cut||isRevolveFeature(kind)||isSweepFeature(kind);}
 inline bool isPatternFeature(FeatureKind kind)
 {
-    return kind == FeatureKind::LinearPattern || kind == FeatureKind::Mirror;
+    return kind == FeatureKind::LinearPattern || kind == FeatureKind::CircularPattern || kind == FeatureKind::Mirror;
 }
 inline bool isSolidFeature(FeatureKind kind){return kind==FeatureKind::Box||usesProfile(kind)||isEdgeFeature(kind)||isPatternFeature(kind);}
 struct PatternParameters
@@ -31,6 +31,8 @@ struct PatternParameters
     double spacing = 10;
     int instances = 2;
     bool reverse = false;
+    double angle = 360;
+    bool equalSpacing = true;
 };
 struct Feature {
     std::string id;
@@ -78,7 +80,9 @@ public:
     modeling::Sketch sketchOnReferencePlane(const std::string& id) const;
     std::string addReferenceGeometry(const modeling::DatumDefinition& definition);
     modeling::DatumGeometry resolveReference(const modeling::GeometryReference& reference) const;
-    std::vector<ReferenceOption> referenceOptions() const;
+    std::vector<ReferenceOption> referenceOptions(bool includeCircularAxes = false) const;
+    TopoDS_Shape solidBefore(const std::string& featureId) const;
+    const TopoDS_Shape& solidResult(const std::string& featureId) const;
     // Includes curved edges, unlike axis-only referenceOptions(). No index-only
     // fallback is permitted for new edge treatments.
     std::vector<ReferenceOption> edgeOptions() const;

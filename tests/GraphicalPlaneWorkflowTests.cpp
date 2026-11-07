@@ -83,6 +83,42 @@ private:
         QApplication::processEvents();
     }
 private slots:
+    void startupPlaneClickStartsOnlyTheFirstSketch()
+    {
+        PlaneTestWindow window;
+        window.showMaximized();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* viewport = window.findChild<CadViewport*>();
+        QTRY_VERIFY(viewport->isReady());
+        QVERIFY(viewport->referencePlanesVisible());
+        auto* tree = window.findChild<QTreeWidget*>("featureTree");
+        tree->setCurrentItem(tree->topLevelItem(0)->child(0));
+        QVERIFY(!viewport->m_sketchEditing);
+        QVERIFY(window.document().features().empty());
+
+        const auto plane = modeling::SketchPlane::XZ;
+        const auto pixel = pickPoint(viewport, plane);
+        QVERIFY(pixel);
+        QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, *pixel);
+        QVERIFY(viewport->m_sketchEditing);
+        QCOMPARE(window.document().features().size(), std::size_t(1));
+        QCOMPARE(window.document().features().front().sketch.plane, plane);
+
+        command(window, "actionUndo");
+        QVERIFY(!viewport->m_sketchEditing);
+        QVERIFY(window.document().features().empty());
+        command(window, "actionIsometric");
+        viewport->showReferencePlanes(true);
+        const auto laterClick = pickPoint(viewport, plane);
+        QVERIFY(laterClick);
+        const auto eye = viewport->m_graphics.view()->Camera()->Eye();
+        QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, *laterClick);
+        QVERIFY(!viewport->m_sketchEditing);
+        QVERIFY(window.document().features().empty());
+        QCOMPARE(viewport->m_selectedPlane, std::optional(plane));
+        QVERIFY(eye.IsEqual(viewport->m_graphics.view()->Camera()->Eye(), 1e-10));
+        QVERIFY(window.errors.isEmpty());
+    }
     void planarFaceFirstAndSketchFirst()
     {
         QTemporaryDir temporary;
@@ -250,7 +286,7 @@ private slots:
         QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, *selectedPixel);
         QCOMPARE(window.document().features().size(), std::size_t(3));
         QCOMPARE(viewport->m_selectedPlane, std::optional<modeling::SketchPlane>(modeling::SketchPlane::XY));
-        QVERIFY(std::abs(viewport->m_referencePlanes[0]->Transparency()-0.25) < 1e-6);
+        QVERIFY(std::abs(viewport->m_referencePlanes[0]->Transparency()-0.91) < 1e-6);
         command(window, "actionCreateSketch");
         QVERIFY(viewport->m_sketchEditing);
         QCOMPARE(window.document().features().size(), std::size_t(4));

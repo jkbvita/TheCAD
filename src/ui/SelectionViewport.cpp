@@ -268,7 +268,7 @@ void CadViewport::refreshNativeSelection(){
 }
 void CadViewport::setTreeReferenceSelection(const std::vector<SelectionRef>& refs){if(m_dispatchingSelection)return;m_selection.clear();for(const auto& ref:refs)m_selection.select(ref,true);refreshNativeSelection();}
 void CadViewport::setTreeBodySelected(bool selected){m_treeBodySelected=selected;refreshNativeSelection();}
-void CadViewport::selectCandidate(const PickCandidate& item,bool toggle){
+void CadViewport::selectCandidate(const PickCandidate& item,bool toggle,bool directClick){
     const QScopedValueRollback<bool> dispatch(m_dispatchingSelection,true);
     const auto& ref=item.value.reference;
     if(modeling::isTopology(ref.kind)&&ref.generation!=m_shapeGeneration)return;
@@ -307,7 +307,7 @@ void CadViewport::selectCandidate(const PickCandidate& item,bool toggle){
     if(m_selection.items().size()==1){
         if(m_selectedSolidFace)emit solidFaceSelected(m_selectedSolidFace);
         else if(!m_selectedDatum.empty())emit datumSelected(QString::fromStdString(m_selectedDatum));
-        else if(m_selectedPlane)emit referencePlaneSelected(*m_selectedPlane);
+        else if(m_selectedPlane)emit referencePlaneSelected(*m_selectedPlane,directClick && !toggle);
         else {emit solidFaceSelected(0);emit datumSelected({});}
     }else {emit solidFaceSelected(0);emit datumSelected({});}
 }

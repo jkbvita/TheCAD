@@ -64,6 +64,8 @@ approved scope do not need repeated approval.
 
 - [0036: FeatureManager deletion](0036-feature-tree-deletion.md) — transactional deletion for sketches and features with dependent confirmation.
 
+- [0037: Circular Pattern and modeling interactions](0037-circular-pattern-modeling-interactions.md)
+
 ## Pending owner decisions
 
 - Resilient face references beyond the approved conservative planar-face strategy.

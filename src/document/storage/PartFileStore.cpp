@@ -488,7 +488,7 @@ PartDocument PartFileStore::load(const QString& path)
     if (root.value("units") != QJsonValue("mm"))
         fail("Unsupported units; this prototype supports millimeters only.");
     const auto versionValue = root.value("version");
-    if (!versionValue.isDouble() || versionValue.toDouble() < 1 || versionValue.toDouble() > 21 ||
+    if (!versionValue.isDouble() || versionValue.toDouble() < 1 || versionValue.toDouble() > 22 ||
         versionValue.toDouble() != std::floor(versionValue.toDouble()))
         fail("Unsupported part document version; expected versions 1 through 21.");
     const int version = versionValue.toInt();
@@ -742,15 +742,24 @@ PartDocument PartFileStore::load(const QString& path)
                         feature.sketch.relations.push_back(readRelation(relation, version));
                 }
             }
-            else if (version >= 18 && (type == "linear-pattern" || type == "mirror"))
+            else if ((version >= 18 && (type == "linear-pattern" || type == "mirror")) ||
+                     (version >= 22 && type == "circular-pattern"))
             {
                 const bool mirror = type == "mirror";
+                const bool circular = type == "circular-pattern";
                 QSet<QString> expected{"id", "name", "type", "dependencies", "reference",
                                        "wholePart", "seeds"};
                 if (!mirror)
-                    expected.unite({"spacing", "instances", "reverse"});
+                {
+                    expected.unite({"instances", "reverse"});
+                    if (circular)
+                        expected.unite({"angle", "equalSpacing"});
+                    else
+                        expected.insert("spacing");
+                }
                 fields(object, expected, "Pattern or mirror feature");
-                feature.kind = mirror ? FeatureKind::Mirror : FeatureKind::LinearPattern;
+                feature.kind = mirror ? FeatureKind::Mirror
+                                      : circular ? FeatureKind::CircularPattern : FeatureKind::LinearPattern;
                 auto& pattern = feature.pattern;
                 if (!object["reference"].isObject() || !object["wholePart"].isBool() ||
                     !object["seeds"].isArray() ||
@@ -765,10 +774,18 @@ PartDocument PartFileStore::load(const QString& path)
                     const auto count = number(object["instances"], "Instance count");
                     if (count != std::floor(count) || count < 2 ||
                         count > modeling::maximumPatternInstances || !object["reverse"].isBool())
-                        fail("Invalid linear pattern count or reverse direction.");
+                        fail("Invalid pattern count or reverse direction.");
                     pattern.instances = static_cast<int>(count);
-                    pattern.spacing = number(object["spacing"], "Pattern spacing");
                     pattern.reverse = object["reverse"].toBool();
+                    if (circular)
+                    {
+                        if (!object["equalSpacing"].isBool())
+                            fail("Invalid circular pattern spacing mode.");
+                        pattern.angle = number(object["angle"], "Pattern angle");
+                        pattern.equalSpacing = object["equalSpacing"].toBool();
+                    }
+                    else
+                        pattern.spacing = number(object["spacing"], "Pattern spacing");
                 }
             }
             else if (version >= 17 && (type == "fillet" || type == "chamfer"))
@@ -1000,11 +1017,17 @@ void PartFileStore::save(const PartDocument& document, const QString& path)
             for (const auto& seed : pattern.seeds)
                 seeds.append(q(seed));
             object["seeds"] = seeds;
-            if (feature.kind == FeatureKind::LinearPattern)
+            if (feature.kind != FeatureKind::Mirror)
             {
-                object["spacing"] = pattern.spacing;
                 object["instances"] = pattern.instances;
                 object["reverse"] = pattern.reverse;
+                if (feature.kind == FeatureKind::CircularPattern)
+                {
+                    object["angle"] = pattern.angle;
+                    object["equalSpacing"] = pattern.equalSpacing;
+                }
+                else
+                    object["spacing"] = pattern.spacing;
             }
         }
         else if(isEdgeFeature(feature.kind))
@@ -1051,12 +1074,17 @@ void PartFileStore::save(const PartDocument& document, const QString& path)
     int version = 16;
     for (const auto& feature : document.features())
     {
-        if (feature.kind == FeatureKind::Sketch && !feature.sketch.offsets.empty())
+        if (feature.kind == FeatureKind::CircularPattern ||
+            (feature.kind == FeatureKind::ReferenceGeometry &&
+             std::any_of(feature.reference.references.begin(), feature.reference.references.end(),
+                         [](const auto& ref) { return ref.source == modeling::ReferenceSource::BodyCircleAxis; })))
         {
-            version = 21;
+            version = 22;
             break;
         }
-        if (feature.kind == FeatureKind::Sketch &&
+        if (feature.kind == FeatureKind::Sketch && !feature.sketch.offsets.empty())
+            version = 21;
+        else if (version < 20 && feature.kind == FeatureKind::Sketch &&
             (!feature.sketch.projections.empty() || !feature.sketch.replications.empty()))
             version = 20;
         else if (version < 19 && isSweepFeature(feature.kind))

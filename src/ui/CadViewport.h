@@ -146,7 +146,7 @@ signals:
     void sketchPointSelected(const QString& entityId, int role);
     void sketchEntityCreated(const thecad::modeling::SketchEntity& entity);
     void sketchRegionClicked(thecad::modeling::Point2 point);
-    void referencePlaneSelected(thecad::modeling::SketchPlane plane);
+    void referencePlaneSelected(thecad::modeling::SketchPlane plane, bool directClick = false);
     void planeSelectionCanceled();
     void solidFaceSelected(int index);
 
@@ -177,7 +177,7 @@ private:
     struct PickCandidate {modeling::SelectionCandidate value;TopoDS_Shape shape;Handle(SelectMgr_EntityOwner) owner;
         std::optional<gp_Pnt> hit;};
     std::vector<PickCandidate> selectionCandidates(const QPointF&,bool includeOccluded=false);
-    void selectCandidate(const PickCandidate&,bool toggle=false);
+    void selectCandidate(const PickCandidate&,bool toggle=false,bool directClick=false);
     void updateSelectionHover(const QPointF&);
     void previewCandidate(const std::optional<PickCandidate>&);
     void refreshNativeSelection();

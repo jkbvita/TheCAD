@@ -63,7 +63,7 @@ private:
     QComboBox *m_patternReference = nullptr, *m_patternScope = nullptr;
     QListWidget* m_patternSeeds = nullptr;
     QSpinBox* m_instances = nullptr;
-    QCheckBox* m_reverse = nullptr;
+    QCheckBox *m_reverse = nullptr, *m_equalSpacing = nullptr;
     QPushButton *m_pickReference = nullptr, *m_pickRegions = nullptr;
     std::vector<modeling::Contour> m_contours;
     std::vector<document::ReferenceOption> m_options;

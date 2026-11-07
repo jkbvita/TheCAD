@@ -147,7 +147,7 @@ private:
     void createSketch();
     void createSketchOnPlane(modeling::SketchPlane plane);
     void createSketchOnFace(int index);
-    void referencePlaneSelected(modeling::SketchPlane plane);
+    void referencePlaneSelected(modeling::SketchPlane plane, bool directClick);
     void planeSelectionCanceled();
     void editSelectedFeature();
     void startSketchEditing(const document::Feature& feature);
@@ -186,7 +186,7 @@ private:
     bool m_solidFromSketch=false;
     bool m_solidPreviousPlanes=false;
     QAction *m_revolve=nullptr,*m_revolvedCut=nullptr,*m_fillet=nullptr,*m_chamfer=nullptr;
-    QAction *m_linearPattern=nullptr,*m_mirror=nullptr;
+    QAction *m_linearPattern=nullptr,*m_circularPattern=nullptr,*m_mirror=nullptr;
     QAction *m_sweep=nullptr,*m_sweptCut=nullptr;
     void startOperation(document::Feature feature, bool editing);
     void finishOperation(bool accepted);
@@ -243,6 +243,7 @@ private:
     QPushButton* m_applyProperties = nullptr;
     std::optional<modeling::SketchPlane> m_selectedPlane;
     bool m_selectingPlane = false;
+    bool m_startupSketchAvailable = true;
     int m_selectedFace = 0;
     std::unique_ptr<OperationDraft> m_operation;
 };

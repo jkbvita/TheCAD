@@ -1,4 +1,5 @@
 #include "document/PartDocument.h"
+#include "modeling/PatternFeatures.h"
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepGProp.hxx>
 #include <GProp_GProps.hxx>
@@ -121,6 +122,85 @@ void featureCopies()
             "Mirror must preserve its references when reopened.");
 }
 
+void circularPattern()
+{
+    const gp_Ax1 axis(gp_Pnt(30, 30, 0), gp_Dir(0, 0, 1));
+    const gp_Pnt seedPoint(40, 30, 0);
+    const auto fullTurn = circularInstances(axis, 360, 4, true, false);
+    require(fullTurn.size() == 3 &&
+                seedPoint.Transformed(fullTurn.front()).IsEqual({30, 40, 0}, 1e-8) &&
+                seedPoint.Transformed(fullTurn.back()).IsEqual({30, 20, 0}, 1e-8),
+            "A full turn must space instances evenly without duplicating the seed.");
+    const auto partial = circularInstances(axis, 90, 3, true, true);
+    require(seedPoint.Transformed(partial.back()).IsEqual({30, 20, 0}, 1e-8),
+            "A reversed partial span must include its endpoint.");
+    const auto increments = circularInstances(axis, 90, 3, false, false);
+    require(seedPoint.Transformed(increments.back()).IsEqual({20, 30, 0}, 1e-8),
+            "Incremental spacing must apply the specified angle for every step.");
+
+    auto part = PartDocument::createEmpty();
+    Sketch disk;
+    disk.entities.push_back({EntityKind::Circle, {30, 30}, {}, 25, "disk"});
+    const auto diskSketch = part.addSketch(disk);
+    part.addExtrude(diskSketch, {"disk"}, 10, Direction::Positive);
+    const auto cutSketch = circle(part, {40, 30});
+    const auto cut = part.addCut(cutSketch, {"circle"}, 10, true, Direction::Positive);
+
+    const auto options = part.referenceOptions(true);
+    const auto rim = std::find_if(options.begin(), options.end(), [](const auto& option) {
+        const auto center = option.geometry.frame.Location();
+        return option.reference.source == ReferenceSource::BodyCircleAxis &&
+               std::abs(center.X() - 30) < 1e-8 && std::abs(center.Y() - 30) < 1e-8 &&
+               !option.reference.topologyName.empty();
+    });
+    require(rim != options.end(), "The circular rim should provide a named axis.");
+    Feature pattern;
+    pattern.kind = FeatureKind::CircularPattern;
+    pattern.pattern.reference = rim->reference;
+    pattern.pattern.seeds = {cut};
+    pattern.pattern.instances = 4;
+    const auto patternId = part.addSolidFeature(pattern);
+    const double pi = std::acos(-1.0);
+    checkSolid(part, 10 * pi * (625 - 36), 1);
+    require(part.featureDeletionDependents({cut}).back().id == patternId,
+            "Circular Pattern must depend on the seed.");
+
+    auto edit = part.features().back();
+    edit.pattern.angle = 120;
+    edit.pattern.equalSpacing = false;
+    bool rejected = false;
+    const auto original = part.shape();
+    try
+    {
+        part.replaceFeature(edit);
+    }
+    catch (const std::runtime_error&)
+    {
+        rejected = true;
+    }
+    require(rejected && part.shape().IsSame(original), "Reject a duplicate seed transactionally.");
+    edit.pattern.angle = 60;
+    edit.pattern.instances = 3;
+    edit.pattern.reverse = true;
+    part.replaceFeature(edit);
+    auto larger = part.features().front();
+    larger.sketch.entities.front().radius = 27;
+    part.replaceFeature(larger);
+    checkSolid(part, 10 * pi * (729 - 27), 1);
+
+    QTemporaryDir directory;
+    require(directory.isValid(), "Could not create a fixture directory.");
+    const auto path = directory.filePath("circular-pattern.thepart");
+    part.save(path);
+    const auto loaded = PartDocument::load(path);
+    checkSolid(loaded, 10 * pi * (729 - 27), 1);
+    const auto& saved = loaded.features().back().pattern;
+    require(saved.angle == 60 && saved.instances == 3 && !saved.equalSpacing && saved.reverse &&
+                saved.reference->source == ReferenceSource::BodyCircleAxis &&
+                saved.reference->topologyName == rim->reference.topologyName,
+            "Circular Pattern must preserve its parameters and named axis.");
+}
+
 void bodyCopiesAndTopology()
 {
     auto part = PartDocument::createBox({20, 10, 5});
@@ -194,6 +274,7 @@ int main()
     try
     {
         featureCopies();
+        circularPattern();
         bodyCopiesAndTopology();
         return 0;
     }

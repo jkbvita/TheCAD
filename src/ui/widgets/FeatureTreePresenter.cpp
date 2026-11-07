@@ -78,6 +78,7 @@ void FeatureTreePresenter::refresh(const document::PartDocument& document, const
                        : feature.kind == document::FeatureKind::Fillet ? "Fillet"
                        : feature.kind == document::FeatureKind::Chamfer ? "Chamfer"
                        : feature.kind == document::FeatureKind::LinearPattern ? "Linear Pattern"
+                       : feature.kind == document::FeatureKind::CircularPattern ? "Circular Pattern"
                        : feature.kind == document::FeatureKind::Mirror ? "Mirror"
                        : feature.kind == document::FeatureKind::Sweep ? "Swept Boss/Base"
                        : feature.kind == document::FeatureKind::SweptCut ? "Swept Cut"

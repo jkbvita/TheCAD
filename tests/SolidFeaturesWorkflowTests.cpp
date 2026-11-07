@@ -1,3 +1,4 @@
+#include "presentation/SelectionAppearance.h"
 #include "ui/MainWindow.h"
 #include "ui/CadViewport.h"
 #include "ui/features/SolidFeaturePanel.h"
@@ -8,6 +9,7 @@
 #include <Graphic3d_Camera.hxx>
 #include <TopoDS.hxx>
 #include <QAction>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
@@ -360,6 +362,92 @@ private slots:
         command(window, "actionCancelFeature");
         QVERIFY2(window.errors.isEmpty(), qPrintable(window.errors.join('\n')));
     }
+    void circularPatternAroundBodyRim()
+    {
+        QTemporaryDir temp;
+        auto doc = document::PartDocument::createEmpty();
+        modeling::Sketch disk;
+        disk.entities.push_back({modeling::EntityKind::Circle, {30, 30}, {}, 25, "disk"});
+        const auto diskId = doc.addSketch(disk);
+        doc.addExtrude(diskId, {"disk"}, 10, modeling::Direction::Positive);
+        modeling::Sketch hole;
+        hole.entities.push_back({modeling::EntityKind::Circle, {40, 30}, {}, 3, "hole"});
+        const auto sketchId = doc.addSketch(hole);
+        const auto cutId = doc.addCut(sketchId, {"hole"}, 10, true, modeling::Direction::Positive);
+        const auto path = temp.filePath("circular-pattern.thepart");
+        doc.save(path);
+
+        SolidTestWindow window;
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* viewport = window.findChild<CadViewport*>("cadViewport");
+        QTRY_VERIFY(viewport->isReady());
+        QVERIFY(window.openPartFile(path));
+        const Handle(Graphic3d_Camera) camera =
+            new Graphic3d_Camera(viewport->m_graphics.view()->Camera());
+        select(window, cutId);
+        command(window, "actionCircularPattern");
+        auto* panel = window.findChild<SolidFeaturePanel*>("solidFeaturePanel");
+        QVERIFY(panel && !panel->candidate());
+        auto* instances = panel->findChild<QSpinBox*>("patternInstances");
+        instances->setValue(4);
+        auto* angle = panel->findChild<QDoubleSpinBox*>("patternAngle");
+        QCOMPARE(angle->value(), 360.0);
+        QVERIFY(panel->findChild<QCheckBox*>("patternEqualSpacing")->isChecked());
+
+        bool picked = false;
+        for (int i = 0; i < int(panel->options().size()) && !picked; ++i)
+        {
+            const auto& option = panel->options()[std::size_t(i)];
+            if (option.reference.source != modeling::ReferenceSource::BodyCircleAxis)
+                continue;
+            BRepAdaptor_Curve rim(TopoDS::Edge(option.selectionShape));
+            if (std::abs(rim.Circle().Radius() - 25) > 1e-8)
+                continue;
+            for (const double fraction : {0.1, 0.3, 0.5, 0.7, 0.9})
+            {
+                const auto pixel = project(viewport, rim.Value(rim.FirstParameter() +
+                    (rim.LastParameter() - rim.FirstParameter()) * fraction));
+                if (viewport->rect().contains(pixel) && viewport->referenceCandidateAt(pixel) == i)
+                {
+                    QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, pixel);
+                    picked = true;
+                    break;
+                }
+            }
+        }
+        QVERIFY(picked);
+        QVERIFY(panel->candidate());
+        const double expected = 10 * std::acos(-1.0) * (625 - 36);
+        QVERIFY(std::abs(volume(panel->candidate()->document.shape()) - expected) < 1e-5);
+        QCOMPARE(viewport->m_materialPreviewPresentations.size(), std::size_t(1));
+        Quantity_Color removed;
+        viewport->m_materialPreviewPresentations.front()->Color(removed);
+        QVERIFY(removed.Distance(presentation::removedMaterialYellow()) < 1e-8);
+        sameCamera(camera, viewport->m_graphics.view()->Camera());
+
+        panel->page()->buttons->button(QDialogButtonBox::Ok)->click();
+        QApplication::processEvents();
+        const auto patternId = window.document().features().back().id;
+        QCOMPARE(window.document().features().back().kind, document::FeatureKind::CircularPattern);
+        command(window, "actionUndo");
+        QCOMPARE(window.document().features().back().id, cutId);
+        command(window, "actionRedo");
+        QCOMPARE(window.document().features().back().id, patternId);
+
+        window.document().save(path);
+        QVERIFY(window.openPartFile(path));
+        select(window, patternId);
+        command(window, "actionEditFeature");
+        panel = window.findChild<SolidFeaturePanel*>("solidFeaturePanel");
+        QVERIFY(panel && panel->candidate());
+        QCOMPARE(panel->findChild<QSpinBox*>("patternInstances")->value(), 4);
+        panel->findChild<QDoubleSpinBox*>("patternAngle")->setValue(180);
+        QVERIFY(panel->candidate());
+        command(window, "actionCancelFeature");
+        QCOMPARE(window.document().features().back().pattern.angle, 360.0);
+        QVERIFY2(window.errors.isEmpty(), qPrintable(window.errors.join('\n')));
+    }
     void edgeTreatments_data()
     {
         QTest::addColumn<bool>("chamfer");
@@ -423,6 +511,15 @@ private slots:
         panel = window.findChild<SolidFeaturePanel*>("solidFeaturePanel");
         QVERIFY(panel);
         QVERIFY(panel->candidate());
+        panel->parameter()->setValue(0.5);
+        QVERIFY(panel->candidate());
+        QVERIFY(panel->candidate()->changes.added.IsNull());
+        QCOMPARE(viewport->m_materialPreviewPresentations.size(), std::size_t(1));
+        Quantity_Color removed;
+        viewport->m_materialPreviewPresentations.front()->Color(removed);
+        QVERIFY(removed.Distance(presentation::removedMaterialYellow()) < 1e-8);
+        QVERIFY(std::abs(volume(panel->candidate()->changes.removed) -
+                         (24000 - volume(panel->candidate()->previewShape))) < 1e-6);
         panel->parameter()->setValue(2);
         QVERIFY(panel->candidate());
         panel->page()->buttons->button(QDialogButtonBox::Ok)->click();

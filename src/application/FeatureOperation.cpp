@@ -22,7 +22,9 @@ FeatureOperationResult FeatureOperation::preview(const document::PartDocument& s
     else
         id = candidate.addExtrudeRegions(feature.sketchId, regions, feature.length,
                                          feature.direction);
-    const auto changes = modeling::materialChanges(source.shape(), candidate.shape());
-    return {std::move(candidate), std::move(id), changes};
+    const auto before = editing ? source.solidBefore(id) : source.shape();
+    const auto result = candidate.solidResult(id);
+    auto changes = modeling::materialChanges(before, result);
+    return {std::move(candidate), std::move(id), std::move(changes), result};
 }
 } // namespace thecad::application

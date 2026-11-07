@@ -234,7 +234,10 @@ MainWindow::MainWindow(QWidget* parent)
     QGridLayout* patternGrid=nullptr;commandGroup(featureButtons,"Pattern / Mirror",patternGrid);
     m_linearPattern=action("Linear Pattern","actionLinearPattern",[this]{startSolidFeature(document::FeatureKind::LinearPattern);});
     m_mirror=action("Mirror","actionMirror",[this]{startSolidFeature(document::FeatureKind::Mirror);});
-    commandButton(m_linearPattern,patternGrid,0,0,true);commandButton(m_mirror,patternGrid,0,1,true);
+    m_circularPattern=action("Circular Pattern","actionCircularPattern",[this]{startSolidFeature(document::FeatureKind::CircularPattern);});
+    commandButton(m_linearPattern,patternGrid,0,0,true);
+    commandButton(m_circularPattern,patternGrid,0,1,true);
+    commandButton(m_mirror,patternGrid,0,2,true);
     QGridLayout* referenceGrid=nullptr;commandGroup(featureButtons,"Reference Geometry",referenceGrid);
     m_referencePlane=action("Reference Plane","actionReferencePlane",[this]{startReferenceGeometry(modeling::DatumKind::Plane);});
     m_referenceAxis=action("Reference Axis","actionReferenceAxis",[this]{startReferenceGeometry(modeling::DatumKind::Axis);});
@@ -496,7 +499,7 @@ MainWindow::MainWindow(QWidget* parent)
         }
     });
     connect(m_viewport, &CadViewport::sketchRegionClicked, this, [this](modeling::Point2 point) { if(m_solidFeature)m_solidFeature->pickRegion(point);else operationRegionClicked(point); });
-    connect(m_viewport, &CadViewport::referencePlaneSelected, this, [this](modeling::SketchPlane plane) { referencePlaneSelected(plane); });
+    connect(m_viewport, &CadViewport::referencePlaneSelected, this, &MainWindow::referencePlaneSelected);
     connect(m_viewport,&CadViewport::solidFaceSelected,this,[this](int index){
         if(m_session.editingSketch() || featureDraftActive())return;
         m_selectedFace=0;m_selectedPlane.reset();m_session.selectedFeatureId().clear();
@@ -521,7 +524,7 @@ MainWindow::MainWindow(QWidget* parent)
     auto* cancelFeature = new QAction("Cancel feature", this);
     cancelFeature->setObjectName("actionCancelFeature");cancelFeature->setShortcut(QKeySequence(Qt::Key_Escape));
     addAction(cancelFeature);connect(cancelFeature,&QAction::triggered,this,[this]{if(m_sketchModifier)finishSketchModifier(false);else if(m_solidFeature)finishSolidFeature(false);else if(m_referenceDraft)finishReferenceGeometry(false);else finishOperation(false);});
-    statusBar()->showMessage("Orbit: middle drag | Pan: Ctrl + middle | Zoom: Shift + middle / wheel | Normal To: Ctrl+8 | Fit: F");
+    statusBar()->showMessage("Click Front, Top or Right in the viewport to start your first sketch.");
     m_dimensions = new QLabel(this);
     statusBar()->addPermanentWidget(m_dimensions);
     setWindowModified(true);
@@ -744,10 +747,12 @@ bool MainWindow::replaceDocument(document::PartDocument candidate, const QString
     m_mode = WorkspaceMode::Part;
     m_selectedFace=0;
     m_session.setPath(path);
+    m_startupSketchAvailable = false;
     m_session.clearHistory();
     updateDocumentUi();
     m_viewport->showReferencePlanes(m_session.document().features().empty());
     m_viewport->resetView(); // Opening a different document frames it once.
+    statusBar()->showMessage("Orbit: middle drag | Pan: Ctrl + middle | Zoom: wheel | Normal To: Ctrl+8 | Fit: F");
     return true;
 }
 
@@ -759,6 +764,7 @@ bool MainWindow::applyModel(document::PartDocument candidate, const std::string&
         return false;
     }
     if(record)rememberChange(std::move(previous));
+    m_startupSketchAvailable = false;
     m_session.document() = std::move(candidate);
     m_session.selectedFeatureId() = selectedId;
     setWindowModified(true);
@@ -927,15 +933,17 @@ void MainWindow::updateActions()
             if (profile) break;
         }
     }
-    m_extrude->setEnabled(profile && !m_constraints && !m_smartDimension);
-    m_cut->setEnabled(profile && !m_constraints && !m_smartDimension && !m_session.document().shape().IsNull());
-    m_revolve->setEnabled(profile&&!m_constraints&&!m_smartDimension);
+    const bool startProfileFeature = profile && !m_constraints &&
+        !(m_smartDimension && m_smartDimension->editor);
+    m_extrude->setEnabled(startProfileFeature);
+    m_cut->setEnabled(startProfileFeature && !m_session.document().shape().IsNull());
+    m_revolve->setEnabled(startProfileFeature);
     m_revolvedCut->setEnabled(m_revolve->isEnabled()&&!m_session.document().shape().IsNull());
     m_sweep->setEnabled(m_revolve->isEnabled());
     m_sweptCut->setEnabled(m_revolvedCut->isEnabled());
     const bool edges=!operation&&!selecting&&!m_session.editingSketch()&&!m_session.document().shape().IsNull();
     m_fillet->setEnabled(edges);m_chamfer->setEnabled(edges);
-    m_linearPattern->setEnabled(edges);m_mirror->setEnabled(edges);
+    m_linearPattern->setEnabled(edges);m_circularPattern->setEnabled(edges);m_mirror->setEnabled(edges);
 }
 void MainWindow::createSketch()
 {
@@ -977,12 +985,12 @@ void MainWindow::createSketchOnPlane(modeling::SketchPlane plane)
     } catch (const std::exception& error) { reportError(QString::fromUtf8(error.what())); }
 }
 
-void MainWindow::referencePlaneSelected(modeling::SketchPlane plane)
+void MainWindow::referencePlaneSelected(modeling::SketchPlane plane, bool directClick)
 {
     m_selectedFace=0;
     m_viewport->setSelectedSolidFace(0);
-    if (m_session.editingSketch() || m_operation) return;
-    if (m_selectingPlane) {
+    if (m_session.editingSketch() || featureDraftActive()) return;
+    if (m_selectingPlane || (directClick && m_startupSketchAvailable)) {
         createSketchOnPlane(plane);
         return;
     }
@@ -1167,17 +1175,19 @@ void MainWindow::extrude(bool cut)
 
 void MainWindow::startOperation(document::Feature feature, bool editing)
 {
-    if(featureDraftActive() || m_selectingPlane) return;
+    if(featureDraftActive() || m_selectingPlane || m_constraints ||
+       (m_smartDimension && m_smartDimension->editor)) return;
     m_selectedFace=0;m_viewport->setSelectedSolidFace(0);
     auto sourceDocument=m_session.document();
     if(m_session.editingSketch()) {
-        m_viewport->selectSketchTool();
         try {
             if(modeling::closedContours(*m_session.editingSketch()).empty())
                 throw std::runtime_error("The active sketch has no valid closed contour. Continue sketch editing and close a profile.");
             auto source=*std::find_if(sourceDocument.features().begin(),sourceDocument.features().end(),[this](const auto& item){return item.id==m_session.editingSketchId();});
             source.sketch=*m_session.editingSketch();sourceDocument.replaceFeature(source);
         } catch(const std::exception& error) {reportError(QString("Cannot start the feature: %1").arg(error.what()));return;}
+        closeSmartDimension();
+        m_viewport->selectSketchTool();
     }
     m_operation=std::make_unique<OperationDraft>();auto& draft=*m_operation;
     draft.feature=std::move(feature);draft.editing=editing;
@@ -1190,7 +1200,7 @@ void MainWindow::startOperation(document::Feature feature, bool editing)
     auto* referenceForm=new QFormLayout;
     auto* startingReference=new QLabel("Sketch Plane");startingReference->setObjectName("operationStartingReference");
     referenceForm->addRow("Starting reference",startingReference);settings->addLayout(referenceForm);
-    auto* legend=new QLabel("Blue: selected regions\nAmber: added material  ·  Red: removed material");legend->setObjectName("operationPreviewLegend");legend->setWordWrap(true);settings->addWidget(legend);
+    auto* legend=new QLabel("Blue: selected regions\nAmber: added material  ·  Yellow: removed material");legend->setObjectName("operationPreviewLegend");legend->setWordWrap(true);settings->addWidget(legend);
     auto* directionGroup=new QGroupBox("Direction 1");auto* directionForm=new QFormLayout(directionGroup);directionForm->setRowWrapPolicy(QFormLayout::WrapLongRows);
     auto* endCondition=new QLabel(draft.feature.throughAll ? "Through All" : "Blind");endCondition->setObjectName("operationEndCondition");
     directionForm->addRow("End condition",endCondition);
@@ -1361,7 +1371,7 @@ void MainWindow::updateOperationPreview()
         feature.direction = draft.direction->currentIndex() == 0 ? modeling::Direction::Positive : modeling::Direction::Negative;
         feature.throughAll = feature.kind == document::FeatureKind::Cut && draft.through->isChecked();
         auto result=application::FeatureOperation::preview(*draft.sourceDocument,feature,references,draft.editing);
-        m_viewport->previewShape(result.document.shape(),result.changes);
+        m_viewport->previewShape(result.previewShape,result.changes);
         draft.candidate=std::move(result.document);draft.candidateFeatureId=std::move(result.featureId);
         draft.panel->setStatus("Preview ready. Type a depth or select more regions. Enter confirms.");
         draft.buttons->button(QDialogButtonBox::Ok)->setEnabled(true);

@@ -27,6 +27,10 @@ Quantity_Color hoverOrange()
 {
     return {1, 0.53, 0.10, Quantity_TOC_sRGB};
 }
+Quantity_Color removedMaterialYellow()
+{
+    return {1, 0.91, 0.13, Quantity_TOC_sRGB};
+}
 TopoDS_Shape selectionOutline(const TopoDS_Shape& source)
 {
     if (source.IsNull() || source.ShapeType() == TopAbs_EDGE || source.ShapeType() == TopAbs_VERTEX)
@@ -52,12 +56,12 @@ TopoDS_Shape selectionOutline(const TopoDS_Shape& source)
     }
     return edges;
 }
-void styleReferencePlane(const Handle(AIS_Shape) & shape, bool selected, bool hovered, int variant)
+void styleReferencePlane(const Handle(AIS_Shape) & shape, bool selected, bool hovered, int variant, double pixelRatio)
 {
     const Quantity_Color neutral(0.23 + 0.025 * (variant % 3), 0.35 + 0.02 * (variant % 3),
                                  0.47 + 0.02 * (variant % 3), Quantity_TOC_sRGB);
-    shape->SetColor(selected ? selectionBlue() : neutral);
-    shape->SetTransparency(selected ? 0.25 : 0.91);
+    shape->SetColor(neutral);
+    shape->SetTransparency(0.91);
     shape->Attributes()->ShadingAspect()->Aspect()->SetShadingModel(Graphic3d_TOSM_UNLIT);
     shape->Attributes()->SetFaceBoundaryDraw(Standard_True);
     shape->Attributes()->SetFaceBoundaryUpperContinuity(GeomAbs_C0);
@@ -65,7 +69,7 @@ void styleReferencePlane(const Handle(AIS_Shape) & shape, bool selected, bool ho
         new Prs3d_LineAspect(selected  ? selectionBlue()
                              : hovered ? hoverOrange()
                                        : Quantity_Color(0.43, 0.58, 0.73, Quantity_TOC_sRGB),
-                             Aspect_TOL_SOLID, selected || hovered ? 2 : 1));
+                             Aspect_TOL_SOLID, (selected ? 3 : hovered ? 2 : 1) * pixelRatio));
     shape->SetZLayer(Graphic3d_ZLayerId_Default);
 }
 void styleSelectedShape(const Handle(AIS_Shape) & shape, double ratio)

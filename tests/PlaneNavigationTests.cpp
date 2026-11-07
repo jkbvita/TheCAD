@@ -130,7 +130,7 @@ private slots:
         // Reference-plane hover changes only the border. Selection has precedence.
         Handle(AIS_Shape) plane=new AIS_Shape(referencePlaneFace(SketchPlane::XY,50));styleReferencePlane(plane,false,false);Quantity_Color neutral;plane->Color(neutral);
         styleReferencePlane(plane,false,true);Quantity_Color hovered;plane->Color(hovered);QVERIFY(hovered.Distance(neutral)<1e-8);QVERIFY(plane->Attributes()->FaceBoundaryAspect()->Aspect()->Color().Distance(hoverOrange())<1e-8);
-        styleReferencePlane(plane,true,true);Quantity_Color selected;plane->Color(selected);checkBlue(selected);QVERIFY(plane->Attributes()->FaceBoundaryAspect()->Aspect()->Color().Distance(selectionBlue())<1e-8);QVERIFY(plane->Transparency()<0.3);
+        styleReferencePlane(plane,true,true);Quantity_Color selected;plane->Color(selected);QVERIFY(selected.Distance(neutral)<1e-8);QVERIFY(plane->Attributes()->FaceBoundaryAspect()->Aspect()->Color().Distance(selectionBlue())<1e-8);QCOMPARE(plane->Attributes()->FaceBoundaryAspect()->Aspect()->Width(),3.0f);QVERIFY(plane->Transparency()>0.9);
         QVERIFY(w.errors.isEmpty());w.setWindowModified(false);w.close();
     }
     void selectionPlanesAndAutomaticMidplane(){
@@ -138,7 +138,7 @@ private slots:
         v->clearSelection();select(w,"origin:XY");action(w,"actionReferencePlane");auto* constraint=w.findChild<QComboBox*>("planeConstraint");constraint->setCurrentIndex(1);confirm(w);const auto first=w.document().features().back().id;QVERIFY(std::abs(w.document().features().back().reference.value)<1e-12);
         select(w,QString::fromStdString(first));action(w,"actionReferencePlane");w.findChild<QDoubleSpinBox*>("datumValue")->setValue(20);confirm(w);const auto second=w.document().features().back().id;
         select(w,QString::fromStdString(first));auto* tree=w.findChild<QTreeWidget*>("featureTree");for(QTreeWidgetItemIterator i(tree);*i;++i)if((*i)->data(0,Qt::UserRole).toString().toStdString()==second)(*i)->setSelected(true);action(w,"actionReferencePlane");QCOMPARE(w.findChild<QComboBox*>("datumMethod")->currentData().toInt(),int(DatumMethod::PlaneMid));confirm(w);QVERIFY(std::abs(w.document().features().back().datum.frame.Location().Z()-10)<1e-9);
-        for(std::size_t i=0;i<v->m_datums.size();++i)if(v->m_datums[i].geometry.kind==DatumKind::Plane){auto plane=Handle(AIS_Shape)::DownCast(v->m_datumPresentations[i*2]);QVERIFY(plane->Transparency()>0.8||std::abs(plane->Transparency()-0.25)<1e-6);QCOMPARE(plane->Attributes()->ShadingAspect()->Aspect()->ShadingModel(),Graphic3d_TOSM_UNLIT);}
+        for(std::size_t i=0;i<v->m_datums.size();++i)if(v->m_datums[i].geometry.kind==DatumKind::Plane){auto plane=Handle(AIS_Shape)::DownCast(v->m_datumPresentations[i*2]);QVERIFY(plane->Transparency()>0.9);QCOMPARE(plane->Attributes()->ShadingAspect()->Aspect()->ShadingModel(),Graphic3d_TOSM_UNLIT);}
         QVERIFY(w.errors.isEmpty());w.setWindowModified(false);w.close();
     }
     void checkBlue(const Quantity_Color& c){double r,g,b;c.Values(r,g,b,Quantity_TOC_sRGB);QCOMPARE(qRound(r*255),6);QCOMPARE(qRound(g*255),180);QCOMPARE(qRound(b*255),255);}

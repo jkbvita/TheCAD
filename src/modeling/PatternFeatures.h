@@ -17,6 +17,8 @@ struct PatternSeed
 };
 
 std::vector<gp_Trsf> linearInstances(const gp_Dir& axis, double spacing, int count, bool reverse);
+std::vector<gp_Trsf> circularInstances(const gp_Ax1& axis, double angle, int count,
+                                       bool equalSpacing, bool reverse);
 gp_Trsf mirrorInstance(const gp_Ax3& plane);
 TopoDS_Shape applyPattern(const TopoDS_Shape& base, const std::vector<PatternSeed>& seeds,
                           const std::vector<gp_Trsf>& transforms, TopologyNames& names,

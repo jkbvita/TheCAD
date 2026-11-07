@@ -124,6 +124,29 @@ std::vector<gp_Trsf> linearInstances(const gp_Dir& axis, double spacing, int cou
     return result;
 }
 
+std::vector<gp_Trsf> circularInstances(const gp_Ax1& axis, double angle, int count,
+                                       bool equalSpacing, bool reverse)
+{
+    require(std::isfinite(angle) && angle > 0 && angle <= 360,
+            "Circular pattern angle must be greater than zero and at most 360 degrees.");
+    require(count >= 2 && count <= maximumPatternInstances,
+            "Enter between 2 and 100 instances, including the seed.");
+    require(equalSpacing || angle * (count - 1) < 360,
+            "The last instance must stop before a full turn to avoid duplicating the seed.");
+
+    // A full turn omits the duplicate endpoint. A partial span includes it.
+    const double step = equalSpacing ? angle / (angle == 360 ? count : count - 1) : angle;
+    const double radians = step * std::acos(-1.0) / 180 * (reverse ? -1 : 1);
+    std::vector<gp_Trsf> result;
+    for (int i = 1; i < count; ++i)
+    {
+        gp_Trsf rotation;
+        rotation.SetRotation(axis, radians * i);
+        result.push_back(rotation);
+    }
+    return result;
+}
+
 gp_Trsf mirrorInstance(const gp_Ax3& plane)
 {
     gp_Trsf reflection;

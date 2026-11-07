@@ -372,7 +372,7 @@ void CadViewport::updateReferencePlanes()
             const auto type = static_cast<modeling::SketchPlane>(i);
             auto& plane = m_referencePlanes[std::size_t(i)];
             plane = new AIS_Shape(modeling::referencePlaneFace(type, m_planeHalfExtent));
-            styleReferencePlane(plane,false,false,i);
+            styleReferencePlane(plane,false,false,i,devicePixelRatioF());
             m_graphics.context()->Display(plane, AIS_Shaded, -1, Standard_False);
             auto& label = m_planeLabels[std::size_t(i)];
             label = new AIS_TextLabel;
@@ -414,7 +414,7 @@ void CadViewport::updatePlaneStyles()
         const auto type = static_cast<modeling::SketchPlane>(i);
         const bool selected = (m_selectedPlane && *m_selectedPlane == type) || std::any_of(m_selection.items().begin(),m_selection.items().end(),[&](const auto& r){return r.kind==modeling::SelectionKind::OriginPlane&&r.index==i;});
         const bool hovered = m_hoveredPlane && *m_hoveredPlane == type;
-        styleReferencePlane(plane,selected,hovered,i);
+        styleReferencePlane(plane,selected,hovered,i,devicePixelRatioF());
         m_graphics.context()->Redisplay(plane, Standard_False);
         if (!m_planeLabels[std::size_t(i)].IsNull()) {
             m_planeLabels[std::size_t(i)]->SetColor(viewportColor(ThemeColor::Reference));
@@ -581,7 +581,7 @@ void CadViewport::previewShape(const TopoDS_Shape& shape,const modeling::Materia
         m_graphics.context()->Display(presentation,AIS_Shaded,-1,Standard_False);m_materialPreviewPresentations.push_back(presentation);
     };
     displayChange(changes.added,Quantity_Color(1.0,0.74,0.20,Quantity_TOC_RGB));
-    displayChange(changes.removed,Quantity_Color(0.95,0.35,0.23,Quantity_TOC_RGB));
+    displayChange(changes.removed,removedMaterialYellow());
     update();
 }
 
@@ -1450,7 +1450,7 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* event)
             if(!m_referenceCandidates.empty()){const int index=referenceCandidateAt(event->position());if(index>=0)emit referenceGeometryPicked(index);event->accept();return;}
             const auto candidates=selectionCandidates(event->position());
             if(candidates.empty())clearSelection();
-            else selectCandidate(candidates.front(),event->modifiers().testFlag(Qt::ShiftModifier)||event->modifiers().testFlag(Qt::ControlModifier));
+            else selectCandidate(candidates.front(),event->modifiers().testFlag(Qt::ShiftModifier)||event->modifiers().testFlag(Qt::ControlModifier),true);
             event->accept();return;
         }
         event->accept();

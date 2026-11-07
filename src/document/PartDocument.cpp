@@ -141,23 +141,29 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
                     fail("Pattern and Mirror require an earlier solid.");
                 auto& pattern = feature.pattern;
                 const bool mirror = feature.kind == FeatureKind::Mirror;
+                const bool circular = feature.kind == FeatureKind::CircularPattern;
                 if (!pattern.reference)
-                    fail(mirror ? "Select a mirror plane or planar face." : "Select a pattern direction.");
+                    fail(mirror ? "Select a mirror plane or planar face."
+                                : circular ? "Select a pattern axis." : "Select a pattern direction.");
                 auto& reference = *pattern.reference;
                 using Source = modeling::ReferenceSource;
                 const bool validReference = reference.source == Source::Datum ||
                     (mirror ? reference.source == Source::BasePlane || reference.source == Source::BodyFace
                             : reference.source == Source::BaseAxis || reference.source == Source::SketchLine ||
-                                  reference.source == Source::BodyEdge);
+                                  reference.source == Source::BodyEdge ||
+                                  (circular && (reference.source == Source::BodyFace ||
+                                                reference.source == Source::BodyCircleAxis)));
                 if (!validReference)
                     fail("This geometry cannot define the selected pattern or mirror.");
                 bindGeometryReference(reference, bodies, namedBodies);
-                if ((reference.source == Source::BodyFace || reference.source == Source::BodyEdge) &&
+                if ((reference.source == Source::BodyFace || reference.source == Source::BodyEdge ||
+                     reference.source == Source::BodyCircleAxis) &&
                     reference.topologyName.empty())
                     fail("Select an edge or face with a unique persistent name.");
                 const auto geometry = resolveGeometryReference(reference, datums, sketches, bodies, namedBodies);
                 if (geometry.kind != (mirror ? modeling::DatumKind::Plane : modeling::DatumKind::Axis))
-                    fail(mirror ? "Mirror requires a plane or planar face." : "Pattern requires a straight direction.");
+                    fail(mirror ? "Mirror requires a plane or planar face."
+                                : circular ? "Circular Pattern requires an axis." : "Pattern requires a straight direction.");
 
                 expected.push_back(bodyId);
                 const auto addDependency = [&](const std::string& id) {
@@ -193,8 +199,10 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
                 addDependency(reference.featureId);
                 const auto transforms = mirror
                     ? std::vector<gp_Trsf>{modeling::mirrorInstance(geometry.frame)}
-                    : modeling::linearInstances(geometry.frame.Direction(), pattern.spacing,
-                                                pattern.instances, pattern.reverse);
+                    : circular ? modeling::circularInstances(geometry.frame.Axis(), pattern.angle,
+                                                              pattern.instances, pattern.equalSpacing, pattern.reverse)
+                               : modeling::linearInstances(geometry.frame.Direction(), pattern.spacing,
+                                                           pattern.instances, pattern.reverse);
                 body = modeling::applyPattern(body, seeds, transforms, bodyNames, feature.id);
                 bodyId = feature.id;
             } else if (isSweepFeature(feature.kind)) {
@@ -282,6 +290,24 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
     m_shape = body;
     m_parameters = boxParameters;
     m_bodies=std::move(bodies);m_namedBodies=std::move(namedBodies);
+}
+
+TopoDS_Shape PartDocument::solidBefore(const std::string& featureId) const
+{
+    TopoDS_Shape previous;
+    for (const auto& feature : m_features)
+    {
+        if (feature.id == featureId)
+            return previous;
+        if (isSolidFeature(feature.kind))
+            previous = solidResult(feature.id);
+    }
+    throw std::runtime_error("Feature is unavailable.");
+}
+
+const TopoDS_Shape& PartDocument::solidResult(const std::string& featureId) const
+{
+    return m_bodies.at(featureId);
 }
 
 std::string PartDocument::nextId(FeatureKind kind) const
@@ -378,6 +404,7 @@ std::string PartDocument::addSolidFeature(Feature feature)
     case FeatureKind::Fillet: label = "Fillet"; break;
     case FeatureKind::Chamfer: label = "Chamfer"; break;
     case FeatureKind::LinearPattern: label = "LinearPattern"; break;
+    case FeatureKind::CircularPattern: label = "CircularPattern"; break;
     case FeatureKind::Mirror: label = "Mirror"; break;
     case FeatureKind::Sweep: label = "Sweep"; break;
     case FeatureKind::SweptCut: label = "SweptCut"; break;

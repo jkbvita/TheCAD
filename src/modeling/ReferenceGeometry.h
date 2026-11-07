@@ -8,7 +8,7 @@ enum class DatumMethod { PointXYZ, PointOnReference, PointAxisPlane, PointTwoAxe
     AxisXYZ, AxisOnReference, AxisTwoPoints, AxisTwoPlanes, AxisNormalToPlane,
     PlaneXYZ, PlaneOffset, PlaneThreePoints, PlaneAtAngle, PlaneThroughPoint, PlaneMid, PlaneNormalToAxis, PlaneTangentAtPoint, PlaneTangentParallel };
 inline constexpr int datumMethodCount=19;
-enum class ReferenceSource { Origin=0, BasePlane=1, BaseAxis=2, Datum=3, SketchPoint=4, SketchLine=5, BodyVertex=6, BodyEdge=7, BodyFace=8, BodyCircleCenter=9 };
+enum class ReferenceSource { Origin=0, BasePlane=1, BaseAxis=2, Datum=3, SketchPoint=4, SketchLine=5, BodyVertex=6, BodyEdge=7, BodyFace=8, BodyCircleCenter=9, BodyCircleAxis=10 };
 struct GeometryReference {
     ReferenceSource source=ReferenceSource::Origin;
     std::string featureId,entityId,signature,topologyName;

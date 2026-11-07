@@ -35,6 +35,7 @@ QString title(document::FeatureKind kind)
     case K::Fillet: return "Fillet";
     case K::Chamfer: return "Chamfer";
     case K::LinearPattern: return "Linear Pattern";
+    case K::CircularPattern: return "Circular Pattern";
     case K::Mirror: return "Mirror";
     case K::Sweep: return "Swept Boss/Base";
     case K::SweptCut: return "Swept Cut";
@@ -46,6 +47,9 @@ QString description(document::FeatureKind kind)
     using K = document::FeatureKind;
     if (kind == K::LinearPattern)
         return "Select features or all bodies, then choose a straight direction. "
+               "The instance count includes the original.";
+    if (kind == K::CircularPattern)
+        return "Select features or all bodies, then pick an axis, circular edge, or cylindrical face. "
                "The instance count includes the original.";
     if (kind == K::Mirror)
         return "Select features or all bodies and a mirror plane or planar face.";
@@ -176,23 +180,27 @@ SolidFeaturePanel::SolidFeaturePanel(document::PartDocument source, document::Fe
 void SolidFeaturePanel::buildPatternForm(QFormLayout* form)
 {
     const bool mirror = pickingMirrorPlane();
+    const bool circular = m_feature.kind == document::FeatureKind::CircularPattern;
     m_patternReference = new QComboBox;
     m_patternReference->setObjectName("patternReference");
-    m_patternReference->setPlaceholderText(mirror ? "Select a plane or face" : "Select a direction");
+    m_patternReference->setPlaceholderText(mirror ? "Select a plane or face"
+                                                 : circular ? "Select an axis" : "Select a direction");
     m_patternReference->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
     m_patternReference->setMinimumContentsLength(18);
     int selectedReference = -1;
-    for (const auto& option : m_support.referenceOptions())
+    for (const auto& option : m_support.referenceOptions(circular))
     {
         using S = modeling::ReferenceSource;
         const auto source = option.reference.source;
         const bool supported = source == S::Datum ||
             (mirror ? source == S::BasePlane || source == S::BodyFace
-                    : source == S::BaseAxis || source == S::BodyEdge || source == S::SketchLine);
+                    : source == S::BaseAxis || source == S::BodyEdge || source == S::SketchLine ||
+                          (circular && (source == S::BodyFace || source == S::BodyCircleAxis)));
         if (!supported || option.geometry.kind != (mirror ? modeling::DatumKind::Plane
                                                            : modeling::DatumKind::Axis))
             continue;
-        if ((source == S::BodyEdge || source == S::BodyFace) && option.reference.topologyName.empty())
+        if ((source == S::BodyEdge || source == S::BodyFace || source == S::BodyCircleAxis) &&
+            option.reference.topologyName.empty())
             continue;
         if (m_feature.pattern.reference && same(*m_feature.pattern.reference, option.reference))
             selectedReference = int(m_options.size());
@@ -200,17 +208,32 @@ void SolidFeaturePanel::buildPatternForm(QFormLayout* form)
         m_patternReference->addItem(QString::fromStdString(option.label));
     }
     m_patternReference->setCurrentIndex(selectedReference);
-    form->addRow(mirror ? "Mirror Face/Plane" : "Direction 1", m_patternReference);
+    form->addRow(mirror ? "Mirror Face/Plane" : circular ? "Pattern axis" : "Direction 1",
+                 m_patternReference);
     if (!mirror)
     {
         m_parameter = new QDoubleSpinBox;
-        m_parameter->setObjectName("patternSpacing");
+        m_parameter->setObjectName(circular ? "patternAngle" : "patternSpacing");
         m_parameter->setDecimals(6);
-        m_parameter->setRange(0.000001, 1e9);
-        m_parameter->setSuffix(" mm");
-        m_parameter->setValue(m_feature.pattern.spacing);
+        m_parameter->setRange(0.000001, circular ? 360 : 1e9);
+        m_parameter->setSuffix(circular ? QString::fromUtf8("°") : QString(" mm"));
+        m_parameter->setValue(circular ? m_feature.pattern.angle : m_feature.pattern.spacing);
         m_parameter->setKeyboardTracking(false);
-        form->addRow("Spacing", m_parameter);
+        if (circular)
+        {
+            m_equalSpacing = new QCheckBox("Equal spacing");
+            m_equalSpacing->setObjectName("patternEqualSpacing");
+            m_equalSpacing->setChecked(m_feature.pattern.equalSpacing);
+            form->addRow(m_equalSpacing);
+            auto* angleLabel = new QLabel(m_equalSpacing->isChecked() ? "Total angle" : "Angle between instances");
+            form->addRow(angleLabel, m_parameter);
+            connect(m_equalSpacing, &QCheckBox::toggled, this, [this, angleLabel](bool equal) {
+                angleLabel->setText(equal ? "Total angle" : "Angle between instances");
+                refreshPreview();
+            });
+        }
+        else
+            form->addRow("Spacing", m_parameter);
         m_instances = new QSpinBox;
         m_instances->setObjectName("patternInstances");
         m_instances->setRange(2, modeling::maximumPatternInstances);
@@ -269,7 +292,8 @@ document::Feature SolidFeaturePanel::readPattern() const
     auto& pattern = feature.pattern;
     if (m_patternReference->currentIndex() < 0)
         throw std::runtime_error(pickingMirrorPlane() ? "Select a mirror plane or planar face."
-                                                     : "Select a straight pattern direction.");
+                                 : m_equalSpacing ? "Select a pattern axis."
+                                                  : "Select a straight pattern direction.");
     pattern.reference = m_options[std::size_t(m_patternReference->currentIndex())].reference;
     pattern.wholePart = m_patternScope->currentIndex() == 1;
     pattern.seeds.clear();
@@ -278,12 +302,19 @@ document::Feature SolidFeaturePanel::readPattern() const
             pattern.seeds.push_back(item->data(Qt::UserRole).toString().toStdString());
     if (m_parameter)
     {
-        bool spacingOk = false, countOk = false;
-        pattern.spacing = m_parameter->locale().toDouble(m_parameter->cleanText(), &spacingOk);
+        bool parameterOk = false, countOk = false;
+        const double value = m_parameter->locale().toDouble(m_parameter->cleanText(), &parameterOk);
         pattern.instances = m_instances->locale().toInt(m_instances->cleanText(), &countOk);
-        if (!spacingOk || !countOk || !m_parameter->hasAcceptableInput() ||
+        if (!parameterOk || !countOk || !m_parameter->hasAcceptableInput() ||
             !m_instances->hasAcceptableInput())
             throw std::runtime_error("Enter valid spacing and instance count.");
+        if (m_equalSpacing)
+        {
+            pattern.angle = value;
+            pattern.equalSpacing = m_equalSpacing->isChecked();
+        }
+        else
+            pattern.spacing = value;
         pattern.reverse = m_reverse->isChecked();
     }
     return feature;
@@ -608,7 +639,9 @@ void SolidFeaturePanel::preselect(const std::vector<modeling::SelectionRef>& sel
                                     selected.featureId == ref.featureId) ||
                                    (selected.kind == K::Face && ref.source == S::BodyFace &&
                                     selected.featureId == ref.featureId && selected.index == ref.index);
-                if (edge || datum || plane)
+                const bool circle = selected.kind == K::Edge && ref.source == S::BodyCircleAxis &&
+                                    selected.featureId == ref.featureId && selected.index == ref.index;
+                if (edge || datum || plane || circle)
                     m_patternReference->setCurrentIndex(i);
             }
             else if (edge || datum)

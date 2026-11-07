@@ -16,13 +16,15 @@ rules, build options and extension guidelines.
 
 The Features toolbar includes Extrude, Extruded Cut, Revolved Boss/Base, Revolved
 Cut, Swept Boss/Base, Swept Cut, constant-radius edge Fillet, equal-distance Chamfer,
-Linear Pattern and Mirror.
+Linear Pattern, Circular Pattern and Mirror.
 Each opens a docked PropertyManager with selection, preview and Confirm/Cancel.
 New features support editing, ten-action undo/redo and .thepart persistence.
 See the [manual checklist](docs/testing/revolve-fillet-chamfer.md) for the initial
 feature limits and verification steps.
 See the [Linear Pattern and Mirror decision](docs/decisions/0032-linear-pattern-and-mirror.md)
-for supported seeds and references.
+for supported seeds and references. Circular Pattern accepts an axis, circular
+edge or axial face and supports total-angle or per-instance spacing. See
+[Circular Pattern and modeling interactions](docs/decisions/0037-circular-pattern-modeling-interactions.md).
 
 ## Save and export
 
@@ -35,8 +37,9 @@ millimeter coordinates; STEP includes millimeter units. See the
 
 ## Current sketch-creation workflow
 
-Click **Sketch** in the SKETCH tab, hover a labeled Front, Top, or Right plane
-in the viewport, then click it to enter normal-view sketch editing. Alternatively,
+On blank startup, click a labeled Front, Top, or Right plane in the viewport
+to start your first sketch. For later sketches, click **Sketch** in the SKETCH
+tab, then click a plane to enter normal-view sketch editing. Alternatively,
 select a visible plane or its reference in the part tree first, then click Sketch.
 Esc cancels a pending plane choice without creating a sketch. No plane-selection
 dropdown or confirmation dialog is used.

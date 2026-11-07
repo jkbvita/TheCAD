@@ -604,7 +604,12 @@ private slots:
         auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
         command(window,"actionRectangle");
         for(const auto p:{modeling::Point2{-40,-15},modeling::Point2{-10,15},modeling::Point2{10,-15},modeling::Point2{40,15}})QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,p));
+        command(window,"actionSmartDimension");
+        auto* smartDimension = window.findChild<QAction*>("actionSmartDimension");
+        QVERIFY(smartDimension->isChecked());
         command(window,"actionExtrude");auto* panel=window.findChild<QWidget*>("operationPanel");QVERIFY(panel);
+        QVERIFY(!smartDimension->isChecked());
+        QVERIFY(!viewport->smartDimensionActive());
         auto* depth=panel->findChild<QDoubleSpinBox*>("featureLength");auto* editor=depth->findChild<QLineEdit*>();QVERIFY(editor);
         QTRY_VERIFY(depth->hasFocus()||editor->hasFocus());QVERIFY(editor->hasSelectedText());
         QTest::keyClicks(QApplication::focusWidget(),"23.5");QCOMPARE(depth->value(),23.5);
@@ -632,10 +637,15 @@ private slots:
         QCOMPARE(window.document().features().size(),std::size_t(2));QVERIFY(viewport->m_selectedContourPresentations.empty());QVERIFY(viewport->m_materialPreviewPresentations.empty());
         QVERIFY(std::abs(volume(window.document().shape())-confirmedArea*18)<1e-5);
         createSketch(window);command(window,"actionCircle");QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{25,0}));QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{29,0}));
+        command(window,"actionSmartDimension");
+        QVERIFY(smartDimension->isChecked());
         command(window,"actionExtrudedCut");panel=window.findChild<QWidget*>("operationPanel");depth=panel->findChild<QDoubleSpinBox*>("featureLength");editor=depth->findChild<QLineEdit*>();
+        QVERIFY(!smartDimension->isChecked());
+        QVERIFY(!viewport->smartDimensionActive());
         QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{25,0}));QTest::keyClicks(QApplication::focusWidget(),"5");QCOMPARE(depth->value(),5.0);
         QCOMPARE(viewport->m_materialPreviewPresentations.size(),std::size_t(1));GProp_GProps cutProperties;BRepGProp::SurfaceProperties(viewport->m_selectedContourPresentations[0]->Shape(),cutProperties);QVERIFY(std::abs(volume(viewport->m_materialPreviewPresentations[0]->Shape())-cutProperties.Mass()*5)<1e-4);
         QTest::keyClick(QApplication::focusWidget(),Qt::Key_Escape);QCOMPARE(window.document().features().size(),std::size_t(3));QVERIFY(viewport->m_sketchEditing);QVERIFY(viewport->m_selectedContourPresentations.empty());QVERIFY(viewport->m_materialPreviewPresentations.empty());
+        QVERIFY(!smartDimension->isChecked());
         QVERIFY(window.errors.isEmpty());QVERIFY(window.close());
     }
     void invalidActiveSketchStaysEditable() {

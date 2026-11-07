@@ -6,14 +6,15 @@ inputs: conversion saves to a separate .thepart path, retaining the original fil
 No assembly/drawing reader or placeholder is implemented. Internal serialization
 is provisional and versioned; filename conventions are permanent.
 
-## Current part structure (versions 16–21)
+## Current part structure (versions 16–22)
 
-The UTF-8 JSON root contains exactly format: "TheCAD.Part", version: 16 through 21, units:
+The UTF-8 JSON root contains exactly format: "TheCAD.Part", version: 16 through 22, units:
 "mm", features (ordered array) and resultFeature (last solid feature ID, or empty
 for empty/sketch/reference-only documents). Writers use the highest version
-required by the part. Linked sketch offsets require 21, linked sketch projections
+required by the part. Solid Circular Pattern requires 22, linked sketch offsets
+require 21, linked sketch projections
 and copies require 20, sweeps require 19, solid Linear Pattern and Mirror require
-18, revolve/fillet/chamfer require 17, and earlier feature sets use 16. Readers accept versions 1–21 and
+18, revolve/fillet/chamfer require 17, and earlier feature sets use 16. Readers accept versions 1–22 and
 reject unknown versions, fields, units and unsupported features.
 
 Every feature has stable id, printable name, type and explicit dependencies.
@@ -29,6 +30,7 @@ Types and additional fields:
 | revolve / revolved-cut | sketch ID, contour OR contours, angle in degrees, direction, axis GeometryReference (schema 17) |
 | fillet / chamfer | positive size in mm (radius / equal distance), explicit edges array of named BodyEdge GeometryReferences (schema 17) |
 | linear-pattern | direction GeometryReference, Boolean wholePart, seeds array, positive spacing in mm, integer instances including seed, Boolean reverse (schema 18) |
+| circular-pattern | axis GeometryReference, Boolean wholePart, seeds array, angle in degrees, integer instances including seed, Boolean equalSpacing, Boolean reverse (schema 22) |
 | mirror | planar GeometryReference, Boolean wholePart, seeds array (schema 18) |
 | sweep / swept-cut | profile sketch ID in `sketch`, separate path sketch ID in `path`, one region's boundary references in `contour` (schema 19) |
 
@@ -37,10 +39,13 @@ the previous solid result, in that order. Face-attached sketches depend on their
 supporting feature. resultFeature identifies the final solid-producing feature.
 The reader validates backward references and exact dependency order.
 
-Both copy operations store their GeometryReference in `reference`. Their
+Pattern and mirror features store their GeometryReference in `reference`. Their
 `seeds` list contains distinct solid feature IDs in history order and is empty
 in `wholePart` mode. The preceding solid, selected seeds and source geometry
-feature contribute dependencies in that order, with duplicates removed.
+feature contribute dependencies in that order, with duplicates removed. Circular
+Pattern stores a named circular edge as BodyCircleAxis (source 10) to use the
+line normal to the circle through its center. With equal spacing, the angle is
+the total span. Otherwise, it is the increment between successive instances.
 
 Sweeps depend on the profile sketch, path sketch, and preceding solid when one
 exists, in that order. Regeneration follows the full open path and resolves the

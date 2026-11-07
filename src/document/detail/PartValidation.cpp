@@ -65,6 +65,7 @@ const char* typeName(FeatureKind kind)
     case FeatureKind::Fillet: return "fillet";
     case FeatureKind::Chamfer: return "chamfer";
     case FeatureKind::LinearPattern: return "linear-pattern";
+    case FeatureKind::CircularPattern: return "circular-pattern";
     case FeatureKind::Mirror: return "mirror";
     case FeatureKind::Sweep: return "sweep";
     case FeatureKind::SweptCut: return "swept-cut";

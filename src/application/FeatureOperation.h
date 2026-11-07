@@ -8,6 +8,7 @@ struct FeatureOperationResult
     document::PartDocument document;
     std::string featureId;
     modeling::MaterialChanges changes;
+    TopoDS_Shape previewShape;
 };
 class FeatureOperation final
 {

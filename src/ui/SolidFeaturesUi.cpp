@@ -15,7 +15,8 @@ namespace thecad::ui
 {
 void MainWindow::startSolidFeature(document::FeatureKind kind, const document::Feature* editing)
 {
-    if (featureDraftActive() || m_selectingPlane || m_constraints || m_smartDimension)
+    if (featureDraftActive() || m_selectingPlane || m_constraints ||
+        (m_smartDimension && m_smartDimension->editor))
         return;
     try
     {
@@ -53,6 +54,7 @@ void MainWindow::startSolidFeature(document::FeatureKind kind, const document::F
         const auto preselection = m_viewport->selection();
         auto* panel =
             new SolidFeaturePanel(std::move(source), feature, editing != nullptr, m_managerStack);
+        closeSmartDimension();
         m_solidFeature = panel;
         m_solidFromSketch = m_session.editingSketch().has_value();
         m_solidPreviousPlanes = m_viewport->referencePlanesVisible();
@@ -125,7 +127,7 @@ void MainWindow::syncSolidFeaturePreview()
     m_viewport->setSelectedContourFaces(m_solidFeature->selectedFaces());
     m_viewport->setFeatureReferenceShapes(m_solidFeature->selectedReferences());
     if (const auto& candidate = m_solidFeature->candidate())
-        m_viewport->previewShape(candidate->document.shape(), candidate->changes);
+        m_viewport->previewShape(candidate->previewShape, candidate->changes);
     else
         m_viewport->clearPreview();
 }
