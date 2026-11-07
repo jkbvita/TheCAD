@@ -6,13 +6,14 @@ inputs: conversion saves to a separate .thepart path, retaining the original fil
 No assembly/drawing reader or placeholder is implemented. Internal serialization
 is provisional and versioned; filename conventions are permanent.
 
-## Current part structure (versions 16–18)
+## Current part structure (versions 16–19)
 
-The UTF-8 JSON root contains exactly format: "TheCAD.Part", version: 16, 17 or 18, units:
+The UTF-8 JSON root contains exactly format: "TheCAD.Part", version: 16, 17, 18 or 19, units:
 "mm", features (ordered array) and resultFeature (last solid feature ID, or empty
-for empty/sketch/reference-only documents). Writers emit version 18 for Linear Pattern
-or Mirror, version 17 for revolve/fillet/chamfer, and version 16 otherwise. Readers
-accept versions 1–18 and reject unknown versions, fields, units and unsupported features.
+for empty/sketch/reference-only documents). Writers use the highest version
+required by the part. Sweeps require 19, Linear Pattern and Mirror require 18,
+revolve/fillet/chamfer require 17, and earlier feature sets use 16. Readers accept
+versions 1–19 and reject unknown versions, fields, units and unsupported features.
 
 Every feature has stable id, printable name, type and explicit dependencies.
 Types and additional fields:
@@ -28,6 +29,7 @@ Types and additional fields:
 | fillet / chamfer | positive size in mm (radius / equal distance), explicit edges array of named BodyEdge GeometryReferences (schema 17) |
 | linear-pattern | direction GeometryReference, Boolean wholePart, seeds array, positive spacing in mm, integer instances including seed, Boolean reverse (schema 18) |
 | mirror | planar GeometryReference, Boolean wholePart, seeds array (schema 18) |
+| sweep / swept-cut | profile sketch ID in `sketch`, separate path sketch ID in `path`, one region's boundary references in `contour` (schema 19) |
 
 An initial sketch can be empty. A profile-based solid operation references an earlier sketch and
 the previous solid result, in that order. Face-attached sketches depend on their
@@ -38,6 +40,10 @@ Both copy operations store their GeometryReference in `reference`. Their
 `seeds` list contains distinct solid feature IDs in history order and is empty
 in `wholePart` mode. The preceding solid, selected seeds and source geometry
 feature contribute dependencies in that order, with duplicates removed.
+
+Sweeps depend on the profile sketch, path sketch, and preceding solid when one
+exists, in that order. Regeneration follows the full open path and resolves the
+selected region by its stored boundary references.
 
 ## Reference geometry (version 13)
 

@@ -189,6 +189,20 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
                                                 pattern.instances, pattern.reverse);
                 body = modeling::applyPattern(body, seeds, transforms, bodyNames, feature.id);
                 bodyId = feature.id;
+            } else if (isSweepFeature(feature.kind)) {
+                const auto profile = sketches.find(feature.sketchId);
+                const auto path = sketches.find(feature.pathSketchId);
+                if (profile == sketches.end() || path == sketches.end() || profile == path)
+                    fail("Sweep requires separate earlier sketches for the profile and path.");
+                if (!feature.contours.empty())
+                    fail("Select one closed sweep profile region.");
+                expected = {feature.sketchId, feature.pathSketchId};
+                if (!bodyId.empty())
+                    expected.push_back(bodyId);
+                const auto key = modeling::topologyKey("sweep", {feature.id, feature.sketchId, feature.pathSketchId});
+                body = modeling::makeSweep(body, profile->second, path->second, feature.contour,
+                                           feature.kind == FeatureKind::SweptCut, bodyNames, key);
+                bodyId = feature.id;
             } else if (isRevolveFeature(feature.kind)) {
                 const auto source = sketches.find(feature.sketchId);
                 if(source==sketches.end()) fail("Revolve must reference an earlier sketch.");
@@ -357,6 +371,8 @@ std::string PartDocument::addSolidFeature(Feature feature)
     case FeatureKind::Chamfer: label = "Chamfer"; break;
     case FeatureKind::LinearPattern: label = "LinearPattern"; break;
     case FeatureKind::Mirror: label = "Mirror"; break;
+    case FeatureKind::Sweep: label = "Sweep"; break;
+    case FeatureKind::SweptCut: label = "SweptCut"; break;
     default: fail("Use the matching feature operation.");
     }
     feature.name=std::string(label)+feature.id.substr(feature.id.find('-')+1);

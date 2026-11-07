@@ -162,6 +162,7 @@ private:
     bool m_solidPreviousPlanes=false;
     QAction *m_revolve=nullptr,*m_revolvedCut=nullptr,*m_fillet=nullptr,*m_chamfer=nullptr;
     QAction *m_linearPattern=nullptr,*m_mirror=nullptr;
+    QAction *m_sweep=nullptr,*m_sweptCut=nullptr;
     void startOperation(document::Feature feature, bool editing);
     void finishOperation(bool accepted);
     void operationSketchChanged();

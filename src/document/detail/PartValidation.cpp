@@ -66,6 +66,8 @@ const char* typeName(FeatureKind kind)
     case FeatureKind::Chamfer: return "chamfer";
     case FeatureKind::LinearPattern: return "linear-pattern";
     case FeatureKind::Mirror: return "mirror";
+    case FeatureKind::Sweep: return "sweep";
+    case FeatureKind::SweptCut: return "swept-cut";
     }
     fail("Unsupported feature kind.");
 }

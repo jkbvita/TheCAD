@@ -47,6 +47,7 @@ signals:
 
 private:
     void buildPatternForm(QFormLayout* form);
+    void buildSweepForm(QFormLayout* form);
     document::Feature readPattern() const;
     void sketchChanged();
     void setContourMode(bool);
@@ -56,13 +57,14 @@ private:
     bool m_editing = false, m_contourMode = false, m_initializing = true;
     PropertyManagerPage* m_page;
     QComboBox *m_sketches = nullptr, *m_axis = nullptr, *m_direction = nullptr;
+    QComboBox* m_pathSketch = nullptr;
     QListWidget *m_regions = nullptr, *m_edges = nullptr;
     QDoubleSpinBox* m_parameter = nullptr;
     QComboBox *m_patternReference = nullptr, *m_patternScope = nullptr;
     QListWidget* m_patternSeeds = nullptr;
     QSpinBox* m_instances = nullptr;
     QCheckBox* m_reverse = nullptr;
-    QPushButton *m_pickAxis = nullptr, *m_pickRegions = nullptr;
+    QPushButton *m_pickReference = nullptr, *m_pickRegions = nullptr;
     std::vector<modeling::Contour> m_contours;
     std::vector<document::ReferenceOption> m_options;
     std::optional<application::FeatureOperationResult> m_candidate;

@@ -11,10 +11,11 @@
 namespace thecad::document {
 
 struct BoxParameters { double width = 100.0, depth = 70.0, height = 40.0; };
-enum class FeatureKind { Box, Sketch, Extrude, Cut, ReferenceGeometry, Revolve, RevolvedCut, Fillet, Chamfer, LinearPattern, Mirror };
+enum class FeatureKind { Box, Sketch, Extrude, Cut, ReferenceGeometry, Revolve, RevolvedCut, Fillet, Chamfer, LinearPattern, Mirror, Sweep, SweptCut };
 inline bool isRevolveFeature(FeatureKind kind){return kind==FeatureKind::Revolve||kind==FeatureKind::RevolvedCut;}
 inline bool isEdgeFeature(FeatureKind kind){return kind==FeatureKind::Fillet||kind==FeatureKind::Chamfer;}
-inline bool usesProfile(FeatureKind kind){return kind==FeatureKind::Extrude||kind==FeatureKind::Cut||isRevolveFeature(kind);}
+inline bool isSweepFeature(FeatureKind kind){return kind==FeatureKind::Sweep||kind==FeatureKind::SweptCut;}
+inline bool usesProfile(FeatureKind kind){return kind==FeatureKind::Extrude||kind==FeatureKind::Cut||isRevolveFeature(kind)||isSweepFeature(kind);}
 inline bool isPatternFeature(FeatureKind kind)
 {
     return kind == FeatureKind::LinearPattern || kind == FeatureKind::Mirror;
@@ -36,6 +37,7 @@ struct Feature {
     BoxParameters box;
     modeling::Sketch sketch;
     std::string sketchId;
+    std::string pathSketchId; // Sweep path is a distinct, earlier sketch.
     std::vector<std::string> contour;
     modeling::RegionReferences contours;
     double length = 10.0;

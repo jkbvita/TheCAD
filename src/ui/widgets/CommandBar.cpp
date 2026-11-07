@@ -110,6 +110,21 @@ QIcon commandIcon(const QString& name)
         if(name=="Fillet")painter.drawArc(QRectF(5,7,20,20),0,90*16);
         else painter.drawLine(5,22,20,7);
     }
+    else if (name.contains("Swept"))
+    {
+        QPainterPath path(QPointF(6, 24));
+        path.cubicTo(6, 13, 12, 7, 24, 7);
+        path.moveTo(12, 24);
+        path.cubicTo(12, 17, 16, 13, 24, 13);
+        painter.drawPath(path);
+        painter.drawEllipse(QRectF(21, 7, 6, 6));
+        painter.drawEllipse(QRectF(6, 21, 6, 6));
+        if (name.contains("Cut"))
+        {
+            painter.setPen(QPen(QColor("#b83b42"), 2));
+            painter.drawLine(17, 23, 25, 17);
+        }
+    }
     else if (name.contains("Extrude") || name.contains("Part"))
     {
         painter.drawPolygon(

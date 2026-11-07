@@ -210,6 +210,78 @@ private slots:
         QVERIFY(!window.findChild<QAction*>("actionFinishSketch")->isEnabled());
         QVERIFY2(window.errors.isEmpty(), qPrintable(window.errors.join('\n')));
     }
+    void sweptBossAndCut()
+    {
+        QTemporaryDir temp;
+        auto part = document::PartDocument::createEmpty();
+        modeling::Sketch profile;
+        profile.entities.push_back({modeling::EntityKind::Circle, {}, {}, 5, "profile"});
+        const auto bossProfile = part.addSketch(profile);
+        modeling::Sketch path;
+        path.plane = modeling::SketchPlane::XZ;
+        path.entities.push_back({modeling::EntityKind::Line, {0, 0}, {0, 20}, 1, "path"});
+        const auto pathId = part.addSketch(path);
+        profile.entities.front().radius = 2;
+        const auto cutProfile = part.addSketch(profile);
+        const auto filename = temp.filePath("sweep.thepart");
+        part.save(filename);
+
+        SolidTestWindow window;
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* viewport = window.findChild<CadViewport*>("cadViewport");
+        QTRY_VERIFY(viewport->isReady());
+        QVERIFY(window.openPartFile(filename));
+        QVERIFY(!window.findChild<QAction*>("actionSweptCut")->isEnabled());
+        const Handle(Graphic3d_Camera) camera =
+            new Graphic3d_Camera(viewport->m_graphics.view()->Camera());
+        select(window, bossProfile);
+        command(window, "actionSweep");
+        auto* panel = window.findChild<SolidFeaturePanel*>("solidFeaturePanel");
+        QVERIFY(panel && !panel->candidate());
+        QVERIFY(!panel->page()->buttons->button(QDialogButtonBox::Ok)->isEnabled());
+        panel->findChild<QPushButton*>("sweepPickPath")->click();
+        const auto pathPixel = project(viewport, {0, 0, 10});
+        QVERIFY(viewport->referenceCandidateAt(pathPixel) >= 0);
+        QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, pathPixel);
+        QVERIFY(panel->candidate());
+        QVERIFY(window.document().shape().IsNull());
+        const double pi = std::acos(-1.0);
+        QVERIFY(std::abs(volume(panel->candidate()->document.shape()) - pi * 25 * 20) < 1e-5);
+        sameCamera(camera, viewport->m_graphics.view()->Camera());
+        panel->page()->buttons->button(QDialogButtonBox::Ok)->click();
+        QCOMPARE(window.document().features().back().kind, document::FeatureKind::Sweep);
+        command(window, "actionUndo");
+        QVERIFY(window.document().shape().IsNull());
+        command(window, "actionRedo");
+        QCOMPARE(window.document().features().back().kind, document::FeatureKind::Sweep);
+
+        select(window, cutProfile);
+        command(window, "actionSweptCut");
+        panel = window.findChild<SolidFeaturePanel*>("solidFeaturePanel");
+        QVERIFY(panel);
+        select(window, pathId);
+        QVERIFY(panel->candidate());
+        const double tubeVolume = pi * 21 * 20;
+        QVERIFY(std::abs(volume(panel->candidate()->document.shape()) - tubeVolume) < 1e-5);
+        sameCamera(camera, viewport->m_graphics.view()->Camera());
+        panel->page()->buttons->button(QDialogButtonBox::Ok)->click();
+        QCOMPARE(window.document().features().back().kind, document::FeatureKind::SweptCut);
+        window.document().save(filename);
+        QVERIFY(window.openPartFile(filename));
+        QVERIFY(std::abs(volume(window.document().shape()) - tubeVolume) < 1e-5);
+        select(window, window.document().features().back().id);
+        command(window, "actionEditFeature");
+        panel = window.findChild<SolidFeaturePanel*>("solidFeaturePanel");
+        QVERIFY(panel && panel->candidate());
+        QCOMPARE(panel->findChild<QComboBox*>("sweepPath")->currentData().toString().toStdString(),
+                 pathId);
+        panel->findChild<QComboBox*>("sweepPath")->setCurrentIndex(-1);
+        QVERIFY(!panel->candidate());
+        command(window, "actionCancelFeature");
+        QVERIFY(std::abs(volume(window.document().shape()) - tubeVolume) < 1e-5);
+        QVERIFY2(window.errors.isEmpty(), qPrintable(window.errors.join('\n')));
+    }
     void patternAndMirror()
     {
         QTemporaryDir temp;

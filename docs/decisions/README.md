@@ -56,6 +56,8 @@ approved scope do not need repeated approval.
 
 - [0032: Linear Pattern and Mirror](0032-linear-pattern-and-mirror.md) — feature and whole-body copies with associative direction and plane references.
 
+- [0033: Swept Boss/Base and Swept Cut](0033-swept-boss-and-cut.md) — solid features driven by a profile region and an open sketch path.
+
 ## Pending owner decisions
 
 - Resilient face references beyond the approved conservative planar-face strategy.

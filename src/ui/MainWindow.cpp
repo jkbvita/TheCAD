@@ -224,6 +224,9 @@ MainWindow::MainWindow(QWidget* parent)
     m_revolve=action("Revolved Boss/Base","actionRevolve",[this]{startSolidFeature(document::FeatureKind::Revolve);});
     m_revolvedCut=action("Revolved Cut","actionRevolvedCut",[this]{startSolidFeature(document::FeatureKind::RevolvedCut);});
     commandButton(m_revolve,featureGrid,0,2,true);commandButton(m_revolvedCut,featureGrid,0,3,true);
+    m_sweep=action("Swept Boss/Base","actionSweep",[this]{startSolidFeature(document::FeatureKind::Sweep);});
+    m_sweptCut=action("Swept Cut","actionSweptCut",[this]{startSolidFeature(document::FeatureKind::SweptCut);});
+    commandButton(m_sweep,featureGrid,0,4,true);commandButton(m_sweptCut,featureGrid,0,5,true);
     QGridLayout* finishGrid=nullptr;commandGroup(featureButtons,"Edge features",finishGrid);
     m_fillet=action("Fillet","actionFillet",[this]{startSolidFeature(document::FeatureKind::Fillet);});
     m_chamfer=action("Chamfer","actionChamfer",[this]{startSolidFeature(document::FeatureKind::Chamfer);});
@@ -895,6 +898,8 @@ void MainWindow::updateActions()
     m_cut->setEnabled(profile && !m_constraints && !m_smartDimension && !m_session.document().shape().IsNull());
     m_revolve->setEnabled(profile&&!m_constraints&&!m_smartDimension);
     m_revolvedCut->setEnabled(m_revolve->isEnabled()&&!m_session.document().shape().IsNull());
+    m_sweep->setEnabled(m_revolve->isEnabled());
+    m_sweptCut->setEnabled(m_revolvedCut->isEnabled());
     const bool edges=!operation&&!selecting&&!m_session.editingSketch()&&!m_session.document().shape().IsNull();
     m_fillet->setEnabled(edges);m_chamfer->setEnabled(edges);
     m_linearPattern->setEnabled(edges);m_mirror->setEnabled(edges);
@@ -1098,7 +1103,8 @@ void MainWindow::editSelectedFeature()
 {
     const auto* selected = selectedFeature();
     if (!selected || m_session.editingSketch()) return;
-    if(document::isRevolveFeature(selected->kind)||document::isEdgeFeature(selected->kind)||
+    if(document::isRevolveFeature(selected->kind)||document::isSweepFeature(selected->kind)||
+       document::isEdgeFeature(selected->kind)||
        document::isPatternFeature(selected->kind)){startSolidFeature(selected->kind,selected);return;}
     if (selected->kind == document::FeatureKind::Sketch) { startSketchEditing(*selected); return; }
     if(selected->kind==document::FeatureKind::ReferenceGeometry){startReferenceGeometry(selected->datum.kind,selected);return;}

@@ -57,6 +57,8 @@ void FeatureTreePresenter::refresh(const document::PartDocument& document, const
                 sketches.emplace(feature.id, &feature);
             if (document::usesProfile(feature.kind))
                 usedSketches.insert(feature.sketchId);
+            if (document::isSweepFeature(feature.kind))
+                usedSketches.insert(feature.pathSketchId);
         }
         QTreeWidgetItem* selectedItem = nullptr;
         const auto addFeature = [&](QTreeWidgetItem* parent, const document::Feature& feature)
@@ -77,6 +79,8 @@ void FeatureTreePresenter::refresh(const document::PartDocument& document, const
                        : feature.kind == document::FeatureKind::Chamfer ? "Chamfer"
                        : feature.kind == document::FeatureKind::LinearPattern ? "Linear Pattern"
                        : feature.kind == document::FeatureKind::Mirror ? "Mirror"
+                       : feature.kind == document::FeatureKind::Sweep ? "Swept Boss/Base"
+                       : feature.kind == document::FeatureKind::SweptCut ? "Swept Cut"
                        : feature.kind == document::FeatureKind::Cut    ? "Extruded Cut"
                                                                        : "Extrude"));
             if (feature.id == selectedId &&
@@ -95,6 +99,12 @@ void FeatureTreePresenter::refresh(const document::PartDocument& document, const
                 const auto source = sketches.find(feature.sketchId);
                 if (source != sketches.end())
                     addFeature(item, *source->second);
+            }
+            if (document::isSweepFeature(feature.kind))
+            {
+                const auto path = sketches.find(feature.pathSketchId);
+                if (path != sketches.end())
+                    addFeature(item, *path->second);
             }
             const auto key = QString::fromStdString(feature.id);
             item->setExpanded(expanded.count(key) ? expanded.at(key) : true);

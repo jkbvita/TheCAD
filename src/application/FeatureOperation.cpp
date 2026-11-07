@@ -14,7 +14,7 @@ FeatureOperationResult FeatureOperation::preview(const document::PartDocument& s
         id = feature.id;
     }
     else if (document::isRevolveFeature(feature.kind) || document::isEdgeFeature(feature.kind) ||
-             document::isPatternFeature(feature.kind))
+             document::isPatternFeature(feature.kind) || document::isSweepFeature(feature.kind))
         id = candidate.addSolidFeature(feature);
     else if (feature.kind == document::FeatureKind::Cut)
         id = candidate.addCutRegions(feature.sketchId, regions, feature.length, feature.throughAll,

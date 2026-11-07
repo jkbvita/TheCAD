@@ -107,6 +107,8 @@ gp_Pnt sketchPoint(SketchPlane plane, Point2 point);
 
 // Open geometry is displayable. Extrusion requires one simple, closed profile.
 TopoDS_Shape sketchShape(const Sketch& sketch);
+// Ordered local vertices of one open, unbranched chain of regular lines.
+std::vector<Point2> openSketchPath(const Sketch& sketch);
 void validateClosedProfile(const Sketch& sketch);
 std::vector<Contour> closedContours(const Sketch& sketch);
 Sketch selectContour(const Sketch& sketch, const std::vector<std::string>& entityIds);

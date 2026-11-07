@@ -36,6 +36,8 @@ QString title(document::FeatureKind kind)
     case K::Chamfer: return "Chamfer";
     case K::LinearPattern: return "Linear Pattern";
     case K::Mirror: return "Mirror";
+    case K::Sweep: return "Swept Boss/Base";
+    case K::SweptCut: return "Swept Cut";
     default: return "Solid Feature";
     }
 }
@@ -47,6 +49,9 @@ QString description(document::FeatureKind kind)
                "The instance count includes the original.";
     if (kind == K::Mirror)
         return "Select features or all bodies and a mirror plane or planar face.";
+    if (document::isSweepFeature(kind))
+        return "Select a closed profile region and an open path sketch. "
+               "One path endpoint must lie on the profile plane.";
     if (document::isRevolveFeature(kind))
         return "Select a closed sketch region and a line or reference axis in its plane. "
                "Set the angle and inspect the preview.";
@@ -75,6 +80,13 @@ SolidFeaturePanel::SolidFeaturePanel(document::PartDocument source, document::Fe
         refreshPreview();
         return;
     }
+    if (document::isSweepFeature(m_feature.kind))
+    {
+        buildSweepForm(form);
+        m_initializing = false;
+        refreshPreview();
+        return;
+    }
     if (revolve)
     {
         m_sketches = new QComboBox;
@@ -90,10 +102,10 @@ SolidFeaturePanel::SolidFeaturePanel(document::PartDocument source, document::Fe
         m_axis->setObjectName("revolveAxis");
         m_axis->setPlaceholderText("Select an axis");
         form->addRow("Axis of revolution", m_axis);
-        m_pickAxis = new QPushButton("Select axis in viewport / tree");
-        m_pickAxis->setObjectName("revolvePickAxis");
-        form->addRow(m_pickAxis);
-        connect(m_pickAxis, &QPushButton::clicked, this, [this] { setContourMode(false); });
+        m_pickReference = new QPushButton("Select axis in viewport / tree");
+        m_pickReference->setObjectName("revolvePickAxis");
+        form->addRow(m_pickReference);
+        connect(m_pickReference, &QPushButton::clicked, this, [this] { setContourMode(false); });
         m_direction = new QComboBox;
         m_direction->setObjectName("revolveDirection");
         m_direction->addItems({"Forward", "Reverse"});
@@ -344,19 +356,31 @@ void SolidFeaturePanel::sketchChanged()
             m_page->setStatus(QString::fromUtf8(e.what()), true);
         }
         for (int i = 0; i < int(m_contours.size()); ++i)
-            new QListWidgetItem(QString("Region %1").arg(i + 1), m_regions);
+        {
+            auto* item = new QListWidgetItem(QString("Region %1").arg(i + 1), m_regions);
+            if (m_pathSketch &&
+                (m_contours.size() == 1 ||
+                 (m_initializing &&
+                  std::is_permutation(m_feature.contour.begin(), m_feature.contour.end(),
+                                      m_contours[std::size_t(i)].entityIds.begin(),
+                                      m_contours[std::size_t(i)].entityIds.end()))))
+                item->setSelected(true);
+        }
     }
-    rebuildOptions();
-    setContourMode(true);
+    if (!m_pathSketch)
+        rebuildOptions();
+    else
+        m_pickRegions->setEnabled(!m_contours.empty());
+    setContourMode(!m_pathSketch || (sketch() && m_regions->selectedItems().isEmpty()));
     refreshPreview();
 }
 void SolidFeaturePanel::setContourMode(bool mode)
 {
     m_contourMode = mode;
-    if (m_pickAxis)
+    if (m_pickReference)
     {
-        m_pickAxis->setCheckable(true);
-        m_pickAxis->setChecked(!mode);
+        m_pickReference->setCheckable(true);
+        m_pickReference->setChecked(!mode);
         m_pickRegions->setCheckable(true);
         m_pickRegions->setChecked(mode);
     }
@@ -376,6 +400,13 @@ std::vector<TopoDS_Shape> SolidFeaturePanel::selectedReferences() const
     std::vector<TopoDS_Shape> result;
     if (m_patternReference && m_patternReference->currentIndex() >= 0)
         result.push_back(m_options[std::size_t(m_patternReference->currentIndex())].selectionShape);
+    if (m_pathSketch && m_pathSketch->currentIndex() >= 0)
+    {
+        const auto id = m_pathSketch->currentData().toString().toStdString();
+        for (const auto& option : m_options)
+            if (option.reference.featureId == id)
+                result.push_back(option.selectionShape);
+    }
     if (m_axis && m_axis->currentIndex() >= 0)
         result.push_back(m_options[std::size_t(m_axis->currentIndex())].selectionShape);
     if (m_edges)
@@ -395,7 +426,7 @@ void SolidFeaturePanel::refreshPreview()
         auto feature = m_feature;
         modeling::RegionReferences regions;
         double value = 0;
-        if (!m_patternReference)
+        if (m_parameter && !m_patternReference)
         {
             value = m_parameter->locale().toDouble(m_parameter->cleanText(), &numeric);
             if (!numeric || !m_parameter->hasAcceptableInput())
@@ -403,6 +434,17 @@ void SolidFeaturePanel::refreshPreview()
         }
         if (m_patternReference)
             feature = readPattern();
+        else if (m_pathSketch)
+        {
+            const auto selected = m_regions->selectedItems();
+            if (!sketch() || selected.size() != 1)
+                throw std::runtime_error("Select one closed profile region.");
+            if (m_pathSketch->currentIndex() < 0)
+                throw std::runtime_error("Select a path sketch with a single open chain of lines.");
+            feature.sketchId = m_sketches->currentData().toString().toStdString();
+            feature.pathSketchId = m_pathSketch->currentData().toString().toStdString();
+            feature.contour = m_contours[std::size_t(m_regions->row(selected.front()))].entityIds;
+        }
         else if (m_axis)
         {
             if (!sketch())
@@ -446,6 +488,9 @@ void SolidFeaturePanel::pickReference(int index)
         return;
     if (m_patternReference)
         m_patternReference->setCurrentIndex(index);
+    else if (m_pathSketch)
+        m_pathSketch->setCurrentIndex(m_pathSketch->findData(
+            QString::fromStdString(m_options[std::size_t(index)].reference.featureId)));
     else if (m_axis)
     {
         m_axis->setCurrentIndex(index);
@@ -478,7 +523,11 @@ void SolidFeaturePanel::pickRegion(modeling::Point2 point)
     if (hit >= 0)
     {
         auto* item = m_regions->item(hit);
-        item->setSelected(!item->isSelected());
+        if (m_pathSketch)
+            m_regions->setCurrentItem(item, item->isSelected() ? QItemSelectionModel::Deselect
+                                                             : QItemSelectionModel::ClearAndSelect);
+        else
+            item->setSelected(!item->isSelected());
         focusParameter();
     }
 }
@@ -510,6 +559,15 @@ void SolidFeaturePanel::pickTree(const QString& id)
         }
         return;
     }
+    if (m_pathSketch)
+    {
+        const int path = m_pathSketch->findData(id);
+        if (path >= 0)
+            m_pathSketch->setCurrentIndex(path);
+        else if (const int profile = m_sketches->findData(id); profile >= 0)
+            m_sketches->setCurrentIndex(profile);
+        return;
+    }
     if (!m_axis)
         return;
     const int sketchIndex = m_sketches->findData(id);
@@ -528,6 +586,8 @@ void SolidFeaturePanel::pickTree(const QString& id)
 }
 void SolidFeaturePanel::preselect(const std::vector<modeling::SelectionRef>& selection)
 {
+    if (m_pathSketch)
+        return;
     for (const auto& selected : selection)
         for (int i = 0; i < int(m_options.size()); ++i)
         {

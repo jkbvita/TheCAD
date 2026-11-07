@@ -488,9 +488,9 @@ PartDocument PartFileStore::load(const QString& path)
     if (root.value("units") != QJsonValue("mm"))
         fail("Unsupported units; this prototype supports millimeters only.");
     const auto versionValue = root.value("version");
-    if (!versionValue.isDouble() || versionValue.toDouble() < 1 || versionValue.toDouble() > 18 ||
+    if (!versionValue.isDouble() || versionValue.toDouble() < 1 || versionValue.toDouble() > 19 ||
         versionValue.toDouble() != std::floor(versionValue.toDouble()))
-        fail("Unsupported part document version; expected versions 1 through 18.");
+        fail("Unsupported part document version; expected versions 1 through 19.");
     const int version = versionValue.toInt();
     if (!root.value("features").isArray())
         fail("Part features must be an ordered array.");
@@ -705,7 +705,9 @@ PartDocument PartFileStore::load(const QString& path)
                     feature.edges.push_back(readGeometryReference(edgeValue.toObject(),version));
                 }
             }
-            else if (type == "extrude" || type == "cut" || (version >= 17 && (type=="revolve"||type=="revolved-cut")))
+            else if (type == "extrude" || type == "cut" ||
+                     (version >= 17 && (type == "revolve" || type == "revolved-cut")) ||
+                     (version >= 19 && (type == "sweep" || type == "swept-cut")))
             {
                 QSet<QString> expected{"id",      "name",   "type",      "sketch",
                                        "contour", "length", "direction", "dependencies"};
@@ -713,15 +715,29 @@ PartDocument PartFileStore::load(const QString& path)
                     expected.insert("throughAll");
                 const bool revolve=type=="revolve"||type=="revolved-cut";
                 if(revolve){expected.remove("length");expected.insert("angle");expected.insert("axis");}
-                if (version >= 5 && object.contains("contours"))
+                const bool sweep = type == "sweep" || type == "swept-cut";
+                if (sweep)
+                {
+                    expected.remove("length");
+                    expected.remove("direction");
+                    expected.insert("path");
+                }
+                if (!sweep && version >= 5 && object.contains("contours"))
                 {
                     expected.remove("contour");
                     expected.insert("contours");
                 }
-                fields(object, expected, "Extrusion feature");
-                feature.kind = type == "cut" ? FeatureKind::Cut : type=="revolve"?FeatureKind::Revolve:type=="revolved-cut"?FeatureKind::RevolvedCut:FeatureKind::Extrude;
+                fields(object, expected, "Profile-based feature");
+                if (sweep)
+                    feature.kind = type == "sweep" ? FeatureKind::Sweep : FeatureKind::SweptCut;
+                else if (revolve)
+                    feature.kind = type == "revolve" ? FeatureKind::Revolve : FeatureKind::RevolvedCut;
+                else
+                    feature.kind = type == "cut" ? FeatureKind::Cut : FeatureKind::Extrude;
                 feature.sketchId =
                     stringValue(object.value("sketch"), "Source sketch").toStdString();
+                if (sweep)
+                    feature.pathSketchId = stringValue(object.value("path"), "Sweep path sketch").toStdString();
                 if (object.contains("contours"))
                 {
                     if (!object.value("contours").isArray() ||
@@ -748,7 +764,8 @@ PartDocument PartFileStore::load(const QString& path)
                 }
                 else
                 {
-                    if (!object.value("contour").isArray())
+                    if (!object.value("contour").isArray() ||
+                        (sweep && (object["contour"].toArray().isEmpty() || object["contour"].toArray().size() > 1000)))
                         fail("Feature contour must be an explicit array of sketch entity IDs.");
                     for (const auto& entityId : object.value("contour").toArray())
                     {
@@ -763,8 +780,9 @@ PartDocument PartFileStore::load(const QString& path)
                     feature.angle=number(object["angle"],"Revolve angle");
                     if(!object["axis"].isObject())fail("A revolution requires an axis reference.");
                     feature.axis=readGeometryReference(object["axis"].toObject(),version);
-                }else feature.length = number(object.value("length"), "Extrusion length");
-                feature.direction = readDirection(object.value("direction"));
+                }else if (!sweep) feature.length = number(object.value("length"), "Extrusion length");
+                if (!sweep)
+                    feature.direction = readDirection(object.value("direction"));
                 if (type == "cut")
                 {
                     if (!object.value("throughAll").isBool())
@@ -906,11 +924,14 @@ void PartFileStore::save(const PartDocument& document, const QString& path)
                 }
                 object["contours"] = regions;
             }
-            if(isRevolveFeature(feature.kind)){
+            if (isSweepFeature(feature.kind))
+                object["path"] = q(feature.pathSketchId);
+            else if(isRevolveFeature(feature.kind)){
                 if(!feature.axis)fail("Missing revolution axis.");
                 object["angle"]=feature.angle;object["axis"]=writeGeometryReference(*feature.axis);
             }else object["length"] = feature.length;
-            object["direction"] = directionName(feature.direction);
+            if (!isSweepFeature(feature.kind))
+                object["direction"] = directionName(feature.direction);
             if (feature.kind == FeatureKind::Cut)
                 object["throughAll"] = feature.throughAll;
         }
@@ -921,12 +942,14 @@ void PartFileStore::save(const PartDocument& document, const QString& path)
     int version = 16;
     for (const auto& feature : document.features())
     {
-        if (isPatternFeature(feature.kind))
+        if (isSweepFeature(feature.kind))
         {
-            version = 18;
+            version = 19;
             break;
         }
-        if (isRevolveFeature(feature.kind) || isEdgeFeature(feature.kind))
+        if (isPatternFeature(feature.kind))
+            version = 18;
+        else if (version < 17 && (isRevolveFeature(feature.kind) || isEdgeFeature(feature.kind)))
             version = 17;
     }
     const QJsonObject root{{"format", "TheCAD.Part"},

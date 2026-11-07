@@ -405,6 +405,72 @@ gp_Pnt sketchPoint(SketchPlane plane, Point2 point)
                                     + gp_Vec(axes.YDirection()) * point.y);
 }
 
+std::vector<Point2> openSketchPath(const Sketch& sketch)
+{
+    validate(sketch);
+    struct Node {
+        Point2 point;
+        std::vector<std::size_t> neighbors;
+    };
+    std::vector<Node> nodes;
+    const auto nodeFor = [&](Point2 point) {
+        for (std::size_t i = 0; i < nodes.size(); ++i)
+            if (samePoint(nodes[i].point, point))
+                return i;
+        nodes.push_back({point, {}});
+        return nodes.size() - 1;
+    };
+    std::size_t segments = 0;
+    for (const auto& entity : sketch.entities) {
+        if (entity.construction || entity.kind == EntityKind::Point)
+            continue;
+        if (entity.kind != EntityKind::Line)
+            fail("Use one open chain of sketch lines as the sweep path.");
+        const auto first = nodeFor(entity.first), second = nodeFor(entity.second);
+        if (first == second)
+            fail("The sweep path contains a collapsed segment.");
+        nodes[first].neighbors.push_back(second);
+        nodes[second].neighbors.push_back(first);
+        ++segments;
+    }
+    std::vector<std::size_t> ends;
+    for (std::size_t i = 0; i < nodes.size(); ++i) {
+        if (nodes[i].neighbors.size() == 1)
+            ends.push_back(i);
+        else if (nodes[i].neighbors.size() != 2)
+            fail("The sweep path cannot branch.");
+    }
+    if (ends.size() != 2 || nodes.size() != segments + 1)
+        fail("The sweep path must be a single connected open chain.");
+
+    std::vector<Point2> path;
+    auto current = ends.front();
+    std::size_t previous = nodes.size();
+    for (;;) {
+        path.push_back(nodes[current].point);
+        if (current == ends.back())
+            break;
+        const auto& links = nodes[current].neighbors;
+        const auto next = links.front() == previous ? links.back() : links.front();
+        if (path.size() > segments)
+            fail("The sweep path must be a single connected open chain.");
+        previous = current;
+        current = next;
+    }
+    if (path.size() != nodes.size())
+        fail("The sweep path must be a single connected open chain.");
+    for (std::size_t i = 1; i < path.size(); ++i) {
+        if (i + 1 < path.size() &&
+            (onSegment(path[i - 1], path[i], path[i + 1]) ||
+             onSegment(path[i], path[i + 1], path[i - 1])))
+            fail("The sweep path cannot double back along itself.");
+        for (std::size_t j = i + 2; j < path.size(); ++j)
+            if (intersects(path[i - 1], path[i], path[j - 1], path[j]))
+                fail("The sweep path cannot cross or touch itself.");
+    }
+    return path;
+}
+
 TopoDS_Shape sketchShape(const Sketch& sketch)
 {
     try {

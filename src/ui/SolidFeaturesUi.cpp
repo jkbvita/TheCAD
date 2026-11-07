@@ -27,7 +27,7 @@ void MainWindow::startSolidFeature(document::FeatureKind kind, const document::F
         auto source = m_session.document();
         if (m_session.editingSketch())
         {
-            if (!document::isRevolveFeature(kind))
+            if (!document::isRevolveFeature(kind) && !document::isSweepFeature(kind))
                 return;
             auto found =
                 std::find_if(source.features().begin(), source.features().end(),
@@ -45,7 +45,8 @@ void MainWindow::startSolidFeature(document::FeatureKind kind, const document::F
             {
                 if (document::isPatternFeature(kind) && document::isSolidFeature(selected->kind))
                     feature.pattern.seeds = {selected->id};
-                if (document::isRevolveFeature(kind) && selected->kind == document::FeatureKind::Sketch)
+                if ((document::isRevolveFeature(kind) || document::isSweepFeature(kind)) &&
+                    selected->kind == document::FeatureKind::Sketch)
                     feature.sketchId = selected->id;
             }
         }
