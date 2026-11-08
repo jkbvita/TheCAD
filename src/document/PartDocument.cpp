@@ -48,7 +48,7 @@ PartDocument PartDocument::createBox(BoxParameters parameters)
 }
 
 void PartDocument::apply(std::vector<Feature> features, bool validateDependencies,
-                         std::size_t unchangedPrefix)
+                         std::size_t unchangedPrefix, const std::string& upgradingFillet)
 {
     if (features.size() > maximumFeatures) fail("Part exceeds the 500-feature prototype limit.");
     TopoDS_Shape body;
@@ -150,7 +150,8 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
                 validSketch(legacy);
                 if (!feature.sketch.projections.empty())
                 {
-                    detail::refreshSketchProjections(feature.sketch, namedBodies);
+                    detail::refreshSketchProjections(feature.sketch, namedBodies, upgradingFillet,
+                        upgradingFillet.empty() ? nullptr : &m_namedBodies.at(upgradingFillet));
                     for (const auto& link : feature.sketch.projections)
                         if (std::find(expected.begin(), expected.end(), link.sourceFeature) == expected.end())
                             expected.push_back(link.sourceFeature);
@@ -280,7 +281,7 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
                 }
                 body = modeling::makeEdgeTreatment(body, edges, feature.size,
                     feature.kind == FeatureKind::Chamfer, bodyNames, feature.id,
-                    feature.legacyEdgeTermination);
+                    feature.edgeTermination);
                 bodyId=feature.id;
             } else if (feature.kind == FeatureKind::Extrude || feature.kind == FeatureKind::Cut) {
                 const auto source = sketches.find(feature.sketchId);
@@ -489,6 +490,8 @@ std::string PartDocument::addSolidFeature(Feature feature)
     default: fail("Use the matching feature operation.");
     }
     feature.name=std::string(label)+feature.id.substr(feature.id.find('-')+1);
+    if (feature.kind == FeatureKind::Fillet)
+        feature.edgeTermination = modeling::EdgeTermination::PreserveDraftJunction;
     auto candidate = m_features;
     candidate.push_back(feature);
     apply(std::move(candidate), false, isEdgeFeature(feature.kind) ? m_features.size() : 0);
@@ -560,9 +563,14 @@ void PartDocument::replaceFeature(const Feature& feature)
     if (current == candidate.end()) fail("Cannot edit an unknown feature.");
     if (current->kind != feature.kind) fail("Editing cannot change a feature's type.");
     const auto unchanged = isEdgeFeature(feature.kind) ? std::size_t(current - candidate.begin()) : 0;
+    const bool upgrading = feature.kind == FeatureKind::Fillet &&
+        current->edgeTermination != modeling::EdgeTermination::PreserveDraftJunction;
     *current = feature;
-    if (isEdgeFeature(feature.kind)) current->legacyEdgeTermination = false;
-    apply(std::move(candidate), false, unchanged);
+    if (feature.kind == FeatureKind::Fillet)
+        current->edgeTermination = modeling::EdgeTermination::PreserveDraftJunction;
+    else if (feature.kind == FeatureKind::Chamfer)
+        current->edgeTermination = modeling::EdgeTermination::Trimmed;
+    apply(std::move(candidate), false, unchanged, upgrading ? feature.id : std::string{});
 }
 
 std::vector<Feature> PartDocument::featureDeletionDependents(const std::vector<std::string>& ids) const

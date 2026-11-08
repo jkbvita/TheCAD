@@ -1,5 +1,6 @@
 #pragma once
 
+#include "modeling/EdgeTermination.h"
 #include "modeling/Sketch.h"
 #include "modeling/ReferenceGeometry.h"
 #include "modeling/Extrusion.h"
@@ -51,7 +52,7 @@ struct Feature {
     std::optional<modeling::ExtrudeDefinition> extrusion;
     double angle = 360.0;
     double size = 2.0; // Constant fillet radius / equal chamfer distance, in mm.
-    bool legacyEdgeTermination = false; // Preserve edge-treatment replay for older files.
+    modeling::EdgeTermination edgeTermination = modeling::EdgeTermination::Trimmed;
     std::optional<modeling::GeometryReference> axis;
     std::vector<modeling::GeometryReference> edges;
     PatternParameters pattern;
@@ -107,7 +108,7 @@ public:
 
 private:
     void apply(std::vector<Feature> features, bool validateDependencies = false,
-               std::size_t unchangedPrefix = 0);
+               std::size_t unchangedPrefix = 0, const std::string& upgradingFillet = {});
     std::string nextId(FeatureKind kind) const;
     BoxParameters m_parameters;
     TopoDS_Shape m_shape;

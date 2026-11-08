@@ -198,21 +198,80 @@ std::optional<Cutter> buildCutter(const TopoDS_Shape& body, const TopoDS_Edge& e
     }
     return cutter;
 }
+
+TopoDS_Vertex draftJunction(const TopoDS_Shape& first, const TopoDS_Shape& second,
+    const TopTools_IndexedDataMapOfShapeListOfShape& neighbors,
+    const TopTools_IndexedDataMapOfShapeListOfShape& incident)
+{
+    const auto a = TopoDS::Edge(first);
+    const auto b = TopoDS::Edge(second);
+    TopoDS_Vertex shared;
+    if (!TopExp::CommonVertex(a, b, shared) || incident.FindFromKey(shared).Extent() != 4 ||
+        BRepAdaptor_Curve(a).GetType() != GeomAbs_Line ||
+        BRepAdaptor_Curve(b).GetType() != GeomAbs_Line) return {};
+    const auto awayFrom = [&](const TopoDS_Edge& edge) {
+        TopoDS_Vertex start, end;
+        TopExp::Vertices(edge, start, end);
+        const auto& other = start.IsSame(shared) ? end : start;
+        return gp_Vec(BRep_Tool::Pnt(shared), BRep_Tool::Pnt(other));
+    };
+    const auto da = awayFrom(a);
+    const auto db = awayFrom(b);
+    if (da.Dot(db) >= 0 || da.IsParallel(db, epsilon)) return {};
+
+    const auto& supportsA = neighbors.FindFromKey(a);
+    const auto& supportsB = neighbors.FindFromKey(b);
+    if (supportsA.Extent() != 2 || supportsB.Extent() != 2) return {};
+    for (const auto& support : supportsA)
+        if (supportsB.Contains(support)) return {};
+    // Each side of the shoulder must join one support from each fillet run.
+    for (const auto& edge : incident.FindFromKey(shared)) {
+        if (edge.IsSame(a) || edge.IsSame(b)) continue;
+        const auto& faces = neighbors.FindFromKey(edge);
+        if (faces.Extent() != 2 ||
+            !((supportsA.Contains(faces.First()) && supportsB.Contains(faces.Last())) ||
+              (supportsB.Contains(faces.First()) && supportsA.Contains(faces.Last())))) return {};
+    }
+    return shared;
+}
+
+bool hasSharpJoin(const TopoDS_Shape& a, const TopoDS_Shape& b)
+{
+    TopTools_IndexedMapOfShape firstEdges;
+    TopExp::MapShapes(a, TopAbs_EDGE, firstEdges);
+    TopTools_ListOfShape join;
+    for (TopExp_Explorer edges(b, TopAbs_EDGE); edges.More(); edges.Next())
+        if (firstEdges.Contains(edges.Current()) &&
+            BRep_Tool::Continuity(TopoDS::Edge(edges.Current()), TopoDS::Face(a), TopoDS::Face(b)) ==
+                GeomAbs_C0) join.Append(edges.Current());
+    if (join.IsEmpty()) return false;
+    BRepBuilderAPI_MakeWire seam;
+    seam.Add(join);
+    return seam.IsDone() && !seam.Wire().Closed();
+}
 }
 
 TopoDS_Shape cutPlanarEdgeTreatments(const TopoDS_Shape& body,
                                    const std::vector<TopoDS_Shape>& edges,
                                    double size, bool chamfer, TopologyNames& names,
-                                   const std::string& featureId, bool legacyEnds)
+                                   const std::string& featureId, EdgeTermination termination)
 {
     if (body.IsNull() || edges.empty()) return {};
-    // Only a continuation on the same two planes can share an endpoint.
+    const bool legacyEnds = termination == EdgeTermination::Legacy;
+    const bool tryMiter = termination == EdgeTermination::PreserveDraftJunction;
+    if (tryMiter && (chamfer || edges.size() != 2)) return {};
+    // Separate creases may meet only at a validated draft junction.
     TopTools_IndexedMapOfShape vertices;
     std::vector<std::pair<TopoDS_Face, TopoDS_Face>> supportsAtVertex;
     TopTools_IndexedDataMapOfShapeListOfShape neighbors;
     TopExp::MapShapesAndUniqueAncestors(body, TopAbs_EDGE, TopAbs_FACE, neighbors);
     TopTools_IndexedDataMapOfShapeListOfShape incident;
     if (!legacyEnds) TopExp::MapShapesAndUniqueAncestors(body, TopAbs_VERTEX, TopAbs_EDGE, incident);
+    TopoDS_Vertex junction;
+    if (tryMiter) {
+        junction = draftJunction(edges[0], edges[1], neighbors, incident);
+        if (junction.IsNull()) return {};
+    }
     TopExp_Explorer solids(body, TopAbs_SOLID);
     if (!solids.More()) return {};
     solids.Next();
@@ -236,7 +295,8 @@ TopoDS_Shape cutPlanarEdgeTreatments(const TopoDS_Shape& body,
             const int previous = vertices.FindIndex(point);
             if (previous > 0) {
                 const auto& [a, b] = supportsAtVertex[std::size_t(previous - 1)];
-                if (!((samePlane(a, first) && samePlane(b, second)) ||
+                if (!point.IsSame(junction) &&
+                    !((samePlane(a, first) && samePlane(b, second)) ||
                       (samePlane(a, second) && samePlane(b, first)))) return {};
             } else {
                 vertices.Add(point);
@@ -288,6 +348,11 @@ TopoDS_Shape cutPlanarEdgeTreatments(const TopoDS_Shape& body,
     resultNames = propagateTopology(resultNames, cut, result);
     for (const auto& key : treatmentKeys)
         if (resultNames.images.at(key).empty()) return {};
+    if (tryMiter) {
+        const auto& first = resultNames.images.at(treatmentKeys[0]);
+        const auto& second = resultNames.images.at(treatmentKeys[1]);
+        if (first.size() != 1 || second.size() != 1 || !hasSharpJoin(first[0], second[0])) return {};
+    }
     resultNames.complete(result);
     names = std::move(resultNames);
     return result;

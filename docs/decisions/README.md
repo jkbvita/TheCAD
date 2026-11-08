@@ -84,6 +84,8 @@ approved scope do not need repeated approval.
 
 - [0046. Fillet and Chamfer corner termination](0046-edge-treatment-terminations.md)
 
+- [0047. Preserve the seam at a draft junction](0047-draft-junction-fillets.md)
+
 ## Pending owner decisions
 
 - Resilient face references beyond the approved conservative planar-face strategy.

@@ -95,20 +95,51 @@ void addFaceEdges(TopTools_IndexedMapOfShape& edges, const TopoDS_Face& face, bo
     else
         TopExp::MapShapes(BRepTools::OuterWire(face), TopAbs_EDGE, edges);
 }
+
+TopoDS_Vertex carryStraightEdgeStart(const Sketch::Projection& link, const TopologyNames& previous,
+                                     const TopoDS_Edge& edge)
+{
+    const auto oldEdge = TopoDS::Edge(previous.resolve(link.edgeName, TopAbs_EDGE));
+    const auto oldStart = TopoDS::Vertex(previous.resolve(link.startVertex, TopAbs_VERTEX));
+    TopoDS_Vertex oldFirst, oldLast, first, last;
+    TopExp::Vertices(oldEdge, oldFirst, oldLast);
+    TopExp::Vertices(edge, first, last);
+    if (oldLast.IsSame(oldStart)) std::swap(oldFirst, oldLast);
+    require(oldFirst.IsSame(oldStart) && !oldLast.IsNull() && !first.IsNull() && !last.IsNull() &&
+                BRepAdaptor_Curve(oldEdge).GetType() == GeomAbs_Line &&
+                BRepAdaptor_Curve(edge).GetType() == GeomAbs_Line,
+            "The converted edge lost its named endpoint.");
+    const gp_Vec oldDirection(BRep_Tool::Pnt(oldFirst), BRep_Tool::Pnt(oldLast));
+    const gp_Vec direction(BRep_Tool::Pnt(first), BRep_Tool::Pnt(last));
+    require(oldDirection.Magnitude() > 1e-7 && direction.Magnitude() > 1e-7 &&
+                oldDirection.IsParallel(direction, 1e-7),
+            "The converted edge changed direction. Reselect the intended geometry.");
+    return oldDirection.Dot(direction) > 0 ? first : last;
+}
 }
 
 void detail::refreshSketchProjections(
-    modeling::Sketch& sketch, const std::map<std::string, modeling::TopologyNames>& namedBodies)
+    modeling::Sketch& sketch, const std::map<std::string, modeling::TopologyNames>& namedBodies,
+    const std::string& upgradingFillet, const modeling::TopologyNames* previousSupport)
 {
     validateSketchModifiers(sketch);
-    for (const auto& link : sketch.projections)
+    for (auto& link : sketch.projections)
     {
         const auto body = namedBodies.find(link.sourceFeature);
         require(body != namedBodies.end(), "Converted geometry requires an earlier solid.");
         const auto edge = TopoDS::Edge(body->second.resolve(link.edgeName, TopAbs_EDGE));
         TopoDS_Vertex vertex;
-        if (!link.startVertex.empty())
-            vertex = TopoDS::Vertex(body->second.resolve(link.startVertex, TopAbs_VERTEX));
+        if (!link.startVertex.empty()) {
+            if (previousSupport && link.sourceFeature == upgradingFillet &&
+                body->second.images.count(link.startVertex) == 0) {
+                // Removing the rounded patch changes the endpoint's incident edges.
+                // Carry the orientation of the same uniquely named straight edge.
+                vertex = carryStraightEdgeStart(link, *previousSupport, edge);
+                link.startVertex = body->second.nameOf(vertex);
+                require(!link.startVertex.empty(), "The converted edge lost its named endpoint.");
+            } else
+                vertex = TopoDS::Vertex(body->second.resolve(link.startVertex, TopAbs_VERTEX));
+        }
         auto projected = projectEdge(sketch, edge, vertex);
         const auto old = std::find_if(sketch.entities.begin(), sketch.entities.end(),
                                       [&](const auto& item) { return item.id == link.entityId; });

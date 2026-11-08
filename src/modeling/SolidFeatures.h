@@ -1,4 +1,5 @@
 #pragma once
+#include "modeling/EdgeTermination.h"
 #include "modeling/Sketch.h"
 #include <gp_Ax1.hxx>
 namespace thecad::modeling
@@ -14,5 +15,5 @@ TopoDS_Shape makeSweep(const TopoDS_Shape& base, const Sketch& profile, const Sk
                        TopologyNames& names, const std::string& featureKey);
 TopoDS_Shape makeEdgeTreatment(const TopoDS_Shape& base, const std::vector<TopoDS_Shape>& edges,
                                double size, bool chamfer, TopologyNames& names,
-                               const std::string& featureId, bool legacyEnds = false);
+                               const std::string& featureId, EdgeTermination termination);
 } // namespace thecad::modeling

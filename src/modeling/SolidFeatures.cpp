@@ -176,7 +176,7 @@ TopoDS_Shape makeRevolutions(const TopoDS_Shape& base, const Sketch& sketch,
 }
 TopoDS_Shape makeEdgeTreatment(const TopoDS_Shape& base, const std::vector<TopoDS_Shape>& edges,
                                double size, bool chamfer, TopologyNames& names,
-                               const std::string& featureId, bool legacyEnds)
+                               const std::string& featureId, EdgeTermination termination)
 {
     require(!base.IsNull(), "Fillet and Chamfer require an existing solid.");
     require(std::isfinite(size) && size > 0 && size <= 1e9,
@@ -216,6 +216,19 @@ TopoDS_Shape makeEdgeTreatment(const TopoDS_Shape& base, const std::vector<TopoD
         return operation.Shape();
     };
     std::exception_ptr nativeFailure;
+    if (!chamfer && termination == EdgeTermination::PreserveDraftJunction &&
+        privateEdges.size() == 2) {
+        try {
+            const auto miter = cutPlanarEdgeTreatments(copy.Shape(), privateEdges, size, chamfer,
+                privateNames, featureId, EdgeTermination::PreserveDraftJunction);
+            if (!miter.IsNull()) {
+                names = std::move(privateNames);
+                return miter;
+            }
+        } catch (const Standard_Failure&) {
+            // The general corner builder can still handle this selection.
+        }
+    }
     try {
         if (chamfer) {
             BRepFilletAPI_MakeChamfer operation(copy.Shape());
@@ -236,7 +249,8 @@ TopoDS_Shape makeEdgeTreatment(const TopoDS_Shape& base, const std::vector<TopoD
         std::vector<TopoDS_Shape> fallbackEdges;
         for (const auto& edge : edges) fallbackEdges.push_back(fresh.ModifiedShape(edge));
         const auto fallback = cutPlanarEdgeTreatments(fresh.Shape(), fallbackEdges, size, chamfer,
-                                                       fallbackNames, featureId, legacyEnds);
+            fallbackNames, featureId, termination == EdgeTermination::Legacy
+                ? EdgeTermination::Legacy : EdgeTermination::Trimmed);
         if (!fallback.IsNull()) {
             names = std::move(fallbackNames);
             return fallback;

@@ -81,6 +81,35 @@ class SolidFeaturesWorkflowTest final : public QObject
         QCOMPARE(a->ProjectionType(), b->ProjectionType());
     }
 private slots:
+    void savedDraftJunctionEdit()
+    {
+        const auto path = qEnvironmentVariable("THECAD_TEST_DRAFT_JUNCTION_PART");
+        if (path.isEmpty()) QSKIP("Set THECAD_TEST_DRAFT_JUNCTION_PART to run the saved-part edit.");
+        SolidTestWindow window;
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* viewport = window.findChild<CadViewport*>("cadViewport");
+        QTRY_VERIFY(viewport->isReady());
+        QVERIFY(window.openPartFile(path));
+        const auto features = window.document().features();
+        select(window, "fillet-1");
+        QElapsedTimer timer;
+        timer.start();
+        command(window, "actionEditFeature");
+        auto* panel = window.findChild<SolidFeaturePanel*>();
+        QVERIFY(panel);
+        QTRY_VERIFY_WITH_TIMEOUT(panel->candidate().has_value(), 2500);
+        qInfo() << "Draft fillet edit preview with downstream history:" << timer.elapsed() << "ms";
+        panel->page()->buttons->button(QDialogButtonBox::Ok)->click();
+        QCOMPARE(window.document().features().size(), features.size());
+        const auto& edited = window.document().features();
+        const auto fillet = std::find_if(edited.begin(), edited.end(),
+            [](const auto& feature) { return feature.id == "fillet-1"; });
+        QVERIFY(fillet != edited.end());
+        QCOMPARE(fillet->edgeTermination, modeling::EdgeTermination::PreserveDraftJunction);
+        QCOMPARE(edited.back().id, features.back().id);
+        QVERIFY(window.errors.isEmpty());
+    }
     void savedFilletPreviewPerformance()
     {
         const auto path = qEnvironmentVariable("THECAD_TEST_FILLET_PART");

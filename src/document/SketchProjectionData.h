@@ -5,5 +5,7 @@
 namespace thecad::document::detail
 {
 void refreshSketchProjections(modeling::Sketch& sketch,
-                             const std::map<std::string, modeling::TopologyNames>& namedBodies);
+                             const std::map<std::string, modeling::TopologyNames>& namedBodies,
+                             const std::string& upgradingFillet,
+                             const modeling::TopologyNames* previousSupport);
 }

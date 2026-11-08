@@ -9,7 +9,9 @@
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
+#include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
 #include <GProp_GProps.hxx>
 #include <QCoreApplication>
@@ -19,8 +21,11 @@
 #include <QJsonObject>
 #include <QTemporaryDir>
 #include <TopExp.hxx>
+#include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
+#include <TopTools_ListOfShape.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Wire.hxx>
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -134,14 +139,15 @@ void trimmedPlanarTerminations()
             names.add("crease", crease);
             auto legacyNames = names;
             const auto legacy = modeling::cutPlanarEdgeTreatments(stock, {crease}, 2, chamfer,
-                                                                  legacyNames, "test", true);
+                                                                  legacyNames, "test", modeling::EdgeTermination::Legacy);
             const auto start = modeling::topologyKey("treatment-start", {"test", "crease"});
             const auto end = modeling::topologyKey("treatment-end", {"test", "crease"});
             require(!legacy.IsNull() && !legacyNames.images.at(start).empty() &&
                         !legacyNames.images.at(end).empty(),
                     "Fixture must expose both old cutter caps");
             const auto result =
-                modeling::cutPlanarEdgeTreatments(stock, {crease}, 2, chamfer, names, "test", false);
+                modeling::cutPlanarEdgeTreatments(stock, {crease}, 2, chamfer, names, "test",
+                                                 modeling::EdgeTermination::Trimmed);
             if (slope > 1) {
                 require(result.IsNull() && names.images.size() == 1,
                         "A cutter that ends inside the solid must fail transactionally");
@@ -185,15 +191,93 @@ void legacyEdgeTreatmentRoundTrip(const QString& path)
     file.write(QJsonDocument(older).toJson());
     file.close();
     auto loaded = document::PartDocument::load(path);
-    require(loaded.features().back().legacyEdgeTermination && closeEnough(volume(loaded), volume(box)),
+    require(loaded.features().back().edgeTermination == modeling::EdgeTermination::Legacy &&
+                closeEnough(volume(loaded), volume(box)),
             "Older edge treatments must keep their original replay mode");
     roundTrip(loaded, path);
     auto edit = loaded.features().back();
     edit.size = 1;
     loaded.replaceFeature(edit);
-    require(!loaded.features().back().legacyEdgeTermination,
+    require(loaded.features().back().edgeTermination == modeling::EdgeTermination::PreserveDraftJunction,
             "Editing an edge treatment must use the corrected termination");
     roundTrip(loaded, path);
+}
+
+void expectCrispDraftFillet(const document::PartDocument& part, const std::string& id, double size)
+{
+    const auto fillet = part.edgeTreatmentFaces(id);
+    require(fillet.size() == 2, "Both fillet runs must retain their own face");
+    for (const auto& face : fillet) {
+        const BRepAdaptor_Surface surface(TopoDS::Face(face));
+        require(surface.GetType() == GeomAbs_Cylinder && closeEnough(surface.Cylinder().Radius(), size),
+                "The two draft junction runs must retain the requested radius");
+    }
+    TopTools_IndexedMapOfShape boundary;
+    TopExp::MapShapes(fillet[0], TopAbs_EDGE, boundary);
+    TopTools_ListOfShape sharpJoins;
+    for (TopExp_Explorer edges(fillet[1], TopAbs_EDGE); edges.More(); edges.Next())
+        if (boundary.Contains(edges.Current()) &&
+            BRep_Tool::Continuity(TopoDS::Edge(edges.Current()), TopoDS::Face(fillet[0]),
+                                 TopoDS::Face(fillet[1])) == GeomAbs_C0)
+            sharpJoins.Append(edges.Current());
+    BRepBuilderAPI_MakeWire seam;
+    seam.Add(sharpJoins);
+    require(!sharpJoins.IsEmpty() && seam.IsDone() && !seam.Wire().Closed(),
+            "The straight and drafted fillets must meet at a connected sharp seam");
+}
+
+void draftJunctionFillet(const QString& path)
+{
+    auto part = document::PartDocument::createEmpty();
+    modeling::Sketch sketch;
+    sketch.entities.push_back({modeling::EntityKind::Rectangle, {-45, 0}, {0, 64}, 1, "profile"});
+    const auto sketchId = part.addSketch(sketch);
+    part.addExtrude(sketchId, {"profile"}, 20, modeling::Direction::Positive);
+    document::Feature draft;
+    draft.kind = document::FeatureKind::Extrude;
+    draft.sketchId = sketchId;
+    draft.contour = {"profile"};
+    draft.extrusion.emplace();
+    draft.extrusion->start = modeling::ExtrudeStart::Offset;
+    draft.extrusion->startOffset = 20;
+    draft.extrusion->first.depth = 10;
+    draft.extrusion->first.draftAngle = 20;
+    part.addSolidFeature(draft);
+    auto fillet = treatment(part);
+    fillet.edges.clear();
+    const gp_Pnt shoulder(-45, 0, 20);
+    for (const auto& edge : part.edgeOptions(true)) {
+        const BRepAdaptor_Curve curve(TopoDS::Edge(edge.selectionShape));
+        const auto first = curve.Value(curve.FirstParameter());
+        const auto last = curve.Value(curve.LastParameter());
+        if ((first.IsEqual(shoulder, 1e-7) || last.IsEqual(shoulder, 1e-7)) &&
+            std::abs(first.Z() - last.Z()) > 1)
+            fillet.edges.push_back(edge.reference);
+    }
+    require(fillet.edges.size() == 2, "Fixture must have a straight and drafted edge at the shoulder");
+    const auto id = part.addSolidFeature(fillet);
+    require(BRepCheck_Analyzer(part.shape()).IsValid(), "The draft fillet must leave a valid solid");
+    expectCrispDraftFillet(part, id, 2);
+    roundTrip(part, path);
+}
+
+void savedDraftJunction(const QString& source, const QString& path)
+{
+    auto part = document::PartDocument::load(source);
+    const auto original = part.features();
+    const auto firstFillet = std::find_if(original.begin(), original.end(), [](const auto& f) {
+        return f.kind == document::FeatureKind::Fillet && f.edges.size() == 2;
+    });
+    require(firstFillet != original.end(), "Missing draft-junction fillet");
+    part.replaceFeature(*firstFillet);
+    expectCrispDraftFillet(part, firstFillet->id, firstFillet->size);
+    require(part.features().size() == original.size() && BRepCheck_Analyzer(part.shape()).IsValid(),
+            "Rebuilding the corner must preserve the downstream solid");
+    for (std::size_t i = 0; i < original.size(); ++i)
+        require(part.features()[i].id == original[i].id &&
+                    part.features()[i].dependencies == original[i].dependencies,
+                "Rebuilding the corner changed the downstream history");
+    roundTrip(part, path);
 }
 } // namespace
 int main(int argc, char** argv)
@@ -206,6 +290,9 @@ int main(int argc, char** argv)
         const auto path = temp.filePath("solid-features.thepart");
         trimmedPlanarTerminations();
         legacyEdgeTreatmentRoundTrip(path);
+        draftJunctionFillet(path);
+        const auto savedDraft = qEnvironmentVariable("THECAD_TEST_DRAFT_JUNCTION_PART");
+        if (!savedDraft.isEmpty()) savedDraftJunction(savedDraft, path);
         const double pi = std::acos(-1.0);
         for (const auto plane :
              {modeling::SketchPlane::XY, modeling::SketchPlane::XZ, modeling::SketchPlane::YZ})

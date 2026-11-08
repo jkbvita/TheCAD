@@ -1,5 +1,6 @@
 #pragma once
 
+#include "modeling/EdgeTermination.h"
 #include "modeling/TopologyNames.h"
 
 namespace thecad::modeling
@@ -9,5 +10,5 @@ namespace thecad::modeling
 TopoDS_Shape cutPlanarEdgeTreatments(const TopoDS_Shape& body,
                                    const std::vector<TopoDS_Shape>& edges,
                                    double size, bool chamfer, TopologyNames& names,
-                                   const std::string& featureId, bool legacyEnds);
+                                   const std::string& featureId, EdgeTermination termination);
 }

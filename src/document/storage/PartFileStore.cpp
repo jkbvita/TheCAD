@@ -614,9 +614,9 @@ PartDocument PartFileStore::load(const QString& path)
     if (root.value("units") != QJsonValue("mm"))
         fail("Unsupported units; this prototype supports millimeters only.");
     const auto versionValue = root.value("version");
-    if (!versionValue.isDouble() || versionValue.toDouble() < 1 || versionValue.toDouble() > 25 ||
+    if (!versionValue.isDouble() || versionValue.toDouble() < 1 || versionValue.toDouble() > 26 ||
         versionValue.toDouble() != std::floor(versionValue.toDouble()))
-        fail("Unsupported part document version; expected versions 1 through 25.");
+        fail("Unsupported part document version; expected versions 1 through 26.");
     const int version = versionValue.toInt();
     if (!root.value("features").isArray())
         fail("Part features must be an ordered array.");
@@ -917,13 +917,19 @@ PartDocument PartFileStore::load(const QString& path)
             else if (version >= 17 && (type == "fillet" || type == "chamfer"))
             {
                 QSet<QString> expected{"id", "name", "type", "size", "edges", "dependencies"};
-                const bool trimmedEnds = version >= 25 && object.contains("termination");
-                if (trimmedEnds) expected.insert("termination");
+                const bool hasTermination = version >= 25 && object.contains("termination");
+                if (hasTermination) expected.insert("termination");
                 fields(object, expected, "Edge treatment");
-                if (trimmedEnds && object["termination"] != "trimmed")
-                    fail("Unsupported edge treatment termination.");
-                feature.legacyEdgeTermination = !trimmedEnds;
                 feature.kind=type=="fillet"?FeatureKind::Fillet:FeatureKind::Chamfer;
+                using Termination = modeling::EdgeTermination;
+                if (!hasTermination)
+                    feature.edgeTermination = Termination::Legacy;
+                else if (object["termination"] == "trimmed")
+                    feature.edgeTermination = Termination::Trimmed;
+                else if (version >= 26 && type == "fillet" && object["termination"] == "preserve-draft-junction")
+                    feature.edgeTermination = Termination::PreserveDraftJunction;
+                else
+                    fail("Unsupported edge treatment termination.");
                 feature.size=number(object["size"],"Radius/distance");
                 if(!object["edges"].isArray()||object["edges"].toArray().isEmpty()||object["edges"].toArray().size()>1000)
                     fail("Select between 1 and 1000 persistent edges.");
@@ -1168,7 +1174,10 @@ void PartFileStore::save(const PartDocument& document, const QString& path)
         else if(isEdgeFeature(feature.kind))
         {
             object["size"]=feature.size;
-            if (!feature.legacyEdgeTermination) object["termination"] = "trimmed";
+            if (feature.edgeTermination == modeling::EdgeTermination::Trimmed)
+                object["termination"] = "trimmed";
+            else if (feature.edgeTermination == modeling::EdgeTermination::PreserveDraftJunction)
+                object["termination"] = "preserve-draft-junction";
             QJsonArray edges;for(const auto& edge:feature.edges)edges.append(writeGeometryReference(edge));
             object["edges"]=edges;
         }
@@ -1241,10 +1250,13 @@ void PartFileStore::save(const PartDocument& document, const QString& path)
         else if (version < 17 && (isRevolveFeature(feature.kind) || isEdgeFeature(feature.kind)))
             version = 17;
     }
-    if (std::any_of(document.features().begin(), document.features().end(), [](const auto& feature) {
-            return isEdgeFeature(feature.kind) && !feature.legacyEdgeTermination;
-        }))
-        version = 25;
+    for (const auto& feature : document.features()) {
+        if (!isEdgeFeature(feature.kind)) continue;
+        if (feature.edgeTermination == modeling::EdgeTermination::PreserveDraftJunction)
+            version = 26;
+        else if (feature.edgeTermination == modeling::EdgeTermination::Trimmed)
+            version = std::max(version, 25);
+    }
     const QJsonObject root{{"format", "TheCAD.Part"},
                            {"version", version},
                            {"units", "mm"},
