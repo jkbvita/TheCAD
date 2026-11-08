@@ -34,6 +34,7 @@ void MainWindow::traverseHistory(bool redo) {
     const bool constructionTool=m_viewport->constructionTool();
     const auto tool=sameSketch?m_viewport->sketchTool():std::optional<modeling::EntityKind>{};
     if(!m_viewport->setShape(target.displayedShape)){reportError("The history state could not be displayed; the current edit was retained.");return;}
+    setMeasureActive(false);
     closeConstraints();closeSmartDimension();m_constraintPoint.reset();m_viewport->selectSketchTool();
     m_session.restore(target);
     m_selectedFace=0;m_selectedPlane.reset();m_viewport->setSelectedReferencePlane({});

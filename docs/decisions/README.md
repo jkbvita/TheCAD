@@ -66,6 +66,8 @@ approved scope do not need repeated approval.
 
 - [0037: Circular Pattern and modeling interactions](0037-circular-pattern-modeling-interactions.md)
 
+- [0038: Measure and base-plane visibility](0038-measure-and-base-plane-visibility.md)
+
 ## Pending owner decisions
 
 - Resilient face references beyond the approved conservative planar-face strategy.

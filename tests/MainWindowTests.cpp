@@ -241,13 +241,17 @@ private slots:
         for (const auto* name : {"actionArc", "actionSpline",
                 "actionMoveEntities",
                 "actionRepairSketch", "actionShadedSketchContours",
-                "actionMeasure", "actionMassProperties", "actionCheckGeometry"}) {
+                "actionMassProperties", "actionCheckGeometry"}) {
             auto* tool = window.findChild<QAction*>(name);
             QVERIFY2(tool, name);
             QVERIFY(!tool->isEnabled());
             QVERIFY(tool->toolTip().contains("not implemented"));
             QVERIFY(!tool->icon().isNull());
         }
+        auto* measure = window.findChild<QAction*>("actionMeasure");
+        QVERIFY(measure && measure->isCheckable());
+        QVERIFY(!measure->isEnabled());
+        QVERIFY(!measure->icon().isNull());
         for (const auto* name : {"actionConvertEntities", "actionMirrorEntities",
                                  "actionLinearSketchPattern", "actionCircularSketchPattern",
                                  "actionTrimEntities", "actionExtendEntities", "actionSplitEntities",
@@ -317,6 +321,7 @@ private slots:
         QCOMPARE(window.promptCount, 1);
         QCOMPARE(window.currentPath(), fixture);
         QVERIFY(!window.isWindowModified());
+        QVERIFY(window.findChild<QAction*>("actionMeasure")->isEnabled());
         QCOMPARE(window.document().parameters().width, 12.5);
         QCOMPARE(window.document().parameters().depth, 34.0);
         QCOMPARE(window.document().parameters().height, 56.0);

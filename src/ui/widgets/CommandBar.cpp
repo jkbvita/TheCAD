@@ -183,6 +183,16 @@ QIcon commandIcon(const QString& name)
             painter.drawLine(18, 12, 24, 19);
         }
     }
+    else if (name == "Measure")
+    {
+        painter.save();
+        painter.translate(16, 16);
+        painter.rotate(-35);
+        painter.drawRoundedRect(QRectF(-13, -4.5, 26, 9), 1.5, 1.5);
+        for (int x : {-8, -4, 0, 4, 8})
+            painter.drawLine(x, -4, x, x == 0 ? 1 : -1);
+        painter.restore();
+    }
     else if (name.contains("Select"))
     {
         painter.drawPolygon(QPolygonF{QPointF(8, 4), QPointF(8, 26), QPointF(14, 20),

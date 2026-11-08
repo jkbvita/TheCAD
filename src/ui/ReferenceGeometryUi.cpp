@@ -17,6 +17,7 @@
 #include <QDockWidget>
 #include <QAction>
 #include <QSignalBlocker>
+#include <QSplitter>
 #include <QStatusBar>
 #include <QTabWidget>
 #include <QVBoxLayout>
@@ -87,7 +88,20 @@ void MainWindow::startReferenceGeometry(modeling::DatumKind kind,const document:
     if(editing){for(int i=0;i<int(editing->reference.references.size());++i)for(int j=0;j<d.references[i]->count();++j){const int option=d.references[i]->itemData(j).toInt();if(same(editing->reference.references[std::size_t(i)],d.options[std::size_t(option)].reference)){const QSignalBlocker blocker(d.references[i]);d.references[i]->setCurrentIndex(j);break;}}updateReferenceGeometryPreview();}
     else if(!selectedReferences.empty()&&selectedReferences.size()<=3&&!(kind==DatumKind::Point&&selectedReferences.size()==1&&selectedReferences.front().source==ReferenceSource::Datum&&selectedKinds.front()==DatumKind::Point)){if(selectedMethod){const QSignalBlocker blocker(d.method);d.method->setCurrentIndex(d.method->findData(int(*selectedMethod)));}updateReferenceGeometryForm();for(int i=0;i<int(selectedReferences.size());++i)for(int j=0;j<d.references[i]->count();++j){const auto& ref=d.options[std::size_t(d.references[i]->itemData(j).toInt())].reference;if(same(ref,selectedReferences[std::size_t(i)])){d.references[i]->setCurrentIndex(j);break;}}}
     else if(selectedPlane){d.method->setCurrentIndex(d.method->findData(int(DatumMethod::PlaneOffset)));for(int j=0;j<d.references[0]->count();++j){const auto& ref=d.options[std::size_t(d.references[0]->itemData(j).toInt())].reference;if(same(ref,*selectedPlane)){d.references[0]->setCurrentIndex(j);break;}}}
-    m_managerStack->addWidget(d.page);m_managerStack->setCurrentWidget(d.page);m_historyDock->setWindowTitle("PropertyManager");updateActions();
+    // Keep the actual FeatureManager available for picking hidden supports.
+    d.historySplitter = qobject_cast<QSplitter*>(m_tree->parentWidget());
+    d.historySizes = d.historySplitter->sizes();
+    d.panel = new QSplitter(Qt::Vertical, m_managerStack);
+    d.panel->setChildrenCollapsible(false);
+    d.panel->addWidget(m_tree);
+    d.panel->addWidget(d.page);
+    d.panel->setStretchFactor(1, 1);
+    d.panel->setSizes({180, 500});
+    m_managerStack->addWidget(d.panel);
+    m_managerStack->setCurrentWidget(d.panel);
+    m_tree->show();
+    m_historyDock->setWindowTitle("PropertyManager");
+    updateActions();
     const auto method=DatumMethod(d.method->currentData().toInt());if(datumReferenceKinds(method).empty()){d.position[0]->setFocus();d.position[0]->selectAll();}else if(method==DatumMethod::PlaneOffset){d.value->setFocus();d.value->selectAll();}else d.references[0]->setFocus();
 }
 void MainWindow::updateReferenceGeometryForm(){
@@ -100,7 +114,7 @@ void MainWindow::updateReferenceGeometryForm(){
 void MainWindow::activateReferenceGeometryPick(int field){
     if(!m_referenceDraft)return;auto& d=*m_referenceDraft;const auto kinds=datumReferenceKinds(DatumMethod(d.method->currentData().toInt()));
     if(field<0||field>=3||(!d.automatic->isChecked()&&field>=int(kinds.size()))){m_viewport->setReferenceCandidates({},{});return;}
-    d.activeReference=field;std::vector<ReferencePickItem> items;for(const auto& option:d.options)items.push_back({option.reference,option.geometry,option.selectionShape});m_viewport->showReferencePlanes(true);m_viewport->setReferenceCandidates(items,d.automatic->isChecked()?std::optional<DatumKind>{}:std::optional<DatumKind>{kinds[std::size_t(field)]});
+    d.activeReference=field;std::vector<ReferencePickItem> items;for(const auto& option:d.options)items.push_back({option.reference,option.geometry,option.selectionShape});m_viewport->setReferenceCandidates(items,d.automatic->isChecked()?std::optional<DatumKind>{}:std::optional<DatumKind>{kinds[std::size_t(field)]});
 }
 void MainWindow::referenceGeometryPicked(int option){
     if(!m_referenceDraft)return;auto& d=*m_referenceDraft;if(option<0||option>=int(d.options.size()))return;
@@ -135,7 +149,24 @@ void MainWindow::updateReferenceGeometryPreview(){
 }
 void MainWindow::finishReferenceGeometry(bool accepted){
     if(!m_referenceDraft)return;auto& d=*m_referenceDraft;if(accepted){updateReferenceGeometryPreview();if(!d.candidate)return;if(!m_viewport->setShape(m_session.document().shape()))return;if(!applyModel(*d.candidate,d.candidateId))return;}
-    auto* page=d.page;for(auto* child:page->findChildren<QObject*>())QObject::disconnect(child,nullptr,this,nullptr);m_managerStack->setCurrentIndex(0);m_managerStack->removeWidget(page);page->hide();page->setParent(nullptr);m_referenceDraft.reset();page->deleteLater();m_mode=WorkspaceMode::Part;m_viewport->setReferenceCandidates({},{});m_viewport->setShape(m_session.document().shape());m_viewport->showReferencePlanes(false);m_historyDock->setWindowTitle("FeatureManager");updateDocumentUi();m_viewport->setFocus();
+    for (auto* child : d.page->findChildren<QObject*>())
+        QObject::disconnect(child, nullptr, this, nullptr);
+    d.historySplitter->insertWidget(0, m_tree);
+    d.historySplitter->setSizes(d.historySizes);
+    m_managerStack->setCurrentIndex(0);
+    m_tree->show();
+    auto* panel = d.panel;
+    m_managerStack->removeWidget(panel);
+    panel->hide();
+    panel->setParent(nullptr);
+    m_referenceDraft.reset();
+    panel->deleteLater();
+    m_mode = WorkspaceMode::Part;
+    m_viewport->setReferenceCandidates({}, {});
+    m_viewport->setShape(m_session.document().shape());
+    m_historyDock->setWindowTitle("FeatureManager");
+    updateDocumentUi();
+    m_viewport->setFocus();
 }
 void MainWindow::refreshReferenceGeometry(){if(!m_referenceDraft&&!m_solidFeature){m_viewport->setDatums(visuals(m_session.document()));const auto* feature=selectedFeature();m_viewport->setSelectedDatum(feature&&feature->kind==document::FeatureKind::ReferenceGeometry?feature->id:"");}}
 void MainWindow::createSketchOnReferencePlane(const std::string& id){

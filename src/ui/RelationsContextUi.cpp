@@ -7,6 +7,7 @@
 #include "modeling/RelationCommands.h"
 #include "modeling/SketchTools.h"
 #include "modeling/ConstraintSolver.h"
+#include <QAction>
 #include <QApplication>
 #include <QFrame>
 #include <QGridLayout>
@@ -47,6 +48,13 @@ bool MainWindow::eventFilter(QObject* watched,QEvent* event){
     if(operationKeyEvent(watched,event))return true;
     const auto* widget=qobject_cast<QWidget*>(watched);
     const bool ourWindow=widget && (widget==this || widget->window()==this);
+    if (ourWindow && event->type() == QEvent::KeyPress && m_measure && m_measure->isChecked() &&
+        static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape)
+    {
+        setMeasureActive(false);
+        event->accept();
+        return true;
+    }
     if(ourWindow && event->type()==QEvent::KeyRelease){
         auto* key=static_cast<QKeyEvent*>(event);
         if(key->key()==Qt::Key_Shift && !key->isAutoRepeat() && m_viewport->finishSketchMultiSelection()){key->accept();return true;}

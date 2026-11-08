@@ -10,12 +10,15 @@
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QLabel>
+#include <QLocale>
 #include <QMenu>
 #include <QMessageBox>
 #include <QTimer>
 #include <QPushButton>
 #include <QSettings>
+#include <QTabWidget>
 #include <QTemporaryDir>
+#include <QToolButton>
 #include <QTest>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
@@ -54,6 +57,137 @@ class ReferenceManagerTest:public QObject {
     static std::string xyz(PartDocument& doc,DatumKind kind,gp_Pnt position){DatumDefinition d;d.method=kind==DatumKind::Point?DatumMethod::PointXYZ:kind==DatumKind::Axis?DatumMethod::AxisXYZ:DatumMethod::PlaneXYZ;d.position=position;return doc.addReferenceGeometry(d);}
 private slots:
     void initTestCase(){QVERIFY(settings.isValid());QSettings::setDefaultFormat(QSettings::IniFormat);QSettings::setPath(QSettings::IniFormat,QSettings::UserScope,settings.path());}
+    void measureUpdatesFromViewportPicksWithoutChangingPart()
+    {
+        QTemporaryDir dir;
+        const auto path = dir.filePath("measure.thepart");
+        PartDocument::createBox({60, 50, 20}).save(path);
+        ReferenceWindow window;
+        auto* viewport = show(window);
+        QVERIFY(viewport);
+        QVERIFY(window.openPartFile(path));
+        auto* view = viewport->m_graphics.view().get();
+        view->SetAt(30, 25, 10);
+        view->SetProj(1, -2, 3);
+        view->SetUp(0, 0, 1);
+        view->Camera()->SetScale(120);
+        view->Redraw();
+
+        viewport->setSelectionFilters(FilterEdges);
+        const auto firstEdge = project(viewport, {30, 0, 20});
+        QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, firstEdge);
+        QCOMPARE(viewport->selection().size(), std::size_t(1));
+        QCOMPARE(viewport->selection().front().kind, SelectionKind::Edge);
+        const CameraState camera(viewport);
+        auto* measure = window.findChild<QAction*>("actionMeasure");
+        auto* readout = window.findChild<QLabel*>("measureReadout");
+        QVERIFY(measure && measure->isEnabled() && readout && readout->isHidden());
+        auto* tabs = window.findChild<QTabWidget*>("modelingTabs");
+        tabs->setCurrentIndex(2);
+        QToolButton* button = nullptr;
+        for (auto* candidate : tabs->findChildren<QToolButton*>())
+            if (candidate->defaultAction() == measure)
+                button = candidate;
+        QVERIFY(button && button->isVisible());
+        QTest::mouseClick(button, Qt::LeftButton);
+        QVERIFY(measure->isChecked() && readout->isVisible());
+        const auto number = [](double value) { return QLocale().toString(value, 'f', 3); };
+        QVERIFY(readout->text().contains("Length  " + number(60)));
+        QVERIFY(!viewport->m_measureLabel.IsNull());
+
+        QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, project(viewport, {60, 25, 20}));
+        QCOMPARE(viewport->selection().size(), std::size_t(2));
+        QVERIFY(readout->text().contains("Angle  " + number(90)));
+        QVERIFY(readout->text().contains("Minimum distance  " + number(0)));
+        QVERIFY(viewport->m_measureSpan.IsNull());
+
+        viewport->setSelectionFilters(FilterVertices);
+        const auto left = project(viewport, {0, 0, 20});
+        const auto right = project(viewport, {60, 0, 20});
+        QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, left);
+        QCOMPARE(viewport->selection().size(), std::size_t(1));
+        QVERIFY(readout->text().contains("Z  " + number(20)));
+        QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, right);
+        QVERIFY(readout->text().contains("Minimum distance  " + number(60)));
+        QVERIFY(!viewport->m_measureSpan.IsNull());
+        QVERIFY(camera.unchanged(viewport));
+
+        QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, right);
+        QCOMPARE(viewport->selection().size(), std::size_t(1));
+        QVERIFY(viewport->m_measureSpan.IsNull());
+        QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, {5, 5});
+        QVERIFY(viewport->selection().empty());
+        QVERIFY(viewport->m_measureLabel.IsNull());
+        viewport->setSelectionFilters(FilterFaces);
+        QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, project(viewport, {20, 20, 20}));
+        QCOMPARE(viewport->selection().size(), std::size_t(1));
+        QCOMPARE(viewport->selection().front().kind, SelectionKind::Face);
+        QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, project(viewport, {30, 0, 10}));
+        QCOMPARE(viewport->selection().size(), std::size_t(2));
+        QVERIFY(readout->text().contains("Angle  " + number(90)));
+        QVERIFY(!viewport->m_measureLabel.IsNull());
+        QTest::keyClick(viewport, Qt::Key_Escape);
+        QVERIFY(!measure->isChecked() && readout->isHidden());
+        QVERIFY(viewport->m_measureLabel.IsNull());
+        QVERIFY(camera.unchanged(viewport));
+        QVERIFY(!window.isWindowModified());
+        QCOMPARE(window.document().features().size(), std::size_t(1));
+        QVERIFY(window.errors.isEmpty());
+    }
+
+    void referenceCommandsKeepBasePlaneVisibility()
+    {
+        QTemporaryDir dir;
+        const auto path = dir.filePath("base-planes.thepart");
+        PartDocument::createBox({60, 50, 20}).save(path);
+        ReferenceWindow window;
+        auto* viewport = show(window);
+        QVERIFY(viewport);
+        QVERIFY(window.openPartFile(path));
+        QVERIFY(!viewport->referencePlanesVisible());
+        select(window, "origin:XY");
+        QVERIFY(!viewport->referencePlanesVisible());
+
+        viewport->clearSelection();
+        command(window, "actionReferencePlane");
+        QVERIFY(!viewport->referencePlanesVisible());
+        auto* first = window.findChild<QComboBox*>("datumReference1");
+        QVERIFY(first && first->currentIndex() < 0);
+        window.findChild<QCheckBox*>("datumAutomatic")->setChecked(false);
+        auto* view = viewport->m_graphics.view().get();
+        view->SetAt(0, 0, 0);
+        view->SetProj(0, 0, 1);
+        view->SetUp(0, 1, 0);
+        view->Camera()->SetScale(120);
+        view->Redraw();
+        const auto hiddenPlane = project(viewport, {-25, -30, 0});
+        QVERIFY(viewport->rect().contains(hiddenPlane));
+        QCOMPARE(viewport->referenceCandidateAt(hiddenPlane), -1);
+        QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, hiddenPlane);
+        QCOMPARE(first->currentIndex(), -1);
+
+        auto* tree = window.findChild<QTreeWidget*>("featureTree");
+        auto* front = item(window, "origin:XY");
+        QVERIFY(tree && tree->isVisible() && tree->isEnabled() && front);
+        tree->scrollToItem(front);
+        const auto row = tree->visualItemRect(front);
+        QVERIFY(tree->viewport()->rect().contains(row.center()));
+        QTest::mouseClick(tree->viewport(), Qt::LeftButton, Qt::NoModifier, row.center());
+        QCOMPARE(first->currentText(), QString("Front plane"));
+        QVERIFY(!viewport->referencePlanesVisible());
+        confirm(window);
+        QVERIFY(!viewport->referencePlanesVisible());
+        QCOMPARE(window.document().features().back().reference.references.front().source,
+                 ReferenceSource::BasePlane);
+
+        viewport->showReferencePlanes(true);
+        command(window, "actionReferenceAxis");
+        QVERIFY(viewport->referencePlanesVisible());
+        QTest::keyClick(viewport, Qt::Key_Escape);
+        QVERIFY(viewport->referencePlanesVisible());
+        QVERIFY(window.errors.isEmpty());
+    }
+
     void cameraIsExactAcrossSelectionsReferenceEditingAndThemes(){
         QTemporaryDir dir;auto doc=PartDocument::createBox({60,50,20});const auto p=xyz(doc,DatumKind::Point,{85,15,10}),a=xyz(doc,DatumKind::Axis,{90,20,10}),pl=xyz(doc,DatumKind::Plane,{0,0,45});Sketch sketch;sketch.entities={{EntityKind::Rectangle,{5,5},{15,15},1,"profile"}};const auto sid=doc.addSketch(sketch);const auto boss=doc.addExtrude(sid,{"profile"},30,Direction::Positive);const auto path=dir.filePath("camera.thepart");doc.save(path);
         ReferenceWindow w;auto* v=show(w);QVERIFY(v);QVERIFY(w.openPartFile(path));v->m_graphics.view()->SetAt(20,15,10);v->m_graphics.view()->SetProj(1,-2,3);v->m_graphics.view()->SetUp(0,0,1);v->m_graphics.view()->Camera()->SetScale(190);v->m_graphics.view()->Camera()->SetProjectionType(Graphic3d_Camera::Projection_Perspective);v->m_graphics.view()->Redraw();QApplication::processEvents();const CameraState camera(v);

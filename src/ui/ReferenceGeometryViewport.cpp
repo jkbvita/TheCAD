@@ -100,6 +100,8 @@ void CadViewport::setFeatureReferenceShapes(const std::vector<TopoDS_Shape>& sha
 int CadViewport::referenceCandidateAt(const QPointF& position){
     if(!isReady()||m_referenceCandidates.empty())return -1;std::vector<ReferencePickItem> items;std::vector<int> indices;
     for(int i=0;i<int(m_referenceCandidates.size());++i){const auto& item=m_referenceCandidates[std::size_t(i)];using K=modeling::SelectionKind;using S=modeling::ReferenceSource;
+        if (item.reference.source == S::BasePlane && !m_planesVisible)
+            continue;
         const auto kind=item.reference.source==S::BodyFace?K::Face:(item.reference.source==S::BodyEdge||item.reference.source==S::BodyCircleCenter||item.reference.source==S::BodyCircleAxis)?K::Edge:item.reference.source==S::BodyVertex?K::Vertex:item.reference.source==S::SketchPoint?K::SketchPoint:item.reference.source==S::SketchLine?K::SketchEntity:K::ReferencePoint;
         if(m_selectionPolicy.allows(kind)){items.push_back(item);indices.push_back(i);}}
     const int index=pick(items,m_referenceCandidateKind,position,m_graphics.view(),m_pickingTolerance,devicePixelRatioF());return index<0?-1:indices[std::size_t(index)];

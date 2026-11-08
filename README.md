@@ -26,6 +26,13 @@ for supported seeds and references. Circular Pattern accepts an axis, circular
 edge or axial face and supports total-angle or per-instance spacing. See
 [Circular Pattern and modeling interactions](docs/decisions/0037-circular-pattern-modeling-interactions.md).
 
+## Measure
+
+Open **Evaluate → Measure** and select a solid vertex, edge, or face. Select a
+second entity for minimum distance and, where applicable, angle or center
+spacing. Results appear beside the geometry and below the FeatureManager.
+Click empty space to clear the selection or press Esc to exit Measure.
+
 ## Save and export
 
 Use **File → Save As** in the standard Windows dialog. Choose **TheCAD Part**,
@@ -160,7 +167,7 @@ See [basic sketch tool checks](docs/verification/basic-sketch-tools.md).
 
 Arc, Spline, Trim, Convert,
 Offset, Mirror, Linear Sketch Pattern, Move, Repair
-Sketch, Shaded Sketch Contours, Measure, Mass Properties and Check Geometry are
+Sketch, Shaded Sketch Contours, Mass Properties and Check Geometry are
 disabled until implemented.
 
 While editing a closed sketch, switch to Features and click Extrude or Extruded

@@ -35,6 +35,8 @@
 class QMenu;
 class QContextMenuEvent;
 
+namespace thecad::modeling { struct Measurement; }
+
 namespace thecad::ui {
 struct DatumVisual {std::string id,name;modeling::DatumGeometry geometry;bool visible=true;};
 struct ReferencePickItem {modeling::GeometryReference reference;modeling::DatumGeometry geometry;TopoDS_Shape shape;};
@@ -113,6 +115,9 @@ public:
     void setFeatureReferenceShapes(const std::vector<TopoDS_Shape>&);
     int referenceCandidateAt(const QPointF& position);
     std::vector<modeling::SelectionRef> selection() const;
+    void setMeasurePicking(bool active) { m_measurePicking = active; }
+    std::vector<TopoDS_Shape> measurementShapes();
+    void showMeasurement(const QString& text = {}, const modeling::Measurement* result = nullptr);
     const modeling::SelectionPolicy& selectionPolicy() const {return m_selectionPolicy;}
     void setSelectionFilters(std::uint32_t filters,bool enabled=true);
     void showSelectOther(const QPoint& position);
@@ -193,6 +198,9 @@ private:
     std::string m_bodyFeatureId,m_sketchFeatureId;
     std::vector<PickCandidate> m_nativeSelections;
     Handle(AIS_Shape) m_selectionHover;
+    bool m_measurePicking = false;
+    Handle(AIS_Shape) m_measureSpan;
+    Handle(AIS_TextLabel) m_measureLabel;
     std::vector<Handle(AIS_Shape)> m_featureReferenceShapes;
     std::vector<Handle(AIS_Shape)> m_selectionPresentations;
     bool m_treeBodySelected=false;

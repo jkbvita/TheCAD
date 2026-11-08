@@ -296,7 +296,9 @@ MainWindow::MainWindow(QWidget* parent)
     sketchButtons->addStretch();
     QGridLayout* evaluateGrid = nullptr;
     commandGroup(evaluateButtons, "Evaluate", evaluateGrid);
-    commandButton(unavailable("Measure", "actionMeasure"), evaluateGrid, 0, 0, true);
+    m_measure = action("Measure", "actionMeasure", [this](bool active) { setMeasureActive(active); });
+    m_measure->setCheckable(true);
+    commandButton(m_measure, evaluateGrid, 0, 0, true);
     commandButton(unavailable("Mass Properties", "actionMassProperties"), evaluateGrid, 0, 1, true);
     commandButton(unavailable("Check Geometry", "actionCheckGeometry"), evaluateGrid, 0, 2, true);
     evaluateButtons->addStretch();
@@ -416,6 +418,17 @@ MainWindow::MainWindow(QWidget* parent)
     historySplitter->setStretchFactor(0, 2);
     historySplitter->setStretchFactor(1, 1);
     historyLayout->addWidget(historySplitter);
+    m_measureReadout = new QLabel(history);
+    m_measureReadout->setObjectName("measureReadout");
+    m_measureReadout->setTextFormat(Qt::PlainText);
+    m_measureReadout->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_measureReadout->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    m_measureReadout->setWordWrap(true);
+    m_measureReadout->setMargin(6);
+    m_measureReadout->hide();
+    historyLayout->addWidget(m_measureReadout);
+    connect(m_viewport, &CadViewport::selectionChanged, this, &MainWindow::refreshMeasurement);
+    connect(&ThemeManager::instance(), &ThemeManager::changed, this, &MainWindow::refreshMeasurement);
     m_managerStack = new QStackedWidget;
     m_managerStack->setObjectName("managerStack");
     m_managerStack->addWidget(history);
@@ -734,6 +747,7 @@ bool MainWindow::replaceDocument(document::PartDocument candidate, const QString
         reportError("The part could not be displayed. The current document has been retained.");
         return false;
     }
+    setMeasureActive(false);
     m_viewport->clearSelection();
     m_selectingPlane = false;
     m_selectedPlane.reset();
@@ -763,6 +777,7 @@ bool MainWindow::applyModel(document::PartDocument candidate, const std::string&
         reportError("The regenerated geometry could not be displayed. The previous part was retained.");
         return false;
     }
+    setMeasureActive(false);
     if(record)rememberChange(std::move(previous));
     m_startupSketchAvailable = false;
     m_session.document() = std::move(candidate);
@@ -808,7 +823,6 @@ void MainWindow::selectionChanged()
         else m_selectedPlane.reset();
         m_session.selectedFeatureId().clear();
         m_viewport->setSelectedReferencePlane(m_selectedPlane);
-        m_viewport->showReferencePlanes(true);
         statusBar()->showMessage(m_selectedPlane
             ? QString("%1 selected. Click Sketch to begin on this reference plane.").arg(modeling::referencePlaneName(*m_selectedPlane))
             : QString("Select Front, Top or Right in the viewport, then click Sketch."));
@@ -828,6 +842,7 @@ void MainWindow::selectionChanged()
     if(m_tree->selectedItems().size()>1){std::vector<modeling::SelectionRef> refs;for(const auto* node:m_tree->selectedItems()){const auto id=node->data(0,Qt::UserRole).toString();using K=modeling::SelectionKind;if(id=="origin:XY"||id=="origin:XZ"||id=="origin:YZ")refs.push_back({K::OriginPlane,{},{},modeling::PointRole::First,id=="origin:XY"?0:id=="origin:XZ"?1:2});else for(const auto& f:m_session.document().features())if(f.id==id.toStdString()&&f.kind==document::FeatureKind::ReferenceGeometry)refs.push_back({f.datum.kind==modeling::DatumKind::Plane?K::ReferencePlane:f.datum.kind==modeling::DatumKind::Axis?K::ReferenceAxis:K::ReferencePoint,f.id});}m_viewport->setTreeReferenceSelection(refs);}
     updateEntityList();
     updateActions();
+    refreshMeasurement();
 }
 void MainWindow::updateDocumentUi()
 {
@@ -877,7 +892,7 @@ void MainWindow::updateSketchToolActions()
 
 void MainWindow::updateActions()
 {
-    updateSketchToolActions();updateHistoryActions();
+    updateSketchToolActions();updateHistoryActions();updateMeasureAction();
     const bool operation = featureDraftActive();
     const bool editing = m_mode == WorkspaceMode::EditingSketch && !m_constraints;
     findChild<QAction*>("actionSmartDimension")->setEnabled(editing && !operation);
@@ -902,7 +917,7 @@ void MainWindow::updateActions()
     for(auto* reference:{m_referencePoint,m_referenceAxis,m_referencePlane})reference->setEnabled(!operation&&!m_session.editingSketch()&&!selecting);
     m_tabs->setEnabled(!operation);
     findChild<QAction*>("actionCancelFeature")->setEnabled(operation);
-    m_tree->setEnabled((!operation || m_solidFeature) && !editing && !selecting);
+    m_tree->setEnabled((!operation || m_solidFeature || m_referenceDraft) && !editing && !selecting);
     for (const auto* name : {"actionNew", "actionOpen", "actionSave", "actionSaveAs"}) {
         if (auto* action = findChild<QAction*>(name)) action->setEnabled(!operation && !selecting && !m_constraints);
     }

@@ -31,6 +31,11 @@ using namespace presentation;
 using modeling::SelectionKind;
 using modeling::SelectionRef;
 namespace {
+bool isMeasurementKind(SelectionKind kind)
+{
+    return kind == SelectionKind::Face || kind == SelectionKind::Edge || kind == SelectionKind::Vertex;
+}
+
 SelectionKind datumSelectionKind(modeling::DatumKind kind){return kind==modeling::DatumKind::Point?SelectionKind::ReferencePoint:kind==modeling::DatumKind::Axis?SelectionKind::ReferenceAxis:SelectionKind::ReferencePlane;}
 
 struct EdgeHit
@@ -210,6 +215,10 @@ std::vector<CadViewport::PickCandidate> CadViewport::selectionCandidates(const Q
         }
     }
     auto policy=m_selectionPolicy;
+    if (m_measurePicking)
+        candidates.erase(std::remove_if(candidates.begin(), candidates.end(), [](const auto& candidate) {
+            return !isMeasurementKind(candidate.value.reference.kind);
+        }), candidates.end());
     if(m_selectingPlane){ // A support command only accepts planes or faces.
         candidates.erase(std::remove_if(candidates.begin(),candidates.end(),[](const auto& c){const auto k=c.value.reference.kind;if(k==SelectionKind::Face)return BRepAdaptor_Surface(TopoDS::Face(c.shape)).GetType()!=GeomAbs_Plane;return k!=SelectionKind::ReferencePlane&&k!=SelectionKind::OriginPlane;}),candidates.end());
     }
@@ -272,6 +281,13 @@ void CadViewport::selectCandidate(const PickCandidate& item,bool toggle,bool dir
     const QScopedValueRollback<bool> dispatch(m_dispatchingSelection,true);
     const auto& ref=item.value.reference;
     if(modeling::isTopology(ref.kind)&&ref.generation!=m_shapeGeneration)return;
+    if (m_measurePicking)
+    {
+        if (!isMeasurementKind(ref.kind))
+            return;
+        const auto& items = m_selection.items();
+        toggle = items.size() < 2 || std::find(items.begin(), items.end(), ref) != items.end();
+    }
     if(m_sketchEditing && !modeling::isTopology(ref.kind)){
         if(ref.kind==SelectionKind::Dimension)selectDimension(ref.entityId,toggle);
         else if(ref.kind==SelectionKind::Relation)selectSketchRelation(ref.entityId);

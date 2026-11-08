@@ -1,8 +1,10 @@
 #pragma once
 #include "ui/MainWindow.h"
 #include "ui/PropertyManagerPage.h"
+#include <QList>
 #include <array>
 class QFormLayout;
+class QSplitter;
 namespace thecad::ui {
 struct MainWindow::ReferenceDraft {
     modeling::DatumKind kind=modeling::DatumKind::Point;
@@ -12,6 +14,9 @@ struct MainWindow::ReferenceDraft {
     document::PartDocument support;
     std::vector<document::ReferenceOption> options;
     PropertyManagerPage* page=nullptr;
+    QSplitter* panel=nullptr;
+    QSplitter* historySplitter=nullptr;
+    QList<int> historySizes;
     QComboBox* method=nullptr;
     QCheckBox* automatic=nullptr;
     QComboBox* offsetConstraint=nullptr;

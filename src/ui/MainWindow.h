@@ -138,6 +138,11 @@ private:
     void updateDocumentUi();
     void updateActions();
     void updateSketchToolActions();
+    void setMeasureActive(bool active);
+    void updateMeasureAction();
+    void refreshMeasurement();
+    QAction* m_measure = nullptr;
+    QLabel* m_measureReadout = nullptr;
     void updateEntityList();
     void updateEntityProperties();
     void applySketchEntityEdit(const modeling::SketchEntity& entity);

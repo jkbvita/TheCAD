@@ -200,6 +200,8 @@ void CadViewport::releaseViewer()
     m_datumPresentations.clear();m_referenceCandidatePresentations.clear();m_referenceHover.Nullify();m_featureReferenceShapes.clear();
     m_dimensions.clear();m_relationMarkers.clear();m_relationHits.clear();
     m_interactionLabel.Nullify();
+    m_measureLabel.Nullify();
+    m_measureSpan.Nullify();
     m_inferenceGuides.clear();
     m_selectedEntityPresentation.Nullify();
     m_hoveredEntityPresentation.Nullify();
