@@ -1,4 +1,5 @@
 #include "modeling/SolidFeatures.h"
+#include "modeling/PlanarEdgeTreatment.h"
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepBndLib.hxx>
@@ -20,6 +21,8 @@
 #include <cmath>
 #include <set>
 #include <stdexcept>
+#include <exception>
+#include <Standard_Failure.hxx>
 namespace thecad::modeling
 {
 namespace
@@ -200,6 +203,9 @@ TopoDS_Shape makeEdgeTreatment(const TopoDS_Shape& base, const std::vector<TopoD
     {
         for (const auto& edge : privateEdges)
             operation.Add(size, TopoDS::Edge(edge));
+        for (const auto& edge : privateEdges)
+            require(operation.Contour(TopoDS::Edge(edge)) != 0,
+                    "A selected edge is tangent or cannot take this treatment.");
         operation.Build();
         require(operation.IsDone(),
                 "Cannot build the edge treatment. Reduce the size or change the selected edges.");
@@ -208,12 +214,35 @@ TopoDS_Shape makeEdgeTreatment(const TopoDS_Shape& base, const std::vector<TopoD
         names = std::move(privateNames);
         return operation.Shape();
     };
-    if (chamfer)
-    {
-        BRepFilletAPI_MakeChamfer operation(copy.Shape());
+    std::exception_ptr nativeFailure;
+    try {
+        if (chamfer) {
+            BRepFilletAPI_MakeChamfer operation(copy.Shape());
+            return build(operation);
+        }
+        BRepFilletAPI_MakeFillet operation(copy.Shape());
         return build(operation);
+    } catch (const Standard_Failure&) {
+        nativeFailure = std::current_exception();
+    } catch (const std::runtime_error&) {
+        nativeFailure = std::current_exception();
     }
-    BRepFilletAPI_MakeFillet operation(copy.Shape());
-    return build(operation);
+    // Native rolling blends can fail where a straight planar edge terminates
+    // at a mirror or at a previous blend. Keep the exact requested section.
+    try {
+        BRepBuilderAPI_Copy fresh(base, true, false);
+        auto fallbackNames = propagateTopology(names, fresh, fresh.Shape());
+        std::vector<TopoDS_Shape> fallbackEdges;
+        for (const auto& edge : edges) fallbackEdges.push_back(fresh.ModifiedShape(edge));
+        const auto fallback = cutPlanarEdgeTreatments(fresh.Shape(), fallbackEdges, size, chamfer,
+                                                       fallbackNames, featureId);
+        if (!fallback.IsNull()) {
+            names = std::move(fallbackNames);
+            return fallback;
+        }
+    } catch (const Standard_Failure&) {
+        // Report the original modeling error if the exact fallback also fails.
+    }
+    std::rethrow_exception(nativeFailure);
 }
 } // namespace thecad::modeling

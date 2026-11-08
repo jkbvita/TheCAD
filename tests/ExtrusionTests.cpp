@@ -345,6 +345,40 @@ void draftedEdgeTreatments(const QString& path)
     mirror.pattern.reference = plane;
     part.addSolidFeature(mirror);
     treatDraftedLip(part, -1, path);
+
+    std::vector<GeometryReference> junction;
+    for (const auto& option : part.edgeOptions()) {
+        Bnd_Box bounds;
+        BRepBndLib::AddOptimal(option.selectionShape, bounds, false, false);
+        double x0, y0, z0, x1, y1, z1;
+        bounds.Get(x0, y0, z0, x1, y1, z1);
+        if (std::abs(x0) < 1e-6 && std::abs(x1) < 1e-6 &&
+            std::abs(z0 + 10) < 1e-6 && std::abs(z1 + 10) < 1e-6 &&
+            y1 - y0 > 30)
+            junction.push_back(option.reference);
+    }
+    check(junction.size() == 2, "Expected both halves of the straight mirror junction.");
+    for (const auto kind : {document::FeatureKind::Chamfer, document::FeatureKind::Fillet}) {
+        document::Feature treatment;
+        treatment.kind = kind;
+        treatment.size = 0.5;
+        treatment.edges = junction;
+        const auto preview = application::FeatureOperation::preview(part, treatment, {}, false);
+        check(preview.changes.added.IsNull() && !preview.changes.removed.IsNull(),
+              "The mirror-junction preview must show removed material.");
+        check(BRepCheck_Analyzer(preview.previewShape).IsValid(), "The mirror junction must stay a valid solid.");
+        preview.document.save(path);
+        expectVolume(document::PartDocument::load(path), volume(preview.previewShape));
+        if (kind == document::FeatureKind::Fillet) {
+            bool exactRadius = false;
+            for (TopExp_Explorer faces(preview.previewShape, TopAbs_FACE); faces.More(); faces.Next()) {
+                const BRepAdaptor_Surface surface(TopoDS::Face(faces.Current()));
+                if (surface.GetType() == GeomAbs_Cylinder &&
+                    std::abs(surface.Cylinder().Radius() - treatment.size) < 1e-7) exactRadius = true;
+            }
+            check(exactRadius, "The fallback must keep the requested radius.");
+        }
+    }
 }
 }
 

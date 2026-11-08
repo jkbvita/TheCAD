@@ -1,4 +1,5 @@
 #include "application/FeatureOperation.h"
+#include <BRepBuilderAPI_Copy.hxx>
 namespace thecad::application
 {
 FeatureOperationResult FeatureOperation::preview(const document::PartDocument& source,
@@ -22,8 +23,11 @@ FeatureOperationResult FeatureOperation::preview(const document::PartDocument& s
     else
         id = candidate.addExtrudeRegions(feature.sketchId, regions, feature.length,
                                          feature.direction);
-    const auto before = editing ? source.solidBefore(id) : source.shape();
+    auto before = editing ? source.solidBefore(id) : source.shape();
     const auto result = candidate.solidResult(id);
+    // A background edge preview can run while the viewport presents the stock.
+    if (document::isEdgeFeature(feature.kind) && !before.IsNull())
+        before = BRepBuilderAPI_Copy(before, true, false).Shape();
     auto changes = modeling::materialChanges(before, result);
     return {std::move(candidate), std::move(id), std::move(changes), result};
 }

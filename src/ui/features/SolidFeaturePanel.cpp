@@ -1,5 +1,6 @@
 #include "ui/features/SolidFeaturePanel.h"
 #include "ui/PropertyManagerPage.h"
+#include "presentation/SolidPresentation.h"
 #include "modeling/Selection.h"
 #include "modeling/PatternFeatures.h"
 #include <QCheckBox>
@@ -11,6 +12,10 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>
+#include <QPromise>
+#include <QThreadPool>
+#include <QTimer>
+#include <Standard_Failure.hxx>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QVBoxLayout>
@@ -152,7 +157,12 @@ SolidFeaturePanel::SolidFeaturePanel(document::PartDocument source, document::Fe
         m_page->settings->addWidget(new QLabel("Edges — click to add/remove"));
         m_page->settings->addWidget(m_edges);
         rebuildOptions();
-        connect(m_edges, &QListWidget::itemSelectionChanged, this, [this] { refreshPreview(); });
+        initializeEdgePreview();
+        connect(m_edges, &QListWidget::itemSelectionChanged, this, [this] {
+            const bool hadPreview = m_candidate.has_value();
+            queueEdgePreview();
+            if (!hadPreview) emit previewChanged();
+        });
     }
     connect(m_parameter, &QDoubleSpinBox::valueChanged, this, [this] { refreshPreview(); });
     connect(m_parameter->findChild<QLineEdit*>(), &QLineEdit::textChanged, this,
@@ -445,10 +455,121 @@ std::vector<TopoDS_Shape> SolidFeaturePanel::selectedReferences() const
             result.push_back(m_options[std::size_t(m_edges->row(item))].selectionShape);
     return result;
 }
+void SolidFeaturePanel::initializeEdgePreview()
+{
+    m_edgeTimer = new QTimer(this);
+    m_edgeTimer->setSingleShot(true);
+    m_edgeTimer->setInterval(120);
+    m_edgeWorker = new QFutureWatcher<EdgePreview>(this);
+    connect(m_edgeTimer, &QTimer::timeout, this, &SolidFeaturePanel::startEdgePreview);
+    connect(m_edgeWorker, &QFutureWatcher<EdgePreview>::finished, this, &SolidFeaturePanel::finishEdgePreview);
+}
+
+void SolidFeaturePanel::queueEdgePreview()
+{
+    if (m_initializing || m_edgePreviewClosed) return;
+    ++m_edgeRevision;
+    m_confirmEdgeWhenReady = false;
+    m_edgePending = false;
+    m_edgeTimer->stop();
+    const bool hadPreview = m_candidate.has_value();
+    m_candidate.reset();
+    m_page->buttons->button(QDialogButtonBox::Ok)->setEnabled(false);
+    if (hadPreview) emit previewChanged();
+    if (m_edges->selectedItems().isEmpty()) {
+        m_page->setStatus("Select one or more solid edges.");
+        return;
+    }
+    if (!m_parameter->hasAcceptableInput()) {
+        m_page->setStatus("Enter a valid positive parameter.", true);
+        return;
+    }
+    m_page->setStatus("Updating preview…");
+    m_edgePending = true;
+    m_edgeTimer->start();
+}
+
+void SolidFeaturePanel::startEdgePreview()
+{
+    if (!m_edgePending || m_edgeInFlight) return;
+    m_edgeInFlight = true;
+    m_edgePending = false;
+    m_activeEdgeRevision = m_edgeRevision;
+    auto feature = m_feature;
+    feature.size = m_parameter->locale().toDouble(m_parameter->cleanText());
+    feature.edges.clear();
+    for (auto* item : m_edges->selectedItems())
+        feature.edges.push_back(m_options[std::size_t(m_edges->row(item))].reference);
+
+    QPromise<EdgePreview> promise;
+    promise.start();
+    m_edgeWorker->setFuture(promise.future());
+    QThreadPool::globalInstance()->start(
+        [source = m_source, feature = std::move(feature), editing = m_editing,
+         promise = std::move(promise)]() mutable {
+            EdgePreview outcome;
+            try {
+                auto preview = application::FeatureOperation::preview(source, feature, {}, editing);
+                presentation::prepareSolidTriangulation(preview.previewShape);
+                presentation::prepareSolidTriangulation(preview.changes.added);
+                presentation::prepareSolidTriangulation(preview.changes.removed);
+                outcome.candidate = std::move(preview);
+            } catch (const std::exception& error) {
+                outcome.error = QString::fromUtf8(error.what());
+            } catch (const Standard_Failure& error) {
+                outcome.error = QString::fromUtf8(error.GetMessageString());
+            }
+            promise.addResult(std::move(outcome));
+            promise.finish();
+        });
+}
+
+void SolidFeaturePanel::finishEdgePreview()
+{
+    auto result = m_edgeWorker->future().takeResult();
+    m_edgeInFlight = false;
+    if (m_activeEdgeRevision == m_edgeRevision) {
+        m_candidate = std::move(result.candidate);
+        if (m_candidate) m_page->setStatus("Preview ready. Enter confirms; Esc cancels.");
+        else m_page->setStatus(result.error, true);
+        auto* confirm = m_page->buttons->button(QDialogButtonBox::Ok);
+        confirm->setEnabled(m_candidate.has_value());
+        emit previewChanged();
+        if (m_candidate && m_confirmEdgeWhenReady) {
+            m_confirmEdgeWhenReady = false;
+            confirm->click();
+            return;
+        }
+    }
+    if (m_edgePending && !m_edgeTimer->isActive()) startEdgePreview();
+}
+
+void SolidFeaturePanel::stopEdgePreview()
+{
+    if (!m_edgeTimer) return;
+    m_edgePreviewClosed = true;
+    m_edgeTimer->stop();
+    m_edgePending = false;
+    m_confirmEdgeWhenReady = false;
+    ++m_edgeRevision;
+}
+
+bool SolidFeaturePanel::readyToConfirm()
+{
+    if (!m_edges) refreshPreview();
+    else if (!m_candidate && (m_edgePending || m_edgeInFlight))
+        m_confirmEdgeWhenReady = true;
+    return m_candidate.has_value();
+}
+
 void SolidFeaturePanel::refreshPreview()
 {
     if (m_initializing)
         return;
+    if (m_edges) {
+        queueEdgePreview();
+        return;
+    }
     m_candidate.reset();
     m_page->buttons->button(QDialogButtonBox::Ok)->setEnabled(false);
     try
@@ -493,15 +614,6 @@ void SolidFeaturePanel::refreshPreview()
                 throw std::runtime_error("Select at least one closed contour.");
             feature.contour.clear();
             feature.contours = regions;
-        }
-        else
-        {
-            feature.size = value;
-            feature.edges.clear();
-            for (auto* item : m_edges->selectedItems())
-                feature.edges.push_back(m_options[std::size_t(m_edges->row(item))].reference);
-            if (feature.edges.empty())
-                throw std::runtime_error("Select one or more solid edges.");
         }
         m_candidate = application::FeatureOperation::preview(m_source, feature, regions, m_editing);
         m_page->setStatus("Preview ready. Enter confirms; Esc cancels.");

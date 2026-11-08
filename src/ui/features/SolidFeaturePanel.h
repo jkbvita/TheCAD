@@ -2,6 +2,7 @@
 #include "application/FeatureOperation.h"
 #include "modeling/Selection.h"
 #include <QWidget>
+#include <QFutureWatcher>
 #include <optional>
 class QComboBox;
 class QCheckBox;
@@ -10,6 +11,7 @@ class QFormLayout;
 class QListWidget;
 class QPushButton;
 class QSpinBox;
+class QTimer;
 namespace thecad::ui
 {
 class PropertyManagerPage;
@@ -38,6 +40,8 @@ public:
     void pickTree(const QString& id);
     void preselect(const std::vector<modeling::SelectionRef>&);
     void refreshPreview();
+    bool readyToConfirm();
+    void stopEdgePreview();
     void focusParameter();
     bool parameterContains(QWidget*) const;
     QDoubleSpinBox* parameter() const { return m_parameter; }
@@ -52,6 +56,22 @@ private:
     void sketchChanged();
     void setContourMode(bool);
     void rebuildOptions();
+    void initializeEdgePreview();
+    void queueEdgePreview();
+    void startEdgePreview();
+    void finishEdgePreview();
+    struct EdgePreview {
+        std::optional<application::FeatureOperationResult> candidate;
+        QString error;
+    };
+    QTimer* m_edgeTimer = nullptr;
+    QFutureWatcher<EdgePreview>* m_edgeWorker = nullptr;
+    std::size_t m_edgeRevision = 0;
+    std::size_t m_activeEdgeRevision = 0;
+    bool m_edgePending = false;
+    bool m_edgeInFlight = false;
+    bool m_edgePreviewClosed = false;
+    bool m_confirmEdgeWhenReady = false;
     document::PartDocument m_source, m_support;
     document::Feature m_feature;
     bool m_editing = false, m_contourMode = false, m_initializing = true;

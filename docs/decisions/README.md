@@ -78,6 +78,8 @@ approved scope do not need repeated approval.
 
 - [0043. Drafted edges, standard views, and Measure](0043-drafted-edges-views-evaluate.md)
 
+- [0044. Mirror-junction edge treatments and preview responsiveness](0044-mirror-junction-edge-treatments.md)
+
 ## Pending owner decisions
 
 - Resilient face references beyond the approved conservative planar-face strategy.

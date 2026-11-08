@@ -104,7 +104,8 @@ public:
     void deleteReferenceGeometry(const std::vector<std::string>& ids,bool includeDependents=false);
 
 private:
-    void apply(std::vector<Feature> features, bool validateDependencies = false);
+    void apply(std::vector<Feature> features, bool validateDependencies = false,
+               std::size_t unchangedPrefix = 0);
     std::string nextId(FeatureKind kind) const;
     BoxParameters m_parameters;
     TopoDS_Shape m_shape;

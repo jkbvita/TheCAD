@@ -94,6 +94,12 @@ void shadeConeTip(const TopoDS_Face& face)
     }
 }
 
+void setSolidMeshQuality(const Handle(Prs3d_Drawer)& drawer)
+{
+    drawer->SetDeviationCoefficient(0.0001);
+    drawer->SetDeviationAngle(0.05);
+}
+
 class SolidPresentation final : public AIS_Shape
 {
 public:
@@ -102,8 +108,7 @@ public:
         SetMaterial(Graphic3d_NOM_PLASTIC);
         SetColor(modelGray());
         Attributes()->ShadingAspect()->Aspect()->SetShadingModel(Graphic3d_TOSM_FRAGMENT);
-        Attributes()->SetDeviationCoefficient(0.0001);
-        Attributes()->SetDeviationAngle(0.05);
+        setSolidMeshQuality(Attributes());
         Attributes()->SetFaceBoundaryDraw(false);
         Attributes()->SetAutoTriangulation(false);
     }
@@ -135,6 +140,14 @@ protected:
     }
 };
 } // namespace
+
+void prepareSolidTriangulation(const TopoDS_Shape& shape)
+{
+    if (shape.IsNull()) return;
+    Handle(Prs3d_Drawer) drawer = new Prs3d_Drawer;
+    setSolidMeshQuality(drawer);
+    StdPrs_ToolTriangulatedShape::Tessellate(shape, drawer);
+}
 
 Handle(AIS_Shape) makeSolidPresentation(const TopoDS_Shape& shape)
 {

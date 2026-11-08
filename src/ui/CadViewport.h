@@ -310,6 +310,7 @@ private:
     std::optional<modeling::DatumKind> m_referenceCandidateKind;
     std::string m_selectedDatum,m_hoveredDatum;
     Handle(AIS_Shape) m_referenceHover;
+    int m_hoveredReferenceCandidate = -1;
     void updateDatumStyles();
     std::vector<std::string> datumIdsAt(const QPointF& position);
     void updateReferenceHover(const QPointF& position);

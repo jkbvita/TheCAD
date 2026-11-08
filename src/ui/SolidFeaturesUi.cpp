@@ -137,8 +137,7 @@ void MainWindow::finishSolidFeature(bool accepted)
         return;
     if (accepted)
     {
-        m_solidFeature->refreshPreview();
-        if (!m_solidFeature->candidate())
+        if (!m_solidFeature->readyToConfirm())
             return;
         const auto result = *m_solidFeature->candidate();
         m_viewport->clearPreview();
@@ -149,6 +148,7 @@ void MainWindow::finishSolidFeature(bool accepted)
             return;
     }
     auto* panel = m_solidFeature;
+    panel->stopEdgePreview();
     const bool mirror = panel->pickingMirrorPlane();
     const bool resume = m_solidFromSketch && !accepted;
     m_solidFeature = nullptr;

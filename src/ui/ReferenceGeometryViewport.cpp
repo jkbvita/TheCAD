@@ -76,7 +76,7 @@ void CadViewport::updateDatumStyles(){if(!isReady())return;for(std::size_t i=0;i
 std::vector<std::string> CadViewport::datumIdsAt(const QPointF& position){std::vector<std::string> ids;if(!isReady()||!m_selectionPolicy.allows(modeling::SelectionKind::ReferencePoint))return ids;for(const auto& d:m_datums)if(d.visible&&pick({{{},d.geometry,modeling::datumDisplayShape(d.geometry,50)}},{},position,m_graphics.view(),m_pickingTolerance,devicePixelRatioF())>=0)ids.push_back(d.id);return ids;}
 std::string CadViewport::datumAt(const QPointF& position,std::optional<modeling::DatumKind> kind){if(!isReady()||!m_selectionPolicy.allows(modeling::SelectionKind::ReferencePoint))return {};std::vector<ReferencePickItem> items;std::vector<std::string> ids;for(const auto& d:m_datums)if(d.visible){items.push_back({{},d.geometry,modeling::datumDisplayShape(d.geometry,50)});ids.push_back(d.id);}const int index=pick(items,kind,position,m_graphics.view(),m_pickingTolerance,devicePixelRatioF());return index<0?"":ids[std::size_t(index)];}
 void CadViewport::setReferenceCandidates(const std::vector<ReferencePickItem>& candidates,std::optional<modeling::DatumKind> kind){
-    m_referenceCandidates=candidates;m_referenceCandidateKind=kind;if(!isReady())return;
+    m_referenceCandidates=candidates;m_referenceCandidateKind=kind;m_hoveredReferenceCandidate=-1;if(!isReady())return;
     for(auto& item:m_referenceCandidates)if(item.reference.source==modeling::ReferenceSource::BasePlane)item.shape=modeling::datumDisplayShape(item.geometry,m_planeHalfExtent);
     for(auto& item:m_referenceCandidatePresentations)m_graphics.context()->Remove(item,Standard_False);m_referenceCandidatePresentations.clear();
     if(!m_referenceHover.IsNull()){m_graphics.context()->Remove(m_referenceHover,Standard_False);m_referenceHover.Nullify();}
@@ -106,9 +106,28 @@ int CadViewport::referenceCandidateAt(const QPointF& position){
         if(m_selectionPolicy.allows(kind)){items.push_back(item);indices.push_back(i);}}
     const int index=pick(items,m_referenceCandidateKind,position,m_graphics.view(),m_pickingTolerance,devicePixelRatioF());return index<0?-1:indices[std::size_t(index)];
 }
-void CadViewport::updateReferenceHover(const QPointF& position){
-    if(!m_referenceHover.IsNull()){m_graphics.context()->Remove(m_referenceHover,Standard_False);m_referenceHover.Nullify();}
-    if(!m_referenceCandidates.empty()){const int index=referenceCandidateAt(position);if(index>=0){m_referenceHover=new AIS_Shape(selectionOutline(m_referenceCandidates[std::size_t(index)].shape));m_referenceHover->SetDisplayMode(AIS_WireFrame);m_referenceHover->SetColor(hoverOrange());m_referenceHover->SetWidth(3*devicePixelRatioF());m_referenceHover->SetZLayer(Graphic3d_ZLayerId_Topmost);m_graphics.context()->Display(m_referenceHover,AIS_WireFrame,-1,Standard_False);}update();return;}
-    const auto hover=datumAt(position);if(hover!=m_hoveredDatum){m_hoveredDatum=hover;updateDatumStyles();update();}
+void CadViewport::updateReferenceHover(const QPointF& position)
+{
+    if (!m_referenceCandidates.empty()) {
+        const int index = referenceCandidateAt(position);
+        if (index == m_hoveredReferenceCandidate) return;
+        m_hoveredReferenceCandidate = index;
+        if (!m_referenceHover.IsNull()) {
+            m_graphics.context()->Remove(m_referenceHover, false);
+            m_referenceHover.Nullify();
+        }
+        if (index >= 0) {
+            m_referenceHover = new AIS_Shape(selectionOutline(m_referenceCandidates[std::size_t(index)].shape));
+            m_referenceHover->SetDisplayMode(AIS_WireFrame);
+            m_referenceHover->SetColor(hoverOrange());
+            m_referenceHover->SetWidth(3 * devicePixelRatioF());
+            m_referenceHover->SetZLayer(Graphic3d_ZLayerId_Topmost);
+            m_graphics.context()->Display(m_referenceHover, AIS_WireFrame, -1, false);
+        }
+        update();
+        return;
+    }
+    const auto hover = datumAt(position);
+    if (hover != m_hoveredDatum) { m_hoveredDatum = hover; updateDatumStyles(); update(); }
 }
 }

@@ -491,7 +491,8 @@ private slots:
             }
         }
         QVERIFY(picked);
-        QVERIFY(panel->candidate());
+        QVERIFY(!panel->candidate()); // Selection returns before the kernel computes the preview.
+        QTRY_VERIFY(panel->candidate());
         QCOMPARE(edges->selectedItems().size(), 1);
         sameCamera(camera, viewport->m_graphics.view()->Camera());
         panel->parameter()->setValue(1e6);
@@ -499,7 +500,7 @@ private slots:
         QVERIFY(!panel->page()->buttons->button(QDialogButtonBox::Ok)->isEnabled());
         QCOMPARE(window.document().features().size(), std::size_t(1));
         panel->parameter()->setValue(1);
-        QVERIFY(panel->candidate());
+        QTRY_VERIFY(panel->candidate());
         panel->page()->buttons->button(QDialogButtonBox::Ok)->click();
         QApplication::processEvents();
         QCOMPARE(window.document().features().size(), std::size_t(2));
@@ -510,9 +511,9 @@ private slots:
         command(window, "actionEditFeature");
         panel = window.findChild<SolidFeaturePanel*>("solidFeaturePanel");
         QVERIFY(panel);
-        QVERIFY(panel->candidate());
+        QTRY_VERIFY(panel->candidate());
         panel->parameter()->setValue(0.5);
-        QVERIFY(panel->candidate());
+        QTRY_VERIFY(panel->candidate());
         QVERIFY(panel->candidate()->changes.added.IsNull());
         QCOMPARE(viewport->m_materialPreviewPresentations.size(), std::size_t(1));
         Quantity_Color removed;
@@ -520,10 +521,12 @@ private slots:
         QVERIFY(removed.Distance(presentation::removedMaterialYellow()) < 1e-8);
         QVERIFY(std::abs(volume(panel->candidate()->changes.removed) -
                          (24000 - volume(panel->candidate()->previewShape))) < 1e-6);
+        panel->parameter()->setValue(1.5);
         panel->parameter()->setValue(2);
-        QVERIFY(panel->candidate());
-        panel->page()->buttons->button(QDialogButtonBox::Ok)->click();
-        QApplication::processEvents();
+        QVERIFY(!panel->candidate());
+        QTest::keyClick(panel->parameter(), Qt::Key_Return);
+        QTRY_VERIFY(window.findChild<SolidFeaturePanel*>() == nullptr);
+        QCOMPARE(window.document().features().back().size, 2.0);
         command(window, "actionUndo");
         QVERIFY(std::abs(volume(window.document().shape()) - original) < 1e-6);
         QVERIFY(std::abs(volume(viewport->displayedShape()) - original) < 1e-6);
@@ -532,6 +535,14 @@ private slots:
         window.document().save(path);
         QVERIFY(document::PartDocument::load(path).features().back().kind ==
                 (chamfer ? document::FeatureKind::Chamfer : document::FeatureKind::Fillet));
+        select(window, id);
+        command(window, "actionEditFeature");
+        panel = window.findChild<SolidFeaturePanel*>();
+        QVERIFY(panel);
+        panel->parameter()->setValue(3);
+        command(window, "actionCancelFeature");
+        QVERIFY(!window.findChild<SolidFeaturePanel*>());
+        QCOMPARE(window.document().features().back().size, 2.0);
         sameCamera(camera, viewport->m_graphics.view()->Camera());
         QVERIFY2(window.errors.isEmpty(), qPrintable(window.errors.join('\n')));
     }

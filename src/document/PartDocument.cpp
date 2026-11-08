@@ -45,7 +45,8 @@ PartDocument PartDocument::createBox(BoxParameters parameters)
     return result;
 }
 
-void PartDocument::apply(std::vector<Feature> features, bool validateDependencies)
+void PartDocument::apply(std::vector<Feature> features, bool validateDependencies,
+                         std::size_t unchangedPrefix)
 {
     if (features.size() > maximumFeatures) fail("Part exceeds the 500-feature prototype limit.");
     TopoDS_Shape body;
@@ -57,8 +58,27 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
     std::map<std::string,modeling::TopologyNames> namedBodies;modeling::TopologyNames bodyNames;
     std::map<std::string,modeling::DatumGeometry> datums;
     std::set<std::string> ids;
+    // An unchanged prefix has already been validated and regenerated.
+    for (std::size_t i = 0; i < unchangedPrefix; ++i) {
+        const auto& cached = m_features[i];
+        ids.insert(cached.id);
+        if (cached.kind == FeatureKind::Box) boxParameters = cached.box;
+        if (cached.kind == FeatureKind::Sketch) sketches.emplace(cached.id, cached.sketch);
+        if (cached.kind == FeatureKind::ReferenceGeometry) datums.emplace(cached.id, cached.datum);
+        if (isSolidFeature(cached.kind)) {
+            solidHistory.emplace_back(cached.id, bodyId);
+            bodyId = cached.id;
+            bodies.emplace(bodyId, m_bodies.at(bodyId));
+            namedBodies.emplace(bodyId, m_namedBodies.at(bodyId));
+        }
+    }
+    if (!bodyId.empty()) {
+        body = bodies.at(bodyId);
+        bodyNames = namedBodies.at(bodyId);
+    }
     try {
-        for (auto& feature : features) {
+        for (auto it = features.begin() + unchangedPrefix; it != features.end(); ++it) {
+            auto& feature = *it;
             validId(feature.id);
             const auto name = q(feature.name);
             if (name.isEmpty() || name.size() > 128 || name.contains(QRegularExpression("[\\x00-\\x1f]")))
@@ -244,11 +264,17 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
                 if(bodyId.empty())fail("Fillet and Chamfer require an earlier solid.");
                 expected.push_back(bodyId);
                 std::vector<TopoDS_Shape> edges;
+                TopTools_IndexedMapOfShape available;
+                TopExp::MapShapes(body, TopAbs_EDGE, available);
+                const auto signature = referenceBodySignature(body);
                 for(auto& ref:feature.edges){
                     if(ref.source!=modeling::ReferenceSource::BodyEdge||ref.featureId!=bodyId||ref.topologyName.empty()||!ref.entityId.empty()||ref.role!=modeling::PointRole::First)
                         fail("Edge treatments require persistent edges of the immediately preceding solid.");
-                    bindGeometryReference(ref,bodies,namedBodies);
-                    edges.push_back(bodyNames.resolve(ref.topologyName,TopAbs_EDGE));
+                    if (ref.topologyName.size() > 8192) fail("Invalid edge topology name.");
+                    const auto edge = bodyNames.resolve(ref.topologyName, TopAbs_EDGE);
+                    ref.index = available.FindIndex(edge);
+                    ref.signature = signature;
+                    edges.push_back(edge);
                 }
                 body=modeling::makeEdgeTreatment(body,edges,feature.size,feature.kind==FeatureKind::Chamfer,bodyNames,feature.id);
                 bodyId=feature.id;
@@ -459,7 +485,10 @@ std::string PartDocument::addSolidFeature(Feature feature)
     default: fail("Use the matching feature operation.");
     }
     feature.name=std::string(label)+feature.id.substr(feature.id.find('-')+1);
-    auto candidate=m_features;candidate.push_back(feature);apply(std::move(candidate));return feature.id;
+    auto candidate = m_features;
+    candidate.push_back(feature);
+    apply(std::move(candidate), false, isEdgeFeature(feature.kind) ? m_features.size() : 0);
+    return feature.id;
 }
 
 std::vector<ReferenceOption> PartDocument::edgeOptions() const
@@ -483,8 +512,9 @@ void PartDocument::replaceFeature(const Feature& feature)
     const auto current = std::find_if(candidate.begin(), candidate.end(), [&](const Feature& f) { return f.id == feature.id; });
     if (current == candidate.end()) fail("Cannot edit an unknown feature.");
     if (current->kind != feature.kind) fail("Editing cannot change a feature's type.");
+    const auto unchanged = isEdgeFeature(feature.kind) ? std::size_t(current - candidate.begin()) : 0;
     *current = feature;
-    apply(std::move(candidate));
+    apply(std::move(candidate), false, unchanged);
 }
 
 std::vector<Feature> PartDocument::featureDeletionDependents(const std::vector<std::string>& ids) const
