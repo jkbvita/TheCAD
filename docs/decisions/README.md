@@ -82,6 +82,8 @@ approved scope do not need repeated approval.
 
 - [0045. Interactive Fillet and Chamfer previews](0045-interactive-edge-previews.md)
 
+- [0046. Fillet and Chamfer corner termination](0046-edge-treatment-terminations.md)
+
 ## Pending owner decisions
 
 - Resilient face references beyond the approved conservative planar-face strategy.

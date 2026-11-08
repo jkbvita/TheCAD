@@ -1,12 +1,20 @@
 #include "document/PartDocument.h"
 #include "application/DocumentSession.h"
 #include "application/FeatureOperation.h"
+#include "modeling/PlanarEdgeTreatment.h"
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepGProp.hxx>
 #include <BRepAdaptor_Curve.hxx>
+#include <BRepAdaptor_Surface.hxx>
+#include <BRepBndLib.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepPrimAPI_MakePrism.hxx>
+#include <Bnd_Box.hxx>
 #include <GProp_GProps.hxx>
 #include <QCoreApplication>
 #include <QFile>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTemporaryDir>
@@ -102,6 +110,91 @@ void roundTrip(document::PartDocument doc, const QString& path)
     loaded.save(path);
     require(saved == bytes(path), "Persistent feature parameters are not deterministic");
 }
+
+void trimmedPlanarTerminations()
+{
+    for (const double slope : {0.5, 5.0}) {
+        BRepBuilderAPI_MakePolygon outline(gp_Pnt(0, 0, 0), gp_Pnt(20, 0, 0),
+                                          gp_Pnt(20 + 10 * slope, 10, 0),
+                                          gp_Pnt(-10 * slope, 10, 0), true);
+        const auto stock =
+            BRepPrimAPI_MakePrism(BRepBuilderAPI_MakeFace(outline.Wire()).Face(), gp_Vec(0, 0, 10))
+                .Shape();
+        TopTools_IndexedMapOfShape edges;
+        TopExp::MapShapes(stock, TopAbs_EDGE, edges);
+        TopoDS_Shape crease;
+        for (int i = 1; i <= edges.Extent(); ++i) {
+            const BRepAdaptor_Curve curve(TopoDS::Edge(edges(i)));
+            const auto midpoint = curve.Value((curve.FirstParameter() + curve.LastParameter()) / 2);
+            if (midpoint.IsEqual(gp_Pnt(10, 0, 0), 1e-7)) crease = edges(i);
+        }
+        require(!crease.IsNull(), "Missing test crease");
+        for (const bool chamfer : {false, true}) {
+            modeling::TopologyNames names;
+            names.add("crease", crease);
+            auto legacyNames = names;
+            const auto legacy = modeling::cutPlanarEdgeTreatments(stock, {crease}, 2, chamfer,
+                                                                  legacyNames, "test", true);
+            const auto start = modeling::topologyKey("treatment-start", {"test", "crease"});
+            const auto end = modeling::topologyKey("treatment-end", {"test", "crease"});
+            require(!legacy.IsNull() && !legacyNames.images.at(start).empty() &&
+                        !legacyNames.images.at(end).empty(),
+                    "Fixture must expose both old cutter caps");
+            const auto result =
+                modeling::cutPlanarEdgeTreatments(stock, {crease}, 2, chamfer, names, "test", false);
+            if (slope > 1) {
+                require(result.IsNull() && names.images.size() == 1,
+                        "A cutter that ends inside the solid must fail transactionally");
+                continue;
+            }
+            require(!result.IsNull() && BRepCheck_Analyzer(result).IsValid(),
+                    "Inclined end faces must trim the treatment");
+            require(names.images.count(start) == 0 && names.images.count(end) == 0,
+                    "The result must not contain cutter caps");
+            const auto face = names.resolve(modeling::topologyKey("treatment", {"test", "crease"}),
+                                            TopAbs_FACE);
+            Bnd_Box bounds;
+            BRepBndLib::AddOptimal(face, bounds, false, false);
+            double xmin, ymin, zmin, xmax, ymax, zmax;
+            bounds.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+            require(closeEnough(xmin, -1) && closeEnough(xmax, 21),
+                    "The treatment must follow the inclined ends past the original edge tips");
+            const BRepAdaptor_Surface surface(TopoDS::Face(face));
+            require(chamfer ? surface.GetType() == GeomAbs_Plane
+                            : surface.GetType() == GeomAbs_Cylinder &&
+                                  closeEnough(surface.Cylinder().Radius(), 2),
+                    "Corner trimming changed the requested treatment section");
+        }
+    }
+}
+
+void legacyEdgeTreatmentRoundTrip(const QString& path)
+{
+    auto box = document::PartDocument::createBox();
+    box.addSolidFeature(treatment(box));
+    box.save(path);
+    auto older = QJsonDocument::fromJson(bytes(path)).object();
+    auto features = older["features"].toArray();
+    auto fillet = features.last().toObject();
+    fillet.remove("termination");
+    features[features.size() - 1] = fillet;
+    older["features"] = features;
+    older["version"] = 24;
+    QFile file(path);
+    require(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "Write legacy fixture");
+    file.write(QJsonDocument(older).toJson());
+    file.close();
+    auto loaded = document::PartDocument::load(path);
+    require(loaded.features().back().legacyEdgeTermination && closeEnough(volume(loaded), volume(box)),
+            "Older edge treatments must keep their original replay mode");
+    roundTrip(loaded, path);
+    auto edit = loaded.features().back();
+    edit.size = 1;
+    loaded.replaceFeature(edit);
+    require(!loaded.features().back().legacyEdgeTermination,
+            "Editing an edge treatment must use the corrected termination");
+    roundTrip(loaded, path);
+}
 } // namespace
 int main(int argc, char** argv)
 {
@@ -111,6 +204,8 @@ int main(int argc, char** argv)
         QTemporaryDir temp;
         require(temp.isValid(), "temp");
         const auto path = temp.filePath("solid-features.thepart");
+        trimmedPlanarTerminations();
+        legacyEdgeTreatmentRoundTrip(path);
         const double pi = std::acos(-1.0);
         for (const auto plane :
              {modeling::SketchPlane::XY, modeling::SketchPlane::XZ, modeling::SketchPlane::YZ})

@@ -614,9 +614,9 @@ PartDocument PartFileStore::load(const QString& path)
     if (root.value("units") != QJsonValue("mm"))
         fail("Unsupported units; this prototype supports millimeters only.");
     const auto versionValue = root.value("version");
-    if (!versionValue.isDouble() || versionValue.toDouble() < 1 || versionValue.toDouble() > 24 ||
+    if (!versionValue.isDouble() || versionValue.toDouble() < 1 || versionValue.toDouble() > 25 ||
         versionValue.toDouble() != std::floor(versionValue.toDouble()))
-        fail("Unsupported part document version; expected versions 1 through 24.");
+        fail("Unsupported part document version; expected versions 1 through 25.");
     const int version = versionValue.toInt();
     if (!root.value("features").isArray())
         fail("Part features must be an ordered array.");
@@ -916,7 +916,13 @@ PartDocument PartFileStore::load(const QString& path)
             }
             else if (version >= 17 && (type == "fillet" || type == "chamfer"))
             {
-                fields(object,{"id","name","type","size","edges","dependencies"},"Edge treatment");
+                QSet<QString> expected{"id", "name", "type", "size", "edges", "dependencies"};
+                const bool trimmedEnds = version >= 25 && object.contains("termination");
+                if (trimmedEnds) expected.insert("termination");
+                fields(object, expected, "Edge treatment");
+                if (trimmedEnds && object["termination"] != "trimmed")
+                    fail("Unsupported edge treatment termination.");
+                feature.legacyEdgeTermination = !trimmedEnds;
                 feature.kind=type=="fillet"?FeatureKind::Fillet:FeatureKind::Chamfer;
                 feature.size=number(object["size"],"Radius/distance");
                 if(!object["edges"].isArray()||object["edges"].toArray().isEmpty()||object["edges"].toArray().size()>1000)
@@ -1162,6 +1168,7 @@ void PartFileStore::save(const PartDocument& document, const QString& path)
         else if(isEdgeFeature(feature.kind))
         {
             object["size"]=feature.size;
+            if (!feature.legacyEdgeTermination) object["termination"] = "trimmed";
             QJsonArray edges;for(const auto& edge:feature.edges)edges.append(writeGeometryReference(edge));
             object["edges"]=edges;
         }
@@ -1234,6 +1241,10 @@ void PartFileStore::save(const PartDocument& document, const QString& path)
         else if (version < 17 && (isRevolveFeature(feature.kind) || isEdgeFeature(feature.kind)))
             version = 17;
     }
+    if (std::any_of(document.features().begin(), document.features().end(), [](const auto& feature) {
+            return isEdgeFeature(feature.kind) && !feature.legacyEdgeTermination;
+        }))
+        version = 25;
     const QJsonObject root{{"format", "TheCAD.Part"},
                            {"version", version},
                            {"units", "mm"},

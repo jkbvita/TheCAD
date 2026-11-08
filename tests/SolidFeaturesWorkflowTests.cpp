@@ -92,7 +92,8 @@ private slots:
         QTRY_VERIFY(viewport->isReady());
         QVERIFY(window.openPartFile(path));
         QElapsedTimer timer;
-        command(window, "actionFillet");
+        const bool chamfer = qEnvironmentVariable("THECAD_TEST_EDGE_TOOL") == "chamfer";
+        command(window, chamfer ? "actionChamfer" : "actionFillet");
         auto* panel = window.findChild<SolidFeaturePanel*>();
         QVERIFY(panel);
         const auto originalCount = window.document().features().size();
@@ -123,7 +124,8 @@ private slots:
                     << "ms, confirmation" << confirm << "ms";
             QVERIFY2(preview < budgetMs, "The treatment preview missed its latency budget.");
             QCOMPARE(window.document().features().size(), originalCount + 1);
-            QCOMPARE(window.document().features().back().kind, document::FeatureKind::Fillet);
+            QCOMPARE(window.document().features().back().kind,
+                     chamfer ? document::FeatureKind::Chamfer : document::FeatureKind::Fillet);
             QVERIFY(window.errors.isEmpty());
             return;
         }

@@ -21,9 +21,12 @@
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Vertex.hxx>
+#include <gp_Lin.hxx>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <optional>
+#include <utility>
 
 namespace thecad::modeling {
 namespace {
@@ -65,16 +68,34 @@ struct Cutter {
     TopoDS_Shape solid;
     TopoDS_Shape treatmentFace;
     TopoDS_Shape startFace, endFace;
+    TopoDS_Shape firstSide, secondSide;
+    std::vector<TopoDS_Vertex> creaseVertices;
 };
 
 std::optional<Cutter> buildCutter(const TopoDS_Shape& body, const TopoDS_Edge& edge,
                                   const TopoDS_Face& firstFace, const TopoDS_Face& secondFace,
-                                  double size, bool chamfer)
+                                  double size, bool chamfer, bool legacyEnds,
+                                  const TopTools_IndexedDataMapOfShapeListOfShape& neighbors,
+                                  const TopTools_IndexedDataMapOfShapeListOfShape& incident)
 {
     const BRepAdaptor_Curve curve(edge);
     if (curve.GetType() != GeomAbs_Line) return {};
-    const auto first = curve.Value(curve.FirstParameter());
-    const auto last = curve.Value(curve.LastParameter());
+    auto first = curve.Value(curve.FirstParameter());
+    auto last = curve.Value(curve.LastParameter());
+    TopoDS_Vertex firstVertex, lastVertex;
+    TopExp::Vertices(TopoDS::Edge(edge.Oriented(TopAbs_FORWARD)), firstVertex, lastVertex);
+    if (firstVertex.IsNull() || lastVertex.IsNull()) return {};
+    if (!legacyEnds) {
+        // Opposite picks on a split crease must sweep the same oriented section.
+        const auto direction = last.XYZ() - first.XYZ();
+        const std::array components{direction.X(), direction.Y(), direction.Z()};
+        const auto major = std::max_element(components.begin(), components.end(),
+            [](double a, double b) { return std::abs(a) < std::abs(b); });
+        if (*major > 0) {
+            std::swap(first, last);
+            std::swap(firstVertex, lastVertex);
+        }
+    }
     const gp_Vec sweep(first, last);
     if (sweep.Magnitude() <= epsilon) return {};
     const auto center = interpolate(first, last, 0.5);
@@ -96,36 +117,93 @@ std::optional<Cutter> buildCutter(const TopoDS_Shape& body, const TopoDS_Edge& e
     BRepClass3d_SolidClassifier classifier(body, center.Translated(bisector * std::min(sample, setback * 0.1)), epsilon);
     if (classifier.State() != TopAbs_IN) return {};
 
-    const auto start = first.Translated(*a * setback);
-    const auto finish = first.Translated(*b * setback);
+    auto toolStart = first;
+    auto toolEnd = last;
+    std::vector<TopoDS_Vertex> creaseVertices{firstVertex, lastVertex};
+    if (!legacyEnds) {
+        // Continue through topological splits of the same straight crease.
+        const auto extendThroughSplits = [&](gp_Pnt tip, TopoDS_Vertex vertex, const gp_Vec& outward) {
+            const gp_Lin path(tip, gp_Dir(outward));
+            while (!vertex.IsNull() && incident.Contains(vertex)) {
+                TopoDS_Vertex nextVertex;
+                gp_Pnt nextTip;
+                for (const auto& continuation : incident.FindFromKey(vertex)) {
+                    const auto& faces = neighbors.FindFromKey(continuation);
+                    if (faces.Extent() != 2) continue;
+                    const auto faceA = TopoDS::Face(faces.First());
+                    const auto faceB = TopoDS::Face(faces.Last());
+                    if (BRepAdaptor_Surface(faceA).GetType() != GeomAbs_Plane ||
+                        BRepAdaptor_Surface(faceB).GetType() != GeomAbs_Plane ||
+                        !((samePlane(firstFace, faceA) && samePlane(secondFace, faceB)) ||
+                          (samePlane(firstFace, faceB) && samePlane(secondFace, faceA)))) continue;
+                    const auto candidate = TopoDS::Edge(continuation);
+                    if (BRepAdaptor_Curve(candidate).GetType() != GeomAbs_Line) continue;
+                    TopoDS_Vertex v1, v2;
+                    TopExp::Vertices(candidate, v1, v2);
+                    const auto other = v1.IsSame(vertex) ? v2 : v1;
+                    if (other.IsNull()) continue;
+                    const auto point = BRep_Tool::Pnt(other);
+                    if (path.Distance(point) > epsilon ||
+                        gp_Vec(tip, point).Dot(outward) <= epsilon) continue;
+                    if (!nextVertex.IsNull()) return tip;
+                    nextVertex = other;
+                    const auto along = gp_Vec(path.Location(), point).Dot(outward);
+                    nextTip = path.Location().Translated(outward * along);
+                }
+                if (nextVertex.IsNull()) break;
+                vertex = nextVertex;
+                tip = nextTip;
+                creaseVertices.push_back(vertex);
+            }
+            return tip;
+        };
+        // Give the actual surrounding faces room to trim the exact-radius section.
+        // A tool whose artificial end still bounds the result will be rejected.
+        const double overrun = 3 * setback + 100 * epsilon;
+        toolStart = extendThroughSplits(first, firstVertex, -axis).Translated(-axis * overrun);
+        toolEnd = extendThroughSplits(last, lastVertex, axis).Translated(axis * overrun);
+    }
+    const auto start = toolStart.Translated(*a * setback);
+    const auto finish = toolStart.Translated(*b * setback);
     TopoDS_Edge profile;
     if (chamfer) {
         profile = BRepBuilderAPI_MakeEdge(start, finish).Edge();
     } else {
-        const auto midpoint = first.Translated(bisector * (size / std::sin(halfAngle) - size));
+        const auto midpoint = toolStart.Translated(bisector * (size / std::sin(halfAngle) - size));
         GC_MakeArcOfCircle arc(start, midpoint, finish);
         if (!arc.IsDone()) return {};
         profile = BRepBuilderAPI_MakeEdge(arc.Value()).Edge();
     }
-    BRepBuilderAPI_MakeWire wire(BRepBuilderAPI_MakeEdge(first, start).Edge());
+    BRepBuilderAPI_MakeWire wire(BRepBuilderAPI_MakeEdge(toolStart, start).Edge());
+    const auto firstSide = wire.Edge();
     wire.Add(profile);
     if (!wire.IsDone()) return {};
     const auto treatment = wire.Edge();
-    wire.Add(BRepBuilderAPI_MakeEdge(finish, first).Edge());
+    wire.Add(BRepBuilderAPI_MakeEdge(finish, toolStart).Edge());
     if (!wire.IsDone()) return {};
+    const auto secondSide = wire.Edge();
     BRepBuilderAPI_MakeFace face(wire.Wire(), true);
     if (!face.IsDone()) return {};
-    BRepPrimAPI_MakePrism prism(face.Face(), sweep, true);
+    BRepPrimAPI_MakePrism prism(face.Face(), gp_Vec(toolStart, toolEnd), true);
     if (!prism.IsDone() || prism.Generated(treatment).Extent() != 1) return {};
-    return Cutter{prism.Shape(), prism.Generated(treatment).First(),
-                  prism.FirstShape(), prism.LastShape()};
+    Cutter cutter{prism.Shape(), prism.Generated(treatment).First(),
+                  prism.FirstShape(), prism.LastShape(), {}, {}, std::move(creaseVertices)};
+    if (!legacyEnds) {
+        const auto& firstFaces = prism.Generated(firstSide);
+        if (firstFaces.Extent() != 1) return {};
+        cutter.firstSide = firstFaces.First();
+        const auto& secondFaces = prism.Generated(secondSide);
+        if (secondFaces.Extent() != 1) return {};
+        cutter.secondSide = secondFaces.First();
+    }
+    return cutter;
 }
 }
 
 TopoDS_Shape cutPlanarEdgeTreatments(const TopoDS_Shape& body,
                                    const std::vector<TopoDS_Shape>& edges,
                                    double size, bool chamfer, TopologyNames& names,
-                                   const std::string& featureId)
+                                   const std::string& featureId, bool legacyEnds)
 {
     if (body.IsNull() || edges.empty()) return {};
     // Only a continuation on the same two planes can share an endpoint.
@@ -133,6 +211,8 @@ TopoDS_Shape cutPlanarEdgeTreatments(const TopoDS_Shape& body,
     std::vector<std::pair<TopoDS_Face, TopoDS_Face>> supportsAtVertex;
     TopTools_IndexedDataMapOfShapeListOfShape neighbors;
     TopExp::MapShapesAndUniqueAncestors(body, TopAbs_EDGE, TopAbs_FACE, neighbors);
+    TopTools_IndexedDataMapOfShapeListOfShape incident;
+    if (!legacyEnds) TopExp::MapShapesAndUniqueAncestors(body, TopAbs_VERTEX, TopAbs_EDGE, incident);
     TopExp_Explorer solids(body, TopAbs_SOLID);
     if (!solids.More()) return {};
     solids.Next();
@@ -141,31 +221,38 @@ TopoDS_Shape cutPlanarEdgeTreatments(const TopoDS_Shape& body,
     arguments.Append(body);
     auto resultNames = names;
     std::vector<std::string> treatmentKeys;
+    std::vector<TopoDS_Shape> artificialFaces;
     for (const auto& selected : edges) {
         if (!neighbors.Contains(selected)) return {};
         const auto& faces = neighbors.FindFromKey(selected);
         if (faces.Extent() != 2) return {};
         const auto first = TopoDS::Face(faces.First());
         const auto second = TopoDS::Face(faces.Last());
-        const auto cutter = buildCutter(body, TopoDS::Edge(selected), first, second, size, chamfer);
+        const auto cutter = buildCutter(body, TopoDS::Edge(selected), first, second, size, chamfer,
+                                        legacyEnds, neighbors, incident);
         const auto source = names.nameOf(selected);
         if (!cutter || source.empty()) return {};
-        for (TopExp_Explorer points(selected, TopAbs_VERTEX); points.More(); points.Next()) {
-            const int previous = vertices.FindIndex(points.Current());
+        for (const auto& point : cutter->creaseVertices) {
+            const int previous = vertices.FindIndex(point);
             if (previous > 0) {
                 const auto& [a, b] = supportsAtVertex[std::size_t(previous - 1)];
                 if (!((samePlane(a, first) && samePlane(b, second)) ||
                       (samePlane(a, second) && samePlane(b, first)))) return {};
             } else {
-                vertices.Add(points.Current());
+                vertices.Add(point);
                 supportsAtVertex.emplace_back(first, second);
             }
         }
         tools.Append(cutter->solid);
         treatmentKeys.push_back(topologyKey("treatment", {featureId, source}));
         resultNames.add(treatmentKeys.back(), cutter->treatmentFace);
-        resultNames.add(topologyKey("treatment-start", {featureId, source}), cutter->startFace);
-        resultNames.add(topologyKey("treatment-end", {featureId, source}), cutter->endFace);
+        if (legacyEnds) {
+            resultNames.add(topologyKey("treatment-start", {featureId, source}), cutter->startFace);
+            resultNames.add(topologyKey("treatment-end", {featureId, source}), cutter->endFace);
+        } else {
+            artificialFaces.insert(artificialFaces.end(), {cutter->startFace, cutter->endFace,
+                                                            cutter->firstSide, cutter->secondSide});
+        }
     }
     BRepAlgoAPI_Cut cut;
     cut.SetArguments(arguments);
@@ -173,6 +260,25 @@ TopoDS_Shape cutPlanarEdgeTreatments(const TopoDS_Shape& body,
     cut.SetNonDestructive(true);
     cut.Build();
     if (!cut.IsDone() || cut.HasErrors()) return {};
+    if (!legacyEnds) {
+        // A fragment that also comes from a stock face is an existing boundary,
+        // even when the Boolean reports it in the cutter's history too.
+        TopTools_IndexedMapOfShape resultFaces;
+        TopExp::MapShapes(cut.Shape(), TopAbs_FACE, resultFaces);
+        TopTools_IndexedMapOfShape stockFaces;
+        for (TopExp_Explorer faces(body, TopAbs_FACE); faces.More(); faces.Next()) {
+            const auto& face = faces.Current();
+            const auto& images = cut.Modified(face);
+            stockFaces.Add(face);
+            for (const auto& image : images)
+                stockFaces.Add(image);
+        }
+        for (const auto& face : artificialFaces) {
+            if (resultFaces.Contains(face) && !stockFaces.Contains(face)) return {};
+            for (const auto& fragment : cut.Modified(face))
+                if (resultFaces.Contains(fragment) && !stockFaces.Contains(fragment)) return {};
+        }
+    }
     cut.SimplifyResult();
     const auto result = cut.Shape();
     TopExp_Explorer resultSolids(result, TopAbs_SOLID);

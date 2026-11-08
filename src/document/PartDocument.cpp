@@ -278,7 +278,9 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
                     ref.signature = signature;
                     edges.push_back(edge);
                 }
-                body=modeling::makeEdgeTreatment(body,edges,feature.size,feature.kind==FeatureKind::Chamfer,bodyNames,feature.id);
+                body = modeling::makeEdgeTreatment(body, edges, feature.size,
+                    feature.kind == FeatureKind::Chamfer, bodyNames, feature.id,
+                    feature.legacyEdgeTermination);
                 bodyId=feature.id;
             } else if (feature.kind == FeatureKind::Extrude || feature.kind == FeatureKind::Cut) {
                 const auto source = sketches.find(feature.sketchId);
@@ -559,6 +561,7 @@ void PartDocument::replaceFeature(const Feature& feature)
     if (current->kind != feature.kind) fail("Editing cannot change a feature's type.");
     const auto unchanged = isEdgeFeature(feature.kind) ? std::size_t(current - candidate.begin()) : 0;
     *current = feature;
+    if (isEdgeFeature(feature.kind)) current->legacyEdgeTermination = false;
     apply(std::move(candidate), false, unchanged);
 }
 

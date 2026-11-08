@@ -51,6 +51,7 @@ struct Feature {
     std::optional<modeling::ExtrudeDefinition> extrusion;
     double angle = 360.0;
     double size = 2.0; // Constant fillet radius / equal chamfer distance, in mm.
+    bool legacyEdgeTermination = false; // Preserve edge-treatment replay for older files.
     std::optional<modeling::GeometryReference> axis;
     std::vector<modeling::GeometryReference> edges;
     PatternParameters pattern;

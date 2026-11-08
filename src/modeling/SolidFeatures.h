@@ -14,5 +14,5 @@ TopoDS_Shape makeSweep(const TopoDS_Shape& base, const Sketch& profile, const Sk
                        TopologyNames& names, const std::string& featureKey);
 TopoDS_Shape makeEdgeTreatment(const TopoDS_Shape& base, const std::vector<TopoDS_Shape>& edges,
                                double size, bool chamfer, TopologyNames& names,
-                               const std::string& featureId);
+                               const std::string& featureId, bool legacyEnds = false);
 } // namespace thecad::modeling

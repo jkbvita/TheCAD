@@ -176,7 +176,7 @@ TopoDS_Shape makeRevolutions(const TopoDS_Shape& base, const Sketch& sketch,
 }
 TopoDS_Shape makeEdgeTreatment(const TopoDS_Shape& base, const std::vector<TopoDS_Shape>& edges,
                                double size, bool chamfer, TopologyNames& names,
-                               const std::string& featureId)
+                               const std::string& featureId, bool legacyEnds)
 {
     require(!base.IsNull(), "Fillet and Chamfer require an existing solid.");
     require(std::isfinite(size) && size > 0 && size <= 1e9,
@@ -228,15 +228,15 @@ TopoDS_Shape makeEdgeTreatment(const TopoDS_Shape& base, const std::vector<TopoD
     } catch (const std::runtime_error&) {
         nativeFailure = std::current_exception();
     }
-    // Native rolling blends can fail where a straight planar edge terminates
-    // at a mirror or at a previous blend. Keep the exact requested section.
+    // The native builder owns general corner blends. Only retry straight,
+    // planar sections that can be trimmed by the existing solid.
     try {
         BRepBuilderAPI_Copy fresh(base, true, true);
         auto fallbackNames = propagateTopology(names, fresh, fresh.Shape());
         std::vector<TopoDS_Shape> fallbackEdges;
         for (const auto& edge : edges) fallbackEdges.push_back(fresh.ModifiedShape(edge));
         const auto fallback = cutPlanarEdgeTreatments(fresh.Shape(), fallbackEdges, size, chamfer,
-                                                       fallbackNames, featureId);
+                                                       fallbackNames, featureId, legacyEnds);
         if (!fallback.IsNull()) {
             names = std::move(fallbackNames);
             return fallback;
