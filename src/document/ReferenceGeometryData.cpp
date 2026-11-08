@@ -127,11 +127,21 @@ DatumGeometry PartDocument::resolveReference(const GeometryReference& ref) const
 std::string PartDocument::addReferenceGeometry(const DatumDefinition& definition){Feature feature;feature.kind=FeatureKind::ReferenceGeometry;feature.id=nextId(feature.kind);feature.reference=definition;const auto kind=datumKind(definition.method);const auto count=std::count_if(m_features.begin(),m_features.end(),[&](const auto& f){return f.kind==FeatureKind::ReferenceGeometry&&f.datum.kind==kind;});feature.name=std::string(kind==DatumKind::Point?"Point":kind==DatumKind::Axis?"Axis":"Plane")+std::to_string(count+1);auto features=m_features;features.push_back(feature);apply(std::move(features));return feature.id;}
 Sketch PartDocument::sketchOnReferencePlane(const std::string& id) const{GeometryReference ref;ref.source=ReferenceSource::Datum;ref.featureId=id;const auto datum=resolveReference(ref);require(datum.kind==DatumKind::Plane,"Sketch support must be a reference plane.");Sketch sketch;sketch.referencePlaneId=id;sketch.referencePlaneFrame=datum.frame;return sketch;}
 PartDocument PartDocument::beforeFeature(const std::string& id) const{const auto found=std::find_if(m_features.begin(),m_features.end(),[&](const auto& f){return f.id==id;});require(found!=m_features.end(),"Feature is unavailable.");PartDocument result;result.apply(std::vector<Feature>(m_features.begin(),found));return result;}
-std::vector<ReferenceOption> PartDocument::referenceOptions(bool includeCircularAxes) const{
+std::vector<ReferenceOption> PartDocument::referenceOptions(bool includeCircularAxes, bool includeExtrusionFaces) const{
     std::map<std::string,DatumGeometry> datums;std::map<std::string,Sketch> sketches;for(const auto& feature:m_features){if(feature.kind==FeatureKind::ReferenceGeometry)datums.emplace(feature.id,feature.datum);if(feature.kind==FeatureKind::Sketch)sketches.emplace(feature.id,feature.sketch);}
     std::vector<ReferenceOption> result;const auto add=[&](std::string label,GeometryReference ref){try{bindGeometryReference(ref,m_bodies,m_namedBodies);
-        const auto geometry=resolveGeometryReference(ref,datums,sketches,m_bodies,m_namedBodies);TopoDS_Shape shape=datumDisplayShape(geometry,50);
-        if(int(ref.source)>=6){TopTools_IndexedMapOfShape shapes;TopExp::MapShapes(m_bodies.at(ref.featureId),referenceTopology(ref.source),shapes);shape=shapes(ref.index);}
+        TopoDS_Shape shape;
+        if (int(ref.source) >= 6) {
+            TopTools_IndexedMapOfShape shapes;
+            TopExp::MapShapes(m_bodies.at(ref.featureId), referenceTopology(ref.source), shapes);
+            shape = shapes(ref.index);
+        }
+        DatumGeometry geometry;
+        if (includeExtrusionFaces && ref.source == ReferenceSource::BodyFace &&
+            BRepAdaptor_Surface(TopoDS::Face(shape)).GetType() != GeomAbs_Plane)
+            geometry.kind = DatumKind::Plane; // Pick against the actual face in the viewport.
+        else geometry = resolveGeometryReference(ref, datums, sketches, m_bodies, m_namedBodies);
+        if (shape.IsNull()) shape = datumDisplayShape(geometry, 50);
         if(ref.source==ReferenceSource::SketchLine){const auto& sketch=std::find_if(m_features.begin(),m_features.end(),[&](const auto& f){return f.id==ref.featureId;})->sketch;const auto& e=*std::find_if(sketch.entities.begin(),sketch.entities.end(),[&](const auto& e){return e.id==ref.entityId;});shape=BRepBuilderAPI_MakeEdge(sketchPoint(sketch,e.first),sketchPoint(sketch,e.second));}
         result.push_back({std::move(label),ref,geometry,shape});
     }catch(const Standard_Failure&){}catch(const std::exception&){}};

@@ -9,6 +9,7 @@
 #include <cmath>
 
 #include <QAction>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -535,7 +536,7 @@ private slots:
         QCOMPARE(window.document().features().size(),std::size_t(2));QVERIFY(window.isWindowModified());
         QVERIFY(!window.findChild<QAction*>("actionFinishSketch")->isEnabled());QVERIFY(window.errors.isEmpty());
     }
-    void operationRequiresExplicitSketchAndContour()
+    void extrusionRequiresSourceAndPreviewsClosedOrOpenProfile()
     {
         QTemporaryDir directory;
         QVERIFY(directory.isValid());
@@ -573,11 +574,11 @@ private slots:
         source->setCurrentIndex(0);
         QCOMPARE(contours->count(), 1);
         QCOMPARE(contours->currentRow(), -1);
-        QVERIFY(!buttons->button(QDialogButtonBox::Ok)->isEnabled());
+        QVERIFY(buttons->button(QDialogButtonBox::Ok)->isEnabled());
         source->setCurrentIndex(1);
-        QCOMPARE(contours->count(), 0);
-        QVERIFY(!buttons->button(QDialogButtonBox::Ok)->isEnabled());
-        QVERIFY2(status->text().contains("no valid closed contour"), qPrintable(status->text()));
+        QCOMPARE(contours->count(), 1);
+        QVERIFY(dialog->findChild<QCheckBox*>("extrudeThinFeature")->isChecked());
+        QVERIFY(buttons->button(QDialogButtonBox::Ok)->isEnabled());
         QTest::mouseClick(dialog->findChild<QDialogButtonBox*>("operationButtons")->button(QDialogButtonBox::Cancel), Qt::LeftButton);
         QCOMPARE(window.document().features().size(), std::size_t(2));
         QVERIFY(window.document().shape().IsNull());

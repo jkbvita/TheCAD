@@ -12,7 +12,7 @@ target_link_libraries(thecad_viewport_widget PUBLIC Qt6::Widgets thecad_applicat
 
 add_library(thecad_ui STATIC
     MainWindow.cpp MainWindow.h EditHistory.cpp files/NativeFileDialogs.cpp
-    features/SolidFeaturePanel.cpp features/SolidFeaturePanel.h features/SweepFeatureForm.cpp SolidFeaturesUi.cpp
+    features/ExtrusionOptionsPanel.cpp features/SolidFeaturePanel.cpp features/SolidFeaturePanel.h features/SweepFeatureForm.cpp SolidFeaturesUi.cpp
     SelectionUi.cpp MeasureUi.cpp ReferenceGeometryUi.cpp SketchConstraintsUi.cpp
     SmartDimensionUi.cpp SketchToolsUi.cpp SketchModifierUi.cpp RelationsContextUi.cpp)
 target_include_directories(thecad_ui PUBLIC "${PROJECT_SOURCE_DIR}/src")

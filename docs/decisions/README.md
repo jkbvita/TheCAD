@@ -74,6 +74,8 @@ approved scope do not need repeated approval.
 
 - [0041: Three-point Arc and Straight Slot](0041-arc-straight-slot.md)
 
+- [0042. Boss-Extrude and Cut-Extrude PropertyManagers](0042-extrusion-propertymanagers.md)
+
 ## Pending owner decisions
 
 - Resilient face references beyond the approved conservative planar-face strategy.

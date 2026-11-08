@@ -614,12 +614,13 @@ private slots:
         QVERIFY(!operation->isWindow());QVERIFY(window.findChild<QDialog*>("operationDialog")==nullptr);
         QCOMPARE(window.findChild<QStackedWidget*>("managerStack")->currentWidget(),operation);
         QCOMPARE(window.findChild<QDockWidget*>("historyDock")->windowTitle(),QString("PropertyManager"));
-        QCOMPARE(operation->findChild<QLabel*>("operationStartingReference")->text(),QString("Sketch Plane"));
-        QCOMPARE(operation->findChild<QLabel*>("operationEndCondition")->text(),QString("Blind"));
-        QVERIFY(!operation->findChild<QPushButton*>("operationPreview"));
+        QCOMPARE(operation->findChild<QComboBox*>("operationStartingReference")->currentText(),QString("Sketch Plane"));
+        QCOMPARE(operation->findChild<QComboBox*>("operationEndCondition")->currentText(),QString("Blind"));
+        QVERIFY(operation->findChild<QPushButton*>("operationPreview")->isChecked());
         QVERIFY(!window.findChild<QTreeWidget*>("featureTree")->isVisible());
         QCOMPARE(operation->findChild<QComboBox*>("operationSketch")->currentData().toString().toStdString(),window.document().features()[0].id);
         QVERIFY(!viewport->m_firstPoint);QCOMPARE(operation->findChild<QListWidget*>("operationContour")->currentRow(),-1);
+        QVERIFY(!viewport->m_previewPresentation.IsNull()); // A single closed region previews by default.
         QCOMPARE(window.document().features()[0].sketch.entities.size(),std::size_t(0));
         QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{20,15}));
         auto* depth=operation->findChild<QDoubleSpinBox*>("featureLength");depth->setValue(20);
@@ -654,12 +655,12 @@ private slots:
         window.findChild<QTabWidget*>("modelingTabs")->setCurrentIndex(0);command(window,"actionExtrudedCut");
         operation=window.findChild<QWidget*>("operationPanel");QVERIFY(operation);
         QCOMPARE(operation->findChild<QComboBox*>("operationSketch")->currentData().toString().toStdString(),window.document().features()[2].id);
-        operation->findChild<QCheckBox*>("featureThroughAll")->setChecked(true);
+        operation->findChild<QComboBox*>("operationEndCondition")->setCurrentText("Through All");
         operation->findChild<QListWidget*>("operationContour")->setCurrentRow(0,QItemSelectionModel::ClearAndSelect);
         command(window,"actionCancelFeature");QCOMPARE(window.document().features().size(),std::size_t(3));
         QVERIFY(window.findChild<QAction*>("actionFinishSketch")->isEnabled());QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(1));
         window.findChild<QTabWidget*>("modelingTabs")->setCurrentIndex(0);command(window,"actionExtrudedCut");
-        operation=window.findChild<QWidget*>("operationPanel");operation->findChild<QCheckBox*>("featureThroughAll")->setChecked(true);
+        operation=window.findChild<QWidget*>("operationPanel");operation->findChild<QComboBox*>("operationEndCondition")->setCurrentText("Through All");
         operation->findChild<QListWidget*>("operationContour")->setCurrentRow(0,QItemSelectionModel::ClearAndSelect);confirmOperation(window);
         QCOMPARE(window.document().features().size(),std::size_t(4));QVERIFY(volume(window.document().shape())<solidVolume);
         QVERIFY(window.document().features()[3].throughAll);
@@ -764,9 +765,76 @@ private slots:
         QCOMPARE(window.document().features().size(),std::size_t(1));
         command(window,"actionLine");QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{0,0}));
         QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{20,10}));
-        command(window,"actionExtrude");QCOMPARE(window.errors.size(),2);QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(1));
+        command(window,"actionExtrude");
+        auto* operation = window.findChild<QWidget*>("operationPanel");
+        QVERIFY(operation);
+        QVERIFY(operation->findChild<QCheckBox*>("extrudeThinFeature")->isChecked());
+        QVERIFY(!viewport->m_previewPresentation.IsNull());
+        command(window,"actionCancelFeature");
+        QCOMPARE(window.errors.size(),1);QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(1));
         QVERIFY(window.findChild<QAction*>("actionFinishSketch")->isEnabled());QVERIFY(window.close());
     }
+    void extrusionSettingsPickReferenceAndPreview()
+    {
+        WorkflowWindow window;
+        window.showMaximized();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* viewport = window.findChild<CadViewport*>();
+        QTRY_VERIFY(viewport->isReady());
+        createSketch(window);
+        command(window, "actionRectangle");
+        QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, point(viewport, {5, 5}));
+        QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, point(viewport, {25, 15}));
+        window.findChild<QTabWidget*>("modelingTabs")->setCurrentIndex(0);
+        command(window, "actionExtrude");
+        auto* panel = window.findChild<QWidget*>("operationPanel");
+        QVERIFY(panel);
+        auto* start = panel->findChild<QComboBox*>("operationStartingReference");
+        start->setCurrentText("Surface/Face/Plane");
+        QPushButton* pick = nullptr;
+        for (auto* button : panel->findChildren<QPushButton*>())
+            if (button->accessibleName() == "Pick start reference") pick = button;
+        QVERIFY(pick);
+        pick->click();
+        auto* tree = window.findChild<QTreeWidget*>("featureTree");
+        QVERIFY(tree->isVisible());
+        for (QTreeWidgetItemIterator it(tree); *it; ++it)
+            if ((*it)->data(0, Qt::UserRole).toString() == "origin:XY") { tree->setCurrentItem(*it); break; }
+        QCOMPARE(panel->findChild<QComboBox*>("extrudeStartReference")->currentText(), QString("Front plane"));
+        QVERIFY(!tree->isVisible());
+        panel->findChild<QListWidget*>("operationContour")->setCurrentRow(0, QItemSelectionModel::ClearAndSelect);
+        panel->findChild<QDoubleSpinBox*>("featureLength")->setValue(8);
+        auto* second = panel->findChild<QCheckBox*>("extrudeDirection2");
+        second->setChecked(true);
+        panel->findChild<QDoubleSpinBox*>("extrudeDepth2")->setValue(3);
+        QVERIFY(!viewport->m_previewPresentation.IsNull());
+        start->setCurrentText("Offset");
+        panel->findChild<QDoubleSpinBox*>("extrudeStartOffset")->setValue(2);
+        command(window, "actionIsometric");
+        auto* depth = panel->findChild<QDoubleSpinBox*>("featureLength");
+        const auto tip = viewport->projectWorldPoint({15, 10, 10});
+        const auto travel = viewport->projectWorldPoint({15, 10, 14}) - tip;
+        QTest::mousePress(viewport, Qt::LeftButton, Qt::NoModifier, tip.toPoint());
+        const auto end = (tip + travel).toPoint();
+        QMouseEvent move(QEvent::MouseMove, end, viewport->mapToGlobal(end),
+                         Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(viewport, &move);
+        QTest::mouseRelease(viewport, Qt::LeftButton, Qt::NoModifier, end);
+        QVERIFY(depth->value() > 10.0);
+        start->setCurrentText("Surface/Face/Plane");
+        auto* preview = panel->findChild<QPushButton*>("operationPreview");
+        preview->click();
+        QVERIFY(viewport->m_previewPresentation.IsNull());
+        preview->click();
+        QVERIFY(!viewport->m_previewPresentation.IsNull());
+        const double expected = volume(viewport->m_previewPresentation->Shape());
+        confirmOperation(window);
+        QVERIFY(window.document().features().back().extrusion->second.has_value());
+        QVERIFY(std::abs(volume(window.document().shape()) - expected) < 1e-6);
+        QVERIFY(window.errors.isEmpty());
+        QVERIFY(window.close());
+    }
+
     void rectangleExtrudeCircleCutEditSaveReopen()
     {
         QTemporaryDir directory;
@@ -797,7 +865,7 @@ private slots:
         command(window, "actionExtrude");
         auto* operation = window.findChild<QWidget*>("operationPanel");
         QVERIFY(operation);
-        QVERIFY(operation->findChild<QCheckBox*>("featureThroughAll")->isHidden());
+        QCOMPARE(operation->findChild<QComboBox*>("operationEndCondition")->findText("Through All"), -1);
         auto* contours = operation->findChild<QListWidget*>("operationContour");
         QCOMPARE(contours->count(), 2);
         QCOMPARE(contours->currentRow(), -1);
@@ -823,8 +891,8 @@ private slots:
         command(window, "actionExtrudedCut");
         operation = window.findChild<QWidget*>("operationPanel");
         QVERIFY(operation);
-        QVERIFY(!operation->findChild<QCheckBox*>("featureThroughAll")->isHidden());
-        operation->findChild<QCheckBox*>("featureThroughAll")->setChecked(true);
+        QVERIFY(operation->findChild<QComboBox*>("operationEndCondition")->findText("Through All") >= 0);
+        operation->findChild<QComboBox*>("operationEndCondition")->setCurrentText("Through All");
         QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, point(viewport, {0, 0}));
         confirmOperation(window);
         QVERIFY(!QTest::currentTestFailed());

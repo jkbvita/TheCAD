@@ -198,7 +198,11 @@ private:
     void operationSketchChanged();
     void updateOperationPreview();
     void operationRegionClicked(modeling::Point2 point);
+    void showOperationReferenceTree(bool);
     void focusOperationDepth();
+    void updateOperationDepthGrips(const document::Feature&, const modeling::ExtrudeDefinition&,
+                                   const std::vector<TopoDS_Face>&);
+    bool operationPointerEvent(QObject*, QEvent*);
     bool operationKeyEvent(QObject* watched,QEvent* event);
     struct OperationDraft;
     void startReferenceGeometry(modeling::DatumKind kind,const document::Feature* editing=nullptr);

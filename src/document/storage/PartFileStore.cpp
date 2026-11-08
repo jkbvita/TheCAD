@@ -59,6 +59,112 @@ double number(const QJsonValue& value, const QString& where)
     return value.toDouble();
 }
 
+using modeling::ExtrudeDefinition;
+using modeling::ExtrudeLeg;
+using modeling::ExtrudeThin;
+
+QJsonValue writeOptionalReference(const std::optional<modeling::GeometryReference>& reference)
+{
+    return reference ? QJsonValue(writeGeometryReference(*reference)) : QJsonValue(QJsonValue::Null);
+}
+
+std::optional<modeling::GeometryReference> readOptionalReference(const QJsonValue& value, int version)
+{
+    if (value.isNull()) return {};
+    if (!value.isObject()) fail("Invalid extrusion reference.");
+    return readGeometryReference(value.toObject(), version);
+}
+
+bool readExtrudeFlag(const QJsonObject& object, const QString& key)
+{
+    if (!object[key].isBool()) fail("Invalid extrusion option " + key);
+    return object[key].toBool();
+}
+
+template<class Enum>
+Enum readExtrudeMode(const QJsonValue& value, Enum last)
+{
+    const auto index = number(value, "Extrusion mode");
+    if (index < 0 || index > int(last) || index != std::floor(index)) fail("Invalid extrusion mode.");
+    return Enum(int(index));
+}
+
+QJsonObject writeExtrudeLeg(const ExtrudeLeg& leg)
+{
+    return {{"end", int(leg.end)}, {"depth", leg.depth}, {"offset", leg.offset},
+            {"reverseOffset", leg.reverseOffset}, {"translateSurface", leg.translateSurface},
+            {"draftAngle", leg.draftAngle}, {"draftOutward", leg.draftOutward},
+            {"target", writeOptionalReference(leg.target)}};
+}
+
+ExtrudeLeg readExtrudeLeg(const QJsonValue& value, int version)
+{
+    const auto object = value.toObject();
+    fields(object, {"end", "depth", "offset", "reverseOffset", "translateSurface", "draftAngle", "draftOutward", "target"},
+           "Extrusion direction");
+    ExtrudeLeg leg;
+    leg.end = readExtrudeMode(object["end"], modeling::ExtrudeEnd::MidPlane);
+    leg.depth = number(object["depth"], "Extrusion depth");
+    leg.offset = number(object["offset"], "Extrusion offset");
+    leg.reverseOffset = readExtrudeFlag(object, "reverseOffset");
+    leg.translateSurface = readExtrudeFlag(object, "translateSurface");
+    leg.draftAngle = number(object["draftAngle"], "Draft angle");
+    leg.draftOutward = readExtrudeFlag(object, "draftOutward");
+    leg.target = readOptionalReference(object["target"], version);
+    return leg;
+}
+
+QJsonObject writeExtrusion(const ExtrudeDefinition& definition)
+{
+    QJsonValue thin(QJsonValue::Null);
+    if (definition.thin) {
+        const auto& value = *definition.thin;
+        thin = QJsonObject{{"mode", int(value.mode)}, {"thickness", value.thickness},
+                           {"secondThickness", value.secondThickness}, {"reverse", value.reverse},
+                           {"endCap", value.endCap}, {"cornerRadius", value.cornerRadius}};
+    }
+    QJsonArray scope;
+    for (const auto& reference : definition.scope) scope.append(writeGeometryReference(reference));
+    return {{"start", int(definition.start)}, {"startOffset", definition.startOffset},
+            {"startReference", writeOptionalReference(definition.startReference)},
+            {"direction", writeOptionalReference(definition.direction)},
+            {"first", writeExtrudeLeg(definition.first)},
+            {"second", definition.second ? QJsonValue(writeExtrudeLeg(*definition.second)) : QJsonValue(QJsonValue::Null)},
+            {"thin", thin}, {"merge", definition.merge}, {"flipCut", definition.flipCut}, {"scope", scope}};
+}
+
+ExtrudeDefinition readExtrusion(const QJsonValue& value, int version)
+{
+    const auto object = value.toObject();
+    fields(object, {"start", "startOffset", "startReference", "direction", "first", "second", "thin", "merge", "flipCut", "scope"},
+           "Extrusion settings");
+    ExtrudeDefinition definition;
+    definition.start = readExtrudeMode(object["start"], modeling::ExtrudeStart::Offset);
+    definition.startOffset = number(object["startOffset"], "Start offset");
+    definition.startReference = readOptionalReference(object["startReference"], version);
+    definition.direction = readOptionalReference(object["direction"], version);
+    definition.first = readExtrudeLeg(object["first"], version);
+    if (!object["second"].isNull()) definition.second = readExtrudeLeg(object["second"], version);
+    if (!object["thin"].isNull()) {
+        const auto thin = object["thin"].toObject();
+        fields(thin, {"mode", "thickness", "secondThickness", "reverse", "endCap", "cornerRadius"}, "Thin feature");
+        definition.thin = ExtrudeThin{readExtrudeMode(thin["mode"], modeling::ThinMode::TwoDirections),
+                                      number(thin["thickness"], "Wall thickness"),
+                                      number(thin["secondThickness"], "Second wall thickness"),
+                                      readExtrudeFlag(thin, "reverse"), number(thin["endCap"], "End cap thickness"),
+                                      number(thin["cornerRadius"], "Auto-fillet radius")};
+    }
+    const auto scope = object["scope"].toArray();
+    if (!object["scope"].isArray() || scope.size() > 1000) fail("Invalid extrusion feature scope.");
+    for (const auto& reference : scope) {
+        if (!reference.isObject()) fail("Invalid extrusion scope reference.");
+        definition.scope.push_back(readGeometryReference(reference.toObject(), version));
+    }
+    definition.merge = readExtrudeFlag(object, "merge");
+    definition.flipCut = readExtrudeFlag(object, "flipCut");
+    return definition;
+}
+
 modeling::SketchPlane readPlane(const QJsonValue& value)
 {
     const auto text = stringValue(value, "Sketch plane");
@@ -508,9 +614,9 @@ PartDocument PartFileStore::load(const QString& path)
     if (root.value("units") != QJsonValue("mm"))
         fail("Unsupported units; this prototype supports millimeters only.");
     const auto versionValue = root.value("version");
-    if (!versionValue.isDouble() || versionValue.toDouble() < 1 || versionValue.toDouble() > 23 ||
+    if (!versionValue.isDouble() || versionValue.toDouble() < 1 || versionValue.toDouble() > 24 ||
         versionValue.toDouble() != std::floor(versionValue.toDouble()))
-        fail("Unsupported part document version; expected versions 1 through 21.");
+        fail("Unsupported part document version; expected versions 1 through 24.");
     const int version = versionValue.toInt();
     if (!root.value("features").isArray())
         fail("Part features must be an ordered array.");
@@ -828,6 +934,8 @@ PartDocument PartFileStore::load(const QString& path)
                                        "contour", "length", "direction", "dependencies"};
                 if (type == "cut")
                     expected.insert("throughAll");
+                const bool configuredExtrude = version >= 24 && (type == "extrude" || type == "cut") && object.contains("extrusion");
+                if (configuredExtrude) expected.insert("extrusion");
                 const bool revolve=type=="revolve"||type=="revolved-cut";
                 if(revolve){expected.remove("length");expected.insert("angle");expected.insert("axis");}
                 const bool sweep = type == "sweep" || type == "swept-cut";
@@ -904,6 +1012,7 @@ PartDocument PartFileStore::load(const QString& path)
                         fail("Cut throughAll must be boolean.");
                     feature.throughAll = object.value("throughAll").toBool();
                 }
+                if (configuredExtrude) feature.extrusion = readExtrusion(object["extrusion"], version);
             }
             else
                 fail("Unsupported feature type: " + type);
@@ -1086,6 +1195,7 @@ void PartFileStore::save(const PartDocument& document, const QString& path)
                 object["direction"] = directionName(feature.direction);
             if (feature.kind == FeatureKind::Cut)
                 object["throughAll"] = feature.throughAll;
+            if (feature.extrusion) object["extrusion"] = writeExtrusion(*feature.extrusion);
         }
         if (isSolidFeature(feature.kind))
             resultId = feature.id;
@@ -1097,10 +1207,12 @@ void PartFileStore::save(const PartDocument& document, const QString& path)
                    return entity.kind == modeling::EntityKind::Arc;
                });
     });
-    int version = hasArcs ? 23 : 16;
+    const bool hasExtrusionSettings = std::any_of(document.features().begin(), document.features().end(),
+        [](const auto& feature) { return feature.extrusion.has_value(); });
+    int version = hasExtrusionSettings ? 24 : hasArcs ? 23 : 16;
     for (const auto& feature : document.features())
     {
-        if (version == 23)
+        if (version >= 23)
             break;
         if (feature.kind == FeatureKind::CircularPattern ||
             (feature.kind == FeatureKind::ReferenceGeometry &&

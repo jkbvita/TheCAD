@@ -23,7 +23,7 @@ void ThemeManager::apply(){
         "QToolBar,QMenuBar,QMenu,QStatusBar,QDockWidget::title {background:%2;} QToolBar {border:0;spacing:3px;} "
         "QMenu {border:1px solid %6;} QMenu::item:selected,QMenuBar::item:selected {background:%8;} QMenu::item:disabled {color:%5;} "
         "QTabWidget::pane {border:1px solid %6;} QTabBar::tab {padding:4px 15px;background:%2;border:1px solid %6;} QTabBar::tab:selected {background:%3;} "
-        "QToolButton {border:1px solid transparent;padding:3px;} QToolButton:hover,QPushButton:hover {background:%8;border-radius:3px;} QToolButton:checked {background:%7;border:1px solid %6;border-radius:3px;} "
+        "QToolButton {border:1px solid transparent;padding:3px;} QToolButton:hover,QPushButton:hover {background:%8;border-radius:3px;} QToolButton:checked {background:%7;border:1px solid %6;border-radius:3px;} QToolButton#extrusionSection {font-weight:600;} QToolButton#extrusionSection:checked:!hover {background:transparent;border-color:transparent;} "
         "QTreeWidget,QListWidget,QPlainTextEdit,QTextEdit {background:%3;border:1px solid %6;selection-background-color:%7;} QTreeWidget::item:selected,QListWidget::item:selected {background:%7;color:%4;} "
         "QLineEdit,QDoubleSpinBox,QSpinBox,QComboBox {background:%3;border:1px solid %6;border-radius:3px;min-height:25px;padding:0 4px;selection-background-color:%7;} QComboBox QAbstractItemView {background:%3;selection-background-color:%7;} "
         "QLineEdit:focus,QDoubleSpinBox:focus,QSpinBox:focus,QComboBox:focus {border:1px solid #559bd3;} "

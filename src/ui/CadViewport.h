@@ -84,6 +84,8 @@ public:
     void setSelectedContourFaces(const std::vector<TopoDS_Face>& faces);
     void previewShape(const TopoDS_Shape& shape,const modeling::MaterialChanges& changes={});
     void clearPreview();
+    void setExtrusionDepthGrips(const std::vector<gp_Ax1>& grips);
+    QPointF projectWorldPoint(const gp_Pnt& point) const;
     void setConstraintPicking(bool enabled);
     void setSmartDimensionPicking(bool enabled);
     void setDimensionPreview(const std::optional<modeling::SketchDimension>& dimension);
@@ -362,6 +364,7 @@ private:
     bool m_regionClickCandidate = false;
     QPointF m_regionPressPosition;
     Handle(AIS_Shape) m_previewPresentation;
+    std::vector<Handle(AIS_Trihedron)> m_extrusionDepthGrips;
     std::vector<Handle(AIS_Shape)> m_materialPreviewPresentations;
     std::vector<Handle(AIS_Shape)> m_selectedContourPresentations;
     std::array<Handle(AIS_Shape), 3> m_referencePlanes;

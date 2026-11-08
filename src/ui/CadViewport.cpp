@@ -603,6 +603,29 @@ void CadViewport::setSelectedContourFaces(const std::vector<TopoDS_Face>& faces)
     update();
 }
 
+QPointF CadViewport::projectWorldPoint(const gp_Pnt& point) const
+{
+    int x, y;
+    m_graphics.view()->Convert(point.X(), point.Y(), point.Z(), x, y);
+    return {x / devicePixelRatioF(), y / devicePixelRatioF()};
+}
+
+void CadViewport::setExtrusionDepthGrips(const std::vector<gp_Ax1>& grips)
+{
+    if (!isReady()) return;
+    for (const auto& item : m_extrusionDepthGrips) m_graphics.context()->Remove(item, false);
+    m_extrusionDepthGrips.clear();
+    const double length = m_graphics.view()->Camera()->Scale() * 0.04;
+    for (const auto& grip : grips) {
+        const auto origin = grip.Location().Translated(-gp_Vec(grip.Direction()) * length);
+        auto arrow = datumArrow(origin, grip.Direction(), length, selectionBlue());
+        arrow->SetZLayer(Graphic3d_ZLayerId_Topmost);
+        m_graphics.context()->Display(arrow, 1, -1, false);
+        m_extrusionDepthGrips.push_back(arrow);
+    }
+    update();
+}
+
 void CadViewport::clearPreview()
 {
     if (!isReady()) { return; }
@@ -1400,8 +1423,9 @@ void CadViewport::mouseMoveEvent(QMouseEvent* event)
         const auto point=sketchPosition(event->position());if(point)emit dimensionPointerMoved(*point);event->accept();return;
     }
     if(m_pointDrag) { updatePointDrag(event->position()); event->accept(); return; }
-    if(!m_sketchEditing && !m_regionSelecting && m_camera.mode()==Navigation::None) {
-        if(!m_referenceCandidates.empty())updateReferenceHover(event->position());else updateSelectionHover(event->position());
+    if(!m_sketchEditing && m_camera.mode()==Navigation::None) {
+        if(!m_referenceCandidates.empty())updateReferenceHover(event->position());
+        else if(!m_regionSelecting)updateSelectionHover(event->position());
     }
     if(m_regionClickCandidate && (event->position()-m_regionPressPosition).manhattanLength()>QApplication::startDragDistance())
         m_regionClickCandidate=false;
@@ -1467,7 +1491,12 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* event)
         m_planeClickCandidate = false;
         unsetCursor();
         if(regionClick && m_regionSelecting) {
-            const auto point=sketchPosition(event->position());if(point) emit sketchRegionClicked(*point);
+            if (!m_referenceCandidates.empty()) {
+                const int index = referenceCandidateAt(event->position());
+                if (index >= 0) emit referenceGeometryPicked(index);
+            } else {
+                const auto point=sketchPosition(event->position());if(point) emit sketchRegionClicked(*point);
+            }
         } else if (click) {
             if(!m_referenceCandidates.empty()){const int index=referenceCandidateAt(event->position());if(index>=0)emit referenceGeometryPicked(index);event->accept();return;}
             const auto candidates=selectionCandidates(event->position());

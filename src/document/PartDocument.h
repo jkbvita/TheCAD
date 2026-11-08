@@ -2,6 +2,7 @@
 
 #include "modeling/Sketch.h"
 #include "modeling/ReferenceGeometry.h"
+#include "modeling/Extrusion.h"
 #include "modeling/Selection.h"
 #include "modeling/SketchModifiers.h"
 #include <QString>
@@ -47,6 +48,7 @@ struct Feature {
     double length = 10.0;
     modeling::Direction direction = modeling::Direction::Positive;
     bool throughAll = false;
+    std::optional<modeling::ExtrudeDefinition> extrusion;
     double angle = 360.0;
     double size = 2.0; // Constant fillet radius / equal chamfer distance, in mm.
     std::optional<modeling::GeometryReference> axis;
@@ -80,7 +82,7 @@ public:
     modeling::Sketch sketchOnReferencePlane(const std::string& id) const;
     std::string addReferenceGeometry(const modeling::DatumDefinition& definition);
     modeling::DatumGeometry resolveReference(const modeling::GeometryReference& reference) const;
-    std::vector<ReferenceOption> referenceOptions(bool includeCircularAxes = false) const;
+    std::vector<ReferenceOption> referenceOptions(bool includeCircularAxes = false, bool includeExtrusionFaces = false) const;
     TopoDS_Shape solidBefore(const std::string& featureId) const;
     const TopoDS_Shape& solidResult(const std::string& featureId) const;
     // Includes curved edges, unlike axis-only referenceOptions(). No index-only

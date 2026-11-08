@@ -1,5 +1,6 @@
 #include "modeling/DimensionAnnotation.h"
 #include <TopExp.hxx>
+#include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
 #include "document/PartDocument.h"
@@ -12,6 +13,7 @@
 #include "modeling/SolidFeatures.h"
 
 #include <BRepCheck_Analyzer.hxx>
+#include <BRepAdaptor_Surface.hxx>
 #include <Standard_Failure.hxx>
 #include <algorithm>
 #include <cmath>
@@ -258,7 +260,51 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
                     fail("Extrusion length/depth must be positive and no larger than 1e9 mm.");
                 expected.push_back(feature.sketchId);
                 if (!bodyId.empty()) expected.push_back(bodyId);
-                if(!feature.contours.empty()) {
+                if (feature.extrusion) {
+                    auto& definition = *feature.extrusion;
+                    modeling::ExtrudeSupports supports;
+                    const auto resolve = [&](modeling::GeometryReference& ref, bool useBody) {
+                        bindGeometryReference(ref, bodies, namedBodies);
+                        if (!ref.featureId.empty() && std::find(expected.begin(), expected.end(), ref.featureId) == expected.end())
+                            expected.push_back(ref.featureId);
+                        modeling::ExtrudeReference support;
+                        if (ref.source == modeling::ReferenceSource::BodyFace) {
+                            if (ref.topologyName.empty() || !namedBodies.count(ref.featureId))
+                                fail("Select a persistently named face for this extrusion reference.");
+                            support.shape = namedBodies.at(ref.featureId).resolve(ref.topologyName, TopAbs_FACE);
+                            if (useBody) {
+                                if (ref.featureId != bodyId) fail("Select a body from the stage immediately before the extrusion.");
+                                for (TopExp_Explorer solids(body, TopAbs_SOLID); solids.More(); solids.Next())
+                                    for (TopExp_Explorer faces(solids.Current(), TopAbs_FACE); faces.More(); faces.Next())
+                                        if (faces.Current().IsSame(support.shape)) {
+                                            if (!support.body.IsNull()) fail("The selected face belongs to more than one body.");
+                                            support.body = solids.Current();
+                                        }
+                                if (support.body.IsNull()) fail("The reference face no longer belongs to a solid body.");
+                                return support;
+                            }
+                            if (BRepAdaptor_Surface(TopoDS::Face(support.shape)).GetType() != GeomAbs_Plane)
+                                return support;
+                        } else if (useBody) fail("Select a face of the target solid body.");
+                        support.datum = resolveGeometryReference(ref, datums, sketches, bodies, namedBodies);
+                        return support;
+                    };
+                    if (definition.startReference) supports.start = resolve(*definition.startReference, false);
+                    if (definition.direction) supports.direction = resolve(*definition.direction, false);
+                    if (definition.first.target) supports.first = resolve(*definition.first.target, definition.first.end == modeling::ExtrudeEnd::Body);
+                    if (definition.second && definition.second->target)
+                        supports.second = resolve(*definition.second->target, definition.second->end == modeling::ExtrudeEnd::Body);
+                    for (auto& reference : definition.scope) {
+                        const auto selected = resolve(reference, true).body;
+                        if (std::none_of(supports.scope.begin(), supports.scope.end(), [&](const auto& item) { return item.IsSame(selected); }))
+                            supports.scope.push_back(selected);
+                    }
+                    if (!feature.contour.empty() && !feature.contours.empty())
+                        fail("Feature cannot contain both a single contour and multiple regions.");
+                    const auto regions = feature.contours.empty() ? modeling::RegionReferences{feature.contour} : feature.contours;
+                    body = modeling::extrudeProfile(source->second, regions, body, feature.kind == FeatureKind::Cut,
+                                                    feature.direction, definition, supports, bodyNames, feature.id);
+                } else if(!feature.contours.empty()) {
                     if(!feature.contour.empty())fail("Feature cannot contain both a single contour and multiple regions.");
                     body=feature.kind==FeatureKind::Cut
                         ? modeling::makeCuts(body,source->second,feature.contours,feature.length,feature.throughAll,feature.direction,&bodyNames,feature.id)
@@ -399,6 +445,8 @@ std::string PartDocument::addSolidFeature(Feature feature)
     const char* label = nullptr;
     switch (feature.kind)
     {
+    case FeatureKind::Extrude: label = "Extrude"; break;
+    case FeatureKind::Cut: label = "Cut"; break;
     case FeatureKind::Revolve: label = "Revolve"; break;
     case FeatureKind::RevolvedCut: label = "RevolvedCut"; break;
     case FeatureKind::Fillet: label = "Fillet"; break;

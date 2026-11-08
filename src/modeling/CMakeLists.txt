@@ -13,7 +13,7 @@ add_library(thecad_modeling STATIC
     SketchOffset.cpp
     RelationCommands.cpp)
 set_target_properties(thecad_modeling PROPERTIES AUTOMOC OFF)
-target_sources(thecad_modeling PRIVATE FeaturePreview.cpp SolidFeatures.cpp PatternFeatures.cpp SweepFeatures.cpp)
+target_sources(thecad_modeling PRIVATE FeaturePreview.cpp Extrusion.cpp SolidFeatures.cpp PatternFeatures.cpp SweepFeatures.cpp)
 target_sources(thecad_modeling PRIVATE ReferenceGeometry.cpp TopologyNames.cpp)
 target_sources(thecad_modeling PRIVATE Selection.cpp Measurement.cpp)
 target_include_directories(thecad_modeling PUBLIC "${PROJECT_SOURCE_DIR}/src")
