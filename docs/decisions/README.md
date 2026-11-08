@@ -68,6 +68,8 @@ approved scope do not need repeated approval.
 
 - [0038: Measure and base-plane visibility](0038-measure-and-base-plane-visibility.md)
 
+- [0039: Coincident sketch boundaries](0039-coincident-sketch-boundaries.md)
+
 ## Pending owner decisions
 
 - Resilient face references beyond the approved conservative planar-face strategy.

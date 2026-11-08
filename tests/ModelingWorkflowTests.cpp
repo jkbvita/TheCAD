@@ -153,6 +153,58 @@ private slots:
         createSketch(window);viewport->sketchChanged(sketch);window.findChild<QTabWidget*>("modelingTabs")->setCurrentIndex(0);command(window,"actionExtrudedCut");regions=window.findChild<QListWidget*>("operationContour");QVERIFY(regions);QCOMPARE(regions->count(),3);window.findChild<QDoubleSpinBox*>("featureLength")->setValue(2);QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{3,-3}));QCOMPARE(regions->selectedItems().size(),1);confirmOperation(window);QVERIFY(std::abs(volume(window.document().shape())-75*3.14159265358979323846)<1e-6);
         QTemporaryDir directory;window.path=directory.filePath("intersection-cells.thepart");command(window,"actionSaveAs");command(window,"actionNew");command(window,"actionOpen");QVERIFY(std::abs(volume(window.document().shape())-75*3.14159265358979323846)<1e-6);QVERIFY(window.errors.isEmpty());window.close();
     }
+    void sharedEdgeRegionsExtrudeAndCut()
+    {
+        using namespace modeling;
+        WorkflowWindow window;
+        window.showMaximized();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* viewport = window.findChild<CadViewport*>();
+        QTRY_VERIFY(viewport->isReady());
+
+        Sketch sketch;
+        sketch.entities = {{EntityKind::Line, {0, 0}, {20, 0}, 1, "bottom-a"},
+                           {EntityKind::Line, {20, 0}, {20, 20}, 1, "right-a"},
+                           {EntityKind::Line, {20, 20}, {0, 20}, 1, "top-a"},
+                           {EntityKind::Line, {0, 20}, {0, 0}, 1, "left-a"},
+                           {EntityKind::Line, {10, 0}, {30, 0}, 1, "bottom-b"},
+                           {EntityKind::Line, {30, 0}, {30, 20}, 1, "right-b"},
+                           {EntityKind::Line, {30, 20}, {10, 20}, 1, "top-b"},
+                           {EntityKind::Line, {10, 20}, {10, 0}, 1, "left-b"}};
+        const auto clickRegion = [&](Point2 position) {
+            QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, point(viewport, position));
+        };
+        auto* tabs = window.findChild<QTabWidget*>("modelingTabs");
+        createSketch(window);
+        viewport->sketchChanged(sketch);
+        tabs->setCurrentIndex(0);
+        command(window, "actionExtrude");
+        QVERIFY2(window.errors.isEmpty(), qPrintable(window.errors.join('\n')));
+        auto* contours = window.findChild<QListWidget*>("operationContour");
+        QVERIFY(contours);
+        QCOMPARE(contours->count(), 3);
+        window.findChild<QDoubleSpinBox*>("featureLength")->setValue(5);
+        clickRegion({5, 10});
+        clickRegion({15, 10});
+        QCOMPARE(contours->selectedItems().size(), 2);
+        confirmOperation(window);
+        QVERIFY(std::abs(volume(window.document().shape()) - 2000) < 1e-6);
+        QCOMPARE(window.document().features().front().sketch.entities.size(), std::size_t(8));
+
+        createSketch(window);
+        viewport->sketchChanged(sketch);
+        tabs->setCurrentIndex(0);
+        command(window, "actionExtrudedCut");
+        contours = window.findChild<QListWidget*>("operationContour");
+        QVERIFY(contours);
+        QCOMPARE(contours->count(), 3);
+        window.findChild<QDoubleSpinBox*>("featureLength")->setValue(2);
+        clickRegion({15, 10});
+        QCOMPARE(contours->selectedItems().size(), 1);
+        confirmOperation(window);
+        QVERIFY(std::abs(volume(window.document().shape()) - 1600) < 1e-6);
+        QVERIFY(window.errors.isEmpty());
+    }
     void midpointAndRectangleEditsUndoAsSingleActions() {
         using namespace modeling;WorkflowWindow window;window.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&window));auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
         command(window,"actionRectangle");QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{0,0}));QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{-40,30}));command(window,"actionSelectSketchEntity");const auto before=*viewport->m_sketch;

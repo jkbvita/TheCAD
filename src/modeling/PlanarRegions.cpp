@@ -69,21 +69,51 @@ std::vector<Contour> intersectedContours(const Sketch& sketch){
     if(!splitter.IsDone() || splitter.HasErrors())fail("The intersecting sketch edges could not be subdivided.");
     TopTools_IndexedMapOfShape fragments;TopExp::MapShapes(splitter.Shape(),TopAbs_EDGE,fragments);
     if(fragments.Extent()>12000)fail("The sketch has too many intersection fragments; simplify its profile.");
-    std::vector<int> owner(std::size_t(fragments.Extent()+1),-1);
-    for(std::size_t i=0;i<primitives.size();++i){
-        auto images=splitter.Modified(primitives[i].edge);
-        if(images.IsEmpty())images.Append(primitives[i].edge);
-        for(TopTools_ListIteratorOfListOfShape it(images);it.More();it.Next()){
-            if(it.Value().ShapeType()!=TopAbs_EDGE)continue;const int index=fragments.FindIndex(it.Value());if(!index)continue;
-            if(owner[std::size_t(index)]>=0 && owner[std::size_t(index)]!=int(i))fail("Coincident or overlapping sketch edges are ambiguous. Remove duplicate or overlapping segments.");
-            owner[std::size_t(index)]=int(i);primitives[i].fragments.insert(index);
+    TopTools_IndexedMapOfShape vertices;
+    TopExp::MapShapes(splitter.Shape(), TopAbs_VERTEX, vertices);
+    std::vector<std::set<int>> vertexOwners(std::size_t(vertices.Extent() + 1));
+    std::vector<std::string> overlapEndpoints(vertexOwners.size());
+    std::vector<int> owner(std::size_t(fragments.Extent() + 1), -1);
+    for (std::size_t i = 0; i < primitives.size(); ++i)
+    {
+        auto& source = primitives[i];
+        auto images = splitter.Modified(source.edge);
+        if (images.IsEmpty())
+            images.Append(source.edge);
+        for (TopTools_ListIteratorOfListOfShape it(images); it.More(); it.Next())
+        {
+            const int index = fragments.FindIndex(it.Value());
+            if (!index)
+                continue;
+            // Splitter returns one edge for the shared span. The first stable
+            // source key names it, while every source keeps its complete image
+            // set so a partially owned source cannot be mistaken for a whole edge.
+            source.fragments.insert(index);
+            auto& primary = owner[std::size_t(index)];
+            if (primary < 0)
+                primary = int(i);
+            else if (primary != int(i) && source.kind != EntityKind::Circle)
+            {
+                // A shorter coincident segment can end within one longer edge.
+                // Keep that endpoint as a fallback name for the split vertex.
+                for (TopExp_Explorer v(fragments(index), TopAbs_VERTEX); v.More(); v.Next())
+                {
+                    auto& endpoint = overlapEndpoints[std::size_t(vertices.FindIndex(v.Current()))];
+                    if (!endpoint.empty())
+                        continue;
+                    const auto point = local(BRep_Tool::Pnt(TopoDS::Vertex(v.Current())));
+                    if (std::hypot(point.x - source.first.x, point.y - source.first.y) <= tolerance * 2)
+                        endpoint = source.key + ":first";
+                    else if (std::hypot(point.x - source.second.x, point.y - source.second.y) <= tolerance * 2)
+                        endpoint = source.key + ":second";
+                }
+            }
         }
     }
-    TopTools_IndexedMapOfShape vertices;std::vector<std::set<int>> vertexOwners(1);
     for(int i=1;i<=fragments.Extent();++i){
         if(owner[std::size_t(i)]<0)fail("An intersection fragment lost its source geometry reference.");
         for(TopExp_Explorer v(fragments(i),TopAbs_VERTEX);v.More();v.Next()){
-            const int index=vertices.Add(v.Current());if(vertexOwners.size()<=std::size_t(index))vertexOwners.resize(std::size_t(index+1));vertexOwners[std::size_t(index)].insert(owner[std::size_t(i)]);
+            const int index=vertices.FindIndex(v.Current());vertexOwners[std::size_t(index)].insert(owner[std::size_t(i)]);
         }
     }
     const auto vertexKey=[&](const TopoDS_Vertex& v){
@@ -103,6 +133,8 @@ std::vector<Contour> intersectedContours(const Sketch& sketch){
             }
             labels.push_back("intersection:"+field(x.key)+field(y.key)+":"+std::to_string(branch));
         }
+        if (labels.empty() && !overlapEndpoints[std::size_t(index)].empty())
+            labels.push_back(overlapEndpoints[std::size_t(index)]);
         std::sort(labels.begin(),labels.end());std::string result;for(const auto& label:labels)result+=field(label);return result;
     };
     // Build planar pcurves, then walk both sides of every subdivided edge.

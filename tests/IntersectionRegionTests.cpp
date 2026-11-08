@@ -27,7 +27,84 @@ std::set<std::vector<std::string>> identities(const Sketch& sketch){std::set<std
 int bodies(const TopoDS_Shape& shape){int count=0;for(TopExp_Explorer e(shape,TopAbs_SOLID);e.More();e.Next())++count;return count;}
 void reject(const std::function<void()>& action){bool rejected=false;try{action();}catch(const std::exception& e){rejected=std::string(e.what()).size()>0;}require(rejected,"Invalid region edit did not reject clearly");}
 Sketch lineRectangle(){Sketch s;s.entities={{EntityKind::Line,{0,0},{15,0},1,"top"},{EntityKind::Line,{15,0},{15,-15},1,"right"},{EntityKind::Line,{15,-15},{0,-15},1,"bottom"},{EntityKind::Line,{0,-15},{0,0},1,"left"},{EntityKind::Circle,{0,0},{},10,"circle"}};return s;}
+void sharedSpans()
+{
+    Sketch sketch;
+    sketch.entities = {{EntityKind::Rectangle, {0, 0}, {20, 20}, 1, "first"},
+                       {EntityKind::Rectangle, {10, 0}, {30, 20}, 1, "second"}};
+    const auto regions = closedContours(sketch);
+    require(regions.size() == 3, "Two overlapping rectangles must form three cells.");
+    RegionReferences all;
+    for (const auto& region : regions)
+    {
+        closeValue(area(region), 200);
+        all.push_back(region.entityIds);
+    }
+    const auto shared = regionAt(sketch, {15, 10});
+    require(shared != regionAt(sketch, {5, 10}) && shared != regionAt(sketch, {25, 10}),
+            "The overlap must be independently selectable.");
+    const auto united = makeExtrusions(sketch, all, 2, Direction::Positive);
+    closeValue(volume(united), 1200);
+    require(bodies(united) == 1, "Shared spans should not create internal walls.");
+
+    auto reordered = sketch;
+    std::reverse(reordered.entities.begin(), reordered.entities.end());
+    require(identities(reordered) == identities(sketch), "Shared-span identities must be order-independent.");
+    auto adjacent = sketch;
+    adjacent.entities[1].first.x = 20;
+    adjacent.entities[1].second.x = 40;
+    require(closedContours(adjacent).size() == 2, "Two rectangles sharing a full side need two cells.");
+
+    Sketch spans;
+    spans.entities = {{EntityKind::Rectangle, {0, 0}, {20, 20}, 1, "box"},
+                      {EntityKind::Line, {8, 0}, {3, 0}, 1, "overlap-first"},
+                      {EntityKind::Line, {15, 0}, {10, 0}, 1, "overlap-second"}};
+    const auto single = closedContours(spans);
+    require(single.size() == 1, "Redundant spans must not introduce new cells.");
+    closeValue(area(single.front()), 400);
+    for (const auto& [key, edges] : single.front().boundaryNames.images)
+        require(edges.size() == 1, "Split boundary segments need unique topology names.");
+
+    Sketch open;
+    open.entities = {{EntityKind::Line, {0, 0}, {20, 0}, 1, "line"},
+                     {EntityKind::Line, {30, 0}, {10, 0}, 1, "overlap"}};
+    require(closedContours(open).empty(), "Overlapping open lines must remain open.");
+
+    Sketch circles;
+    circles.entities = {{EntityKind::Circle, {0, 0}, {}, 10, "circle"},
+                        {EntityKind::Circle, {0, 0}, {}, 10, "mirror"}};
+    const auto disk = closedContours(circles);
+    require(disk.size() == 1, "Coincident circles must form one region.");
+    closeValue(area(disk.front()), 100 * pi);
+    circles.entities.push_back({EntityKind::Line, {-15, 0}, {15, 0}, 1, "divider"});
+    auto original = circles;
+    original.entities.erase(original.entities.begin() + 1);
+    require(identities(circles) == identities(original),
+            "A coincident circle must not introduce artificial seam identities.");
+
+    auto part = thecad::document::PartDocument::createBox({50, 50, 10});
+    const auto source = part.addSketch(sketch);
+    part.addCutRegions(source, {shared}, 3, false, Direction::Positive);
+    closeValue(volume(part.shape()), 24400);
+    auto resized = part.features()[1];
+    resized.sketch.entities[0].second.y = 25;
+    resized.sketch.entities[1].second.y = 25;
+    part.replaceFeature(resized);
+    closeValue(volume(part.shape()), 24250);
+
+    QTemporaryDir directory;
+    require(directory.isValid(), "Could not create overlap fixture directory.");
+    const auto path = directory.filePath("shared-spans.thepart");
+    part.save(path);
+    const auto reopened = thecad::document::PartDocument::load(path);
+    closeValue(volume(reopened.shape()), 24250);
+    require(reopened.features()[1].sketch.entities.size() == 2 &&
+                reopened.features().back().contour == shared,
+            "Reopening a cut must preserve both source entities and its selected cell.");
+}
+
 int main(){try{
+    sharedSpans();
     Sketch sketch;sketch.entities={{EntityKind::Circle,{0,0},{},10,"circle"},{EntityKind::Rectangle,{0,0},{15,-15},1,"rectangle"}};
     auto regions=closedContours(sketch);require(regions.size()==3,"Circle/rectangle must form three selectable regions");
     std::set<std::vector<std::string>> ids;RegionReferences all;double total=0;
@@ -60,7 +137,9 @@ int main(){try{
     auto many=thecad::document::PartDocument::createEmpty();auto bothId=many.addSketch(circles);many.addExtrudeRegions(bothId,{left,right},2,Direction::Positive);closeValue(volume(many.shape()),4*(100*pi-lens));many.save(path);closeValue(volume(thecad::document::PartDocument::load(path).shape()),volume(many.shape()));
     auto t=grid;t.entities.resize(1);t.entities.push_back({EntityKind::Line,{0,10},{20,10},1,"divider"});require(closedContours(t).size()==2,"Unsplit endpoint T-junctions should form regions");
     Sketch open;open.entities={{EntityKind::Line,{-10,0},{10,0},1,"a"},{EntityKind::Line,{0,-10},{0,10},1,"b"}};require(closedContours(open).empty(),"Crossed open lines are not closed extrusion profiles");
-    auto duplicate=grid;duplicate.entities.push_back(grid.entities[1]);duplicate.entities.back().id="duplicate";reject([&]{closedContours(duplicate);});
+    auto duplicate=grid;duplicate.entities.push_back(grid.entities[1]);duplicate.entities.back().id="redundant-divider";
+    std::swap(duplicate.entities.back().first, duplicate.entities.back().second);
+    require(identities(duplicate)==identities(grid),"A duplicate divider must leave the same cells and references.");
     Sketch rings;rings.entities={{EntityKind::Circle,{0,0},{},20,"outer"},{EntityKind::Circle,{0,0},{},10,"inner"},{EntityKind::Line,{-25,0},{25,0},1,"divider"}};require(closedContours(rings).size()==4,"Intersected nested loops must retain annular and inner cells");closeValue(volume(makeExtrusions(rings,{regionAt(rings,{0,15}),regionAt(rings,{0,-15})},2,Direction::Positive)),600*pi);
     auto hole=sketch;hole.entities.push_back({EntityKind::Circle,{3,-3},{},1,"hole"});require(closedContours(hole).size()==4,"A hole inside an intersection cell stays separately selectable");const auto holed=regionAt(hole,{5,-5});closeValue(volume(makeExtrusions(hole,{holed},2,Direction::Positive)),48*pi);
     auto inclined=cutSketch;FaceAttachment frame;frame.frame=gp_Ax3(gp_Pnt(10,20,30),gp_Dir(1,2,3),gp_Dir(1,0,0));inclined.attachment=frame;gp_Trsf transform;transform.SetDisplacement(gp_Ax3(),frame.frame);const auto stock=thecad::document::PartDocument::createBox({60,60,10});const auto inclinedStock=BRepBuilderAPI_Transform(stock.shape(),transform,Standard_True).Shape();closeValue(volume(makeCuts(inclinedStock,inclined,{regionAt(cutSketch,{28,22})},3,false,Direction::Positive)),36000-75*pi);

@@ -208,8 +208,9 @@ entity IDs. Fragment references encode source/side identity, intersection branch
 endpoint identity and boundary orientation using length-prefixed components.
 They contain no rounded coordinates or kernel traversal index. The sketch itself
 is not subdivided or rewritten. Artificial circle seams are excluded from naming.
-Malformed/missing references and new tokens in older schemas reject. Coincident
-overlaps and invalid zero-width geometry remain unsupported.
+Malformed or missing references and new tokens in older schemas reject.
+Coincident spans use a deterministic source key and retain the same reference
+format. Invalid zero-width geometry remains unsupported.
 
 Extrude fuses selected prisms and the existing result. A result may contain several
 valid positive-volume solids. Cuts affect intersected solids in the current part

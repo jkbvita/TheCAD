@@ -190,8 +190,9 @@ reject rather than reattach; see the documented conservative reference strategy.
 Valid closed line profiles can be selected even with attached dangling lines.
 Multiple regions, nested loops/holes and disconnected bodies are supported.
 Crossed lines, T-junctions and intersections with circles/rectangles create
-selectable cells without changing sketch entities. Duplicate/coincident overlaps
-and invalid zero-width profiles require cleanup; see the intersection-region checks.
+selectable cells without changing sketch entities. Coincident spans are shared
+boundaries between cells. Invalid zero-width profiles require cleanup. See the
+intersection-region checks.
 
 ## Smart Dimension and solver relations
 

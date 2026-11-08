@@ -66,8 +66,9 @@ Preview, confirmation, cancellation, feature editing and undo/redo remain on the
 existing document transactions. Adjacent selected prisms fuse; cuts subtract the
 chosen cells from the existing part, including Through All and inclined frames.
 
-Coincident/collinear overlapping source edges remain ambiguous and reject with a
-cleanup diagnostic. Invalid or zero-width kernel regions reject. Open crossings
+Coincident source edges initially rejected with a cleanup diagnostic. That
+restriction was lifted by [0039](0039-coincident-sketch-boundaries.md).
+Invalid or zero-width kernel regions reject. Open crossings
 alone create no bounded region. Derived topology is limited to 12,000 fragments,
 1,000 bounded regions and 1,000 references per region, alongside existing sketch
 and 1 MiB document limits. No automatic trimming, healing or body-scope redesign

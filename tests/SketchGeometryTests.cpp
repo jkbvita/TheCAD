@@ -271,7 +271,10 @@ int main()
         secondRectangle.first = {40, 0};
         secondRectangle.second = {60, 30};
         touching.entities.push_back(secondRectangle);
-        rejected([&] { closedContours(touching); });
+        const auto adjacent = closedContours(touching);
+        require(adjacent.size() == 2, "Rectangles sharing a complete side must remain selectable.");
+        requireNear(volume(makeExtrusions(touching, {adjacent[0].entityIds, adjacent[1].entityIds},
+                                          10, Direction::Positive)), 18000);
         Sketch triangle{SketchPlane::XY, {
             {EntityKind::Line, {0, 0}, {10, 0}, 1, "t1"},
             {EntityKind::Line, {10, 0}, {0, 10}, 1, "t2"},

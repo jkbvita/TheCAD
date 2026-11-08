@@ -27,9 +27,13 @@ inside the isolated relations worktree.
    selected region should regenerate. An edit that removes its intersections
    should report the unavailable region and preserve the previous valid result.
 8. Click interiors rather than intersection points/shared boundaries. Boundary
-   clicks can be ambiguous; choose the intended region in the list. Duplicate or
-   coincident overlapping sketch edges require cleanup. Invalid zero-thickness
-   profiles remain unsupported.
+   clicks can be ambiguous. Choose the intended region in the list. Invalid
+   zero-thickness profiles remain unsupported.
+9. Draw two same-height rectangles that partially overlap along the top and
+   bottom. Extrude or cut each of the three interiors separately. Select all
+   three and verify that the result has a single outline. Try duplicate lines
+   in one outline and two coincident circles. The original sketch entities
+   should stay present.
 
 Release build and 24/24 CTest cases pass, including normal/high-DPI UI selection,
 preview, Extrude/Cut, undo and reopening. Focused model tests verify exact areas
