@@ -82,7 +82,10 @@ std::optional<Measurement> measureGeometry(const TopoDS_Shape& first, const Topo
             const auto fromCenter = circleCenter(first);
             const auto toCenter = circleCenter(second);
             if (fromCenter && toCenter)
+            {
                 result.centerDistance = fromCenter->Distance(*toCenter);
+                result.centerSpan = std::pair{*fromCenter, *toCenter};
+            }
         }
         else if (first.ShapeType() == TopAbs_VERTEX)
         {
@@ -102,6 +105,10 @@ std::optional<Measurement> measureGeometry(const TopoDS_Shape& first, const Topo
         }
         else
         {
+            GProp_GProps properties;
+            BRepGProp::SurfaceProperties(first, properties);
+            result.area = properties.Mass();
+            result.anchor = properties.CentreOfMass();
             const BRepAdaptor_Surface surface(TopoDS::Face(first));
             if (surface.GetType() == GeomAbs_Cylinder)
             {

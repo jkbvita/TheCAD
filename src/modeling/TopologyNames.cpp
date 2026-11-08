@@ -6,6 +6,7 @@
 #include <TopTools_ListIteratorOfListOfShape.hxx>
 #include <algorithm>
 #include <stdexcept>
+#include <utility>
 namespace thecad::modeling {
 std::string topologyKey(const std::string& role,std::vector<std::string> sources){std::sort(sources.begin(),sources.end());sources.erase(std::unique(sources.begin(),sources.end()),sources.end());std::string key="tn1:"+role+":";for(const auto& s:sources)key+=std::to_string(s.size())+":"+s;return key;}
 void TopologyNames::add(const std::string& key,const TopoDS_Shape& shape){if(key.empty()||shape.IsNull())return;auto& list=images[key];if(std::none_of(list.begin(),list.end(),[&](const auto& s){return s.IsSame(shape);}))list.push_back(shape);}
@@ -15,6 +16,33 @@ TopologyNames propagateTopology(const TopologyNames& names,BRepBuilderAPI_MakeSh
 void TopologyNames::complete(const TopoDS_Shape& body){
     TopTools_IndexedMapOfShape all;TopExp::MapShapes(body,all);for(auto& [key,list]:images){list.erase(std::remove_if(list.begin(),list.end(),[&](const auto& s){return !all.Contains(s);}),list.end());for(auto& shape:list)shape=all(all.FindIndex(shape));}
     // Stable edge/vertex identities come from incident generated faces/edges.
-    for(const auto type:{TopAbs_EDGE,TopAbs_VERTEX}){TopTools_IndexedMapOfShape targets;TopExp::MapShapes(body,type,targets);for(int n=1;n<=targets.Extent();++n){std::vector<std::string> parents;for(const auto& [key,list]:images){if(list.size()!=1||list[0].ShapeType()!=(type==TopAbs_EDGE?TopAbs_FACE:TopAbs_EDGE))continue;for(TopExp_Explorer e(list[0],type);e.More();e.Next())if(e.Current().IsSame(targets(n))){parents.push_back(key);break;}}if(!parents.empty())add(topologyKey(type==TopAbs_EDGE?"edge":"vertex",parents),targets(n));}}
+    for (const auto type : {TopAbs_EDGE, TopAbs_VERTEX}) {
+        const auto parentType = type == TopAbs_EDGE ? TopAbs_FACE : TopAbs_EDGE;
+        const auto* role = type == TopAbs_EDGE ? "edge" : "vertex";
+        TopTools_IndexedMapOfShape targets;
+        TopExp::MapShapes(body, type, targets);
+        for (int n = 1; n <= targets.Extent(); ++n) {
+            std::vector<std::string> parents;
+            for (const auto& [key, list] : images) {
+                if (list.size() != 1 || list[0].ShapeType() != parentType) continue;
+                for (TopExp_Explorer child(list[0], type); child.More(); child.Next()) {
+                    if (!child.Current().IsSame(targets(n))) continue;
+                    parents.push_back(key);
+                    break;
+                }
+            }
+            if (parents.empty()) continue;
+            add(topologyKey(role, parents), targets(n));
+            // Keep the earlier identity too, including after a pattern wraps
+            // a recovered name in another feature's lineage.
+            const auto legacyEnd = std::remove_if(parents.begin(), parents.end(), [](const auto& key) {
+                return key.find("tn1:recovered-draft-face:") != std::string::npos;
+            });
+            if (legacyEnd != parents.begin() && legacyEnd != parents.end()) {
+                parents.erase(legacyEnd, parents.end());
+                add(topologyKey(role, std::move(parents)), targets(n));
+            }
+        }
+    }
 }
 }

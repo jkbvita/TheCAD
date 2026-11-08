@@ -8,13 +8,13 @@
 
 namespace thecad::ui
 {
-std::vector<TopoDS_Shape> CadViewport::measurementShapes()
+std::vector<std::pair<modeling::SelectionRef, TopoDS_Shape>> CadViewport::measurementSelection()
 {
     const auto picks = selection();
     if (picks.empty())
         return {};
     prepareBodyPicking();
-    std::vector<TopoDS_Shape> shapes;
+    std::vector<std::pair<modeling::SelectionRef, TopoDS_Shape>> shapes;
     using Kind = modeling::SelectionKind;
     for (const auto& selected : picks)
     {
@@ -29,7 +29,7 @@ std::vector<TopoDS_Shape> CadViewport::measurementShapes()
         default: break;
         }
         if (map && selected.index <= map->Extent())
-            shapes.push_back(map->FindKey(selected.index));
+            shapes.emplace_back(selected, map->FindKey(selected.index));
     }
     return shapes;
 }

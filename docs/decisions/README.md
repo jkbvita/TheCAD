@@ -76,6 +76,8 @@ approved scope do not need repeated approval.
 
 - [0042. Boss-Extrude and Cut-Extrude PropertyManagers](0042-extrusion-propertymanagers.md)
 
+- [0043. Drafted edges, standard views, and Measure](0043-drafted-edges-views-evaluate.md)
+
 ## Pending owner decisions
 
 - Resilient face references beyond the approved conservative planar-face strategy.

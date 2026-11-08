@@ -44,12 +44,15 @@ void lengthsAndRadii()
     require(spacing.has_value(), "Expected circular edge spacing.");
     checkValue(spacing->distance, 7, "Minimum circle clearance.");
     checkValue(spacing->centerDistance, 12, "Center-to-center spacing.");
+    require(spacing->centerSpan && spacing->centerSpan->first.IsEqual(first.Location(), 1e-8) &&
+            spacing->centerSpan->second.IsEqual(second.Location(), 1e-8), "Center callout endpoints.");
 
     const gp_Cylinder cylinder(gp_Ax3(gp_Pnt(0, 0, 0), gp::DZ()), 4);
     const TopoDS_Shape lateral = BRepBuilderAPI_MakeFace(cylinder, 0, 2 * std::acos(-1.0), 0, 10);
     const auto cylindrical = measureGeometry(lateral);
     require(cylindrical && cylindrical->anchor, "Expected a cylindrical face callout.");
     checkValue(cylindrical->radius, 4, "Cylinder radius.");
+    checkValue(cylindrical->area, 80 * std::acos(-1.0), "Cylinder face area.");
 }
 
 void distancesAndAngles()
@@ -66,6 +69,9 @@ void distancesAndAngles()
     const TopoDS_Shape xy = BRepBuilderAPI_MakeFace(gp_Pln(gp_Pnt(0, 0, 0), gp::DZ()), 0, 5, 0, 5);
     const TopoDS_Shape xz = BRepBuilderAPI_MakeFace(gp_Pln(gp_Pnt(0, 0, 0), gp::DY()), 0, 5, 0, 5);
     const TopoDS_Shape offset = BRepBuilderAPI_MakeFace(gp_Pln(gp_Pnt(0, 0, 12), gp::DZ()), 0, 5, 0, 5);
+    const auto planar = measureGeometry(xy);
+    require(planar && planar->anchor, "Expected a planar face callout.");
+    checkValue(planar->area, 25, "Planar face area.");
     const auto planes = measureGeometry(xy, xz);
     require(planes.has_value(), "Expected a face pair measurement.");
     checkValue(planes->angleDegrees, 90, "Angle between perpendicular planar faces.");

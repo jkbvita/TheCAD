@@ -37,6 +37,38 @@ class PlaneNavigationTest:public QObject {
     void select(PlaneWindow& w,const QString& id){auto* tree=w.findChild<QTreeWidget*>("featureTree");for(QTreeWidgetItemIterator i(tree);*i;++i)if((*i)->data(0,Qt::UserRole).toString()==id){tree->setCurrentItem(*i,0,QItemSelectionModel::ClearAndSelect);return;}QFAIL("Missing feature");}
     void confirm(PlaneWindow& w){auto* buttons=w.findChild<QDialogButtonBox*>("referenceGeometryButtons");QVERIFY(buttons->button(QDialogButtonBox::Ok)->isEnabled());QTest::mouseClick(buttons->button(QDialogButtonBox::Ok),Qt::LeftButton);QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);}
 private slots:
+    void solidWorksStandardViewShortcuts()
+    {
+        PlaneWindow window;
+        window.showMaximized();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* viewport = window.findChild<CadViewport*>();
+        QTRY_VERIFY(viewport->isReady());
+        window.activateWindow();
+        viewport->setFocus();
+        QTRY_VERIFY(window.isActiveWindow());
+        viewport->setShape(makeBox(60, 40, 20));
+        const auto camera = viewport->m_graphics.view()->Camera();
+        const gp_Pnt center(23, 17, 9);
+        camera->SetCenter(center);
+        camera->SetScale(137);
+        const auto projection = camera->ProjectionType();
+        const auto scale = camera->Scale();
+        const std::array<gp_Dir, 7> expected{gp_Dir(0,0,-1), gp_Dir(0,0,1), gp_Dir(1,0,0),
+            gp_Dir(-1,0,0), gp_Dir(0,-1,0), gp_Dir(0,1,0), gp_Dir(-1,-1,-1)};
+        for (std::size_t i = 0; i < expected.size(); ++i) {
+            QTest::keyClick(viewport, Qt::Key(Qt::Key_1 + int(i)), Qt::ControlModifier);
+            QVERIFY(camera->Direction().IsEqual(expected[i], 1e-12));
+            QVERIFY(camera->Center().Distance(center) < 1e-9);
+            QCOMPARE(camera->Scale(), scale);
+            QCOMPARE(camera->ProjectionType(), projection);
+            QVERIFY(std::abs(camera->Up().Dot(camera->Direction())) < 1e-12);
+        }
+        viewport->setSelectedReferencePlane(SketchPlane::XY);
+        QTest::keyClick(viewport, Qt::Key_8, Qt::ControlModifier);
+        QVERIFY(camera->Direction().IsEqual(expected.front(), 1e-12));
+    }
+
     void navigationAnnotationWork(){
         PlaneWindow w;w.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&w));auto* v=w.findChild<CadViewport*>();QTRY_VERIFY(v->isReady());
         Sketch sketch;for(int i=0;i<24;++i){const auto id="line-"+std::to_string(i);const double x=(i%4)*28.0-55,y=(i/4)*18.0-45;sketch.entities.push_back({EntityKind::Line,{x,y},{x+20,y},1,id});sketch.relations.push_back({"relation-"+std::to_string(i),RelationKind::Horizontal,{id,PointRole::First},{id,PointRole::Second}});if(i%3==0){auto d=inferDimension(sketch,{}, {id},{x+10,y+6});d.id="dimension-"+std::to_string(i);sketch.dimensions.push_back(d);}}

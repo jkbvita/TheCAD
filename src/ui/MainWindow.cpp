@@ -330,6 +330,7 @@ MainWindow::MainWindow(QWidget* parent)
     m_measure = action("Measure", "actionMeasure", [this](bool active) { setMeasureActive(active); });
     m_measure->setCheckable(true);
     commandButton(m_measure, evaluateGrid, 0, 0, true);
+    toolsMenu->addMenu("Evaluate")->addAction(m_measure);
     commandButton(unavailable("Mass Properties", "actionMassProperties"), evaluateGrid, 0, 1, true);
     commandButton(unavailable("Check Geometry", "actionCheckGeometry"), evaluateGrid, 0, 2, true);
     evaluateButtons->addStretch();
@@ -345,10 +346,22 @@ MainWindow::MainWindow(QWidget* parent)
     connect(fit, &QAction::triggered, m_viewport, &CadViewport::fitAll);
     auto* reset = toolbar->addAction(commandIcon("Part"), "Isometric");
     reset->setObjectName("actionIsometric");
-    reset->setShortcut(QKeySequence(Qt::Key_Home));
-    connect(reset, &QAction::triggered, m_viewport, &CadViewport::resetView);
+    reset->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_7));
+    using StandardView = CadViewport::StandardView;
+    connect(reset, &QAction::triggered, this, [this] { m_viewport->setStandardView(StandardView::Isometric); });
     viewMenu->addAction(fit);
-    viewMenu->addAction(reset);
+    auto* resetView = viewMenu->addAction("Reset View");
+    resetView->setShortcut(QKeySequence(Qt::Key_Home));
+    connect(resetView, &QAction::triggered, m_viewport, &CadViewport::resetView);
+    auto* orientations = viewMenu->addMenu("Orientation");
+    const std::array<const char*, 6> viewLabels{"Front", "Back", "Left", "Right", "Top", "Bottom"};
+    for (std::size_t i = 0; i < viewLabels.size(); ++i) {
+        auto* orientation = orientations->addAction(viewLabels[i]);
+        orientation->setObjectName(QString("actionView%1").arg(viewLabels[i]));
+        orientation->setShortcut(QKeySequence(Qt::CTRL | (Qt::Key_1 + int(i))));
+        connect(orientation, &QAction::triggered, this, [this, i] { m_viewport->setStandardView(StandardView(i)); });
+    }
+    orientations->addAction(reset);
     auto* normal=toolbar->addAction(commandIcon("Plane"),"Normal To");normal->setObjectName("actionNormalTo");normal->setShortcut(QKeySequence(Qt::CTRL|Qt::Key_8));viewMenu->addAction(normal);connect(normal,&QAction::triggered,m_viewport,&CadViewport::normalTo);
     auto* hideShow=viewMenu->addMenu("Hide/Show");auto* relationVisibility=hideShow->addAction("Sketch Relations");relationVisibility->setObjectName("actionShowSketchRelations");relationVisibility->setCheckable(true);relationVisibility->setChecked(true);
     connect(relationVisibility,&QAction::toggled,m_viewport,&CadViewport::showSketchRelations);
@@ -449,15 +462,7 @@ MainWindow::MainWindow(QWidget* parent)
     historySplitter->setStretchFactor(0, 2);
     historySplitter->setStretchFactor(1, 1);
     historyLayout->addWidget(historySplitter);
-    m_measureReadout = new QLabel(history);
-    m_measureReadout->setObjectName("measureReadout");
-    m_measureReadout->setTextFormat(Qt::PlainText);
-    m_measureReadout->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    m_measureReadout->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    m_measureReadout->setWordWrap(true);
-    m_measureReadout->setMargin(6);
-    m_measureReadout->hide();
-    historyLayout->addWidget(m_measureReadout);
+    historyLayout->addWidget(createMeasurePanel(history));
     connect(m_viewport, &CadViewport::selectionChanged, this, &MainWindow::refreshMeasurement);
     connect(&ThemeManager::instance(), &ThemeManager::changed, this, &MainWindow::refreshMeasurement);
     m_managerStack = new QStackedWidget;

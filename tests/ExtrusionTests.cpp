@@ -293,6 +293,59 @@ void curvedLimit()
     addCurvedFeature(fromSurface, f, "Start from a cylindrical surface");
     expectVolume(fromSurface, cylinderVolume + toolVolume);
 }
+
+void treatDraftedLip(document::PartDocument part, double side, const QString& path)
+{
+    const auto options = part.edgeOptions();
+    const auto edge = std::find_if(options.begin(), options.end(), [&](const auto& option) {
+        Bnd_Box bounds;
+        BRepBndLib::AddOptimal(option.selectionShape, bounds, false, false);
+        double x0, y0, z0, x1, y1, z1;
+        bounds.Get(x0, y0, z0, x1, y1, z1);
+        return std::abs(z0) < 1e-6 && std::abs(z1) < 1e-6 &&
+               side * (y0 + y1) / 2 > 30 && x1 - x0 > 60;
+    });
+    check(edge != options.end(), "The outer drafted lip must have a persistent edge reference.");
+    for (const auto kind : {document::FeatureKind::Chamfer, document::FeatureKind::Fillet}) {
+        auto candidate = part;
+        document::Feature treatment;
+        treatment.kind = kind;
+        treatment.size = 0.5;
+        treatment.edges.push_back(edge->reference);
+        candidate.addSolidFeature(treatment);
+        const auto resultVolume = volume(candidate.shape());
+        check(resultVolume < volume(part.shape()), "The drafted edge treatment must remove material.");
+        candidate.save(path);
+        auto reopened = document::PartDocument::load(path);
+        expectVolume(reopened, resultVolume);
+        auto draft = reopened.features().at(1);
+        draft.extrusion->second->draftAngle = 12;
+        reopened.replaceFeature(draft);
+        check(BRepCheck_Analyzer(reopened.shape()).IsValid(), "Changing the draft must retain the edge treatment.");
+    }
+}
+
+void draftedEdgeTreatments(const QString& path)
+{
+    auto part = document::PartDocument::createEmpty();
+    auto boss = feature(profile(part, {-80, 0}, {0, 40}));
+    boss.direction = Direction::Negative;
+    boss.extrusion->start = ExtrudeStart::Offset;
+    boss.extrusion->startOffset = -10;
+    boss.extrusion->first.depth = 8;
+    boss.extrusion->second.emplace().draftAngle = 10;
+    const auto id = part.addSolidFeature(boss);
+    treatDraftedLip(part, 1, path);
+    document::Feature mirror;
+    mirror.kind = document::FeatureKind::Mirror;
+    mirror.pattern.seeds.push_back(id);
+    GeometryReference plane;
+    plane.source = ReferenceSource::BasePlane;
+    plane.index = 1;
+    mirror.pattern.reference = plane;
+    part.addSolidFeature(mirror);
+    treatDraftedLip(part, -1, path);
+}
 }
 
 int main(int argc, char** argv)
@@ -307,6 +360,7 @@ int main(int argc, char** argv)
         draftAndThin();
         mergeAndScope();
         curvedLimit();
+        draftedEdgeTreatments(directory.filePath("drafted-edge.thepart"));
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

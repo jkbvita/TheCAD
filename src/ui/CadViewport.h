@@ -105,6 +105,8 @@ public:
     std::optional<modeling::EntityKind> sketchTool() const { return m_tools.drawing(); }
     bool smartDimensionActive() const { return m_tools.dimensionPicking(); }
     void fitAll();
+    enum class StandardView { Front, Back, Left, Right, Top, Bottom, Isometric };
+    void setStandardView(StandardView view);
     void resetView();
     void normalTo();
     void setTreeBodySelected(bool selected);
@@ -118,7 +120,7 @@ public:
     int referenceCandidateAt(const QPointF& position);
     std::vector<modeling::SelectionRef> selection() const;
     void setMeasurePicking(bool active) { m_measurePicking = active; }
-    std::vector<TopoDS_Shape> measurementShapes();
+    std::vector<std::pair<modeling::SelectionRef, TopoDS_Shape>> measurementSelection();
     void showMeasurement(const QString& text = {}, const modeling::Measurement* result = nullptr);
     const modeling::SelectionPolicy& selectionPolicy() const {return m_selectionPolicy;}
     void setSelectionFilters(std::uint32_t filters,bool enabled=true);

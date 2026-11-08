@@ -17,6 +17,7 @@
 #include <Geom_SphericalSurface.hxx>
 #include <Geom_Surface.hxx>
 #include <IntCurvesFace_ShapeIntersector.hxx>
+#include <Standard_NoSuchObject.hxx>
 #include <gp_Lin.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepGProp.hxx>
@@ -32,6 +33,8 @@
 #include <TopLoc_Location.hxx>
 #include <GProp_GProps.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopExp.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
 #include <TopTools_ListIteratorOfListOfShape.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
@@ -360,7 +363,25 @@ TopoDS_Shape draftedPrism(const TopoDS_Face& profile, const gp_Dir& sweep, doubl
     }
     draft.Build();
     require(draft.IsDone(), "The draft collapses or intersects the extrusion.");
-    names = propagateTopology(names, draft, draft.Shape());
+    auto draftedNames = propagateTopology(names, draft, draft.Shape());
+    TopTools_IndexedMapOfShape faces;
+    TopExp::MapShapes(draft.Shape(), TopAbs_FACE, faces);
+    for (const auto& [key, originals] : names.images) {
+        if (!draftedNames.images[key].empty()) continue;
+        for (const auto& original : originals) {
+            // Draft's history list can reference faces before wire correction.
+            // The one-to-one modifier result resolves the final subshape.
+            try {
+                const auto finalFace = draft.ModifiedShape(original);
+                const int index = finalFace.IsNull() ? 0 : faces.FindIndex(finalFace);
+                if (index != 0)
+                    draftedNames.add(topologyKey("recovered-draft-face", {key}), faces(index));
+            } catch (const Standard_NoSuchObject&) {
+                // No verified correspondence for this source face.
+            }
+        }
+    }
+    names = std::move(draftedNames);
     return draft.Shape();
 }
 

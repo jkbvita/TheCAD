@@ -110,6 +110,11 @@ private slots:
         QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, right);
         QVERIFY(readout->text().contains("Minimum distance  " + number(60)));
         QVERIFY(!viewport->m_measureSpan.IsNull());
+        window.findChild<QCheckBox*>("measureXYZ")->setChecked(true);
+        window.findChild<QComboBox*>("measureUnits")->setCurrentText("cm");
+        QVERIFY(readout->text().contains(QString(QChar(0x0394)) + "X  " + number(6) + " cm"));
+        QVERIFY(window.findChild<QLabel*>("measureSelection")->text().contains("Vertex"));
+        window.findChild<QComboBox*>("measureUnits")->setCurrentText("mm");
         QVERIFY(camera.unchanged(viewport));
 
         QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, right);

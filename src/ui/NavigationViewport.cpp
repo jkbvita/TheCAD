@@ -56,6 +56,31 @@ void CadViewport::updateCameraAnnotations(){
         updateConstraintPresentation(false);
     updateRelationPositions();
 }
+void CadViewport::setStandardView(StandardView orientation)
+{
+    if (!isReady()) return;
+    gp_Dir towardViewer(0, 0, 1);
+    gp_Dir up(0, 1, 0);
+    switch (orientation) {
+    case StandardView::Front: break;
+    case StandardView::Back: towardViewer = gp_Dir(0, 0, -1); break;
+    case StandardView::Left: towardViewer = gp_Dir(-1, 0, 0); break;
+    case StandardView::Right: towardViewer = gp_Dir(1, 0, 0); break;
+    case StandardView::Top: towardViewer = gp_Dir(0, 1, 0); up = gp_Dir(0, 0, -1); break;
+    case StandardView::Bottom: towardViewer = gp_Dir(0, -1, 0); up = gp_Dir(0, 0, 1); break;
+    case StandardView::Isometric: towardViewer = gp_Dir(1, 1, 1); break;
+    }
+    m_camera.resetAnchor();
+    const auto view = m_graphics.view();
+    const auto camera = view->Camera();
+    camera->SetDirection(towardViewer.Reversed());
+    camera->SetUp(up);
+    camera->OrthogonalizeUp();
+    view->ZFitAll();
+    m_cameraAnnotationsDirty = true;
+    update();
+}
+
 void CadViewport::normalTo(){
     if(!isReady())return;m_camera.resetAnchor();
     if(m_sketch&&(m_sketchEditing||m_regionSelecting)){orientSketch();update();return;}
