@@ -34,10 +34,17 @@ public:
             points.emplace(std::make_pair(entity.id,int(firstRole)),GCS::Point(&entity.first.x,&entity.first.y));
             const bool linked = sketchProjection(sketch, entity.id) != nullptr;
             if (!linked) {unknowns.push_back(&entity.first.x);unknowns.push_back(&entity.first.y);}
-            if(entity.kind==EntityKind::Circle) {
+            if (entity.kind == EntityKind::Arc) {
+                points.emplace(std::make_pair(entity.id,int(PointRole::Center)),
+                               GCS::Point(&entity.center.x, &entity.center.y));
+                unknowns.push_back(&entity.center.x);
+                unknowns.push_back(&entity.center.y);
+            }
+            if(isCircular(entity.kind)) {
                 if (!linked) unknowns.push_back(&entity.radius);
                 GCS::Circle circle;circle.center=point({entity.id,PointRole::Center});circle.rad=&entity.radius;circles.emplace(entity.id,circle);
-            } else if(entity.kind!=EntityKind::Point) {
+            }
+            if(entity.kind!=EntityKind::Point && entity.kind!=EntityKind::Circle) {
                 points.emplace(std::make_pair(entity.id,int(PointRole::Second)),GCS::Point(&entity.second.x,&entity.second.y));
                 if (!linked) {unknowns.push_back(&entity.second.x);unknowns.push_back(&entity.second.y);}
                 if(entity.kind==EntityKind::Line){GCS::Line line;line.p1=point({entity.id,PointRole::First});line.p2=point({entity.id,PointRole::Second});lines.emplace(entity.id,line);}
@@ -95,6 +102,12 @@ public:
         system.addConstraintL2LAngle(a,b,constant(angle),id);
     }
     void addRelations(GCS::System& system) {
+        for (const auto& e : sketch.entities)
+            if (e.kind == EntityKind::Arc) {
+                const int intrinsic = tag("arc:" + e.id);
+                for (const auto role : {PointRole::First, PointRole::Second})
+                    system.addConstraintPointOnCircle(point({e.id, role}), circles.at(e.id), intrinsic);
+            }
         for(const auto& relation:sketch.relations) {
             const int id=tag(relation.id);auto& a=point(relation.first);auto& b=point(relation.second);
             switch(relation.kind) {
@@ -141,13 +154,40 @@ public:
                     system.addConstraintTangentCircumf(first.center,second.center,first.rad,second.rad,false,id);
                 }
                 else {
-                    auto& line=lines.at(lines.count(relation.first.entityId)?relation.first.entityId:relation.second.entityId);
-                    auto& circle=circles.at(circles.count(relation.first.entityId)?relation.first.entityId:relation.second.entityId);
+                    const auto& lineId = lines.count(relation.first.entityId) ? relation.first.entityId : relation.second.entityId;
+                    const auto& curveId = lineId == relation.first.entityId ? relation.second.entityId : relation.first.entityId;
+                    auto& line = lines.at(lineId);
+                    auto& circle = circles.at(curveId);
+                    if (addJoinedArcTangent(system, lineId, curveId, id))
+                        break;
                     const double side=(*line.p2.x-*line.p1.x)*(*circle.center.y-*line.p1.y)-(*line.p2.y-*line.p1.y)*(*circle.center.x-*line.p1.x);
                     system.addConstraintTangent(line,circle,side>=0,id);
                 }break;
             }
         }
+    }
+    bool addJoinedArcTangent(GCS::System& system, const std::string& lineId,
+                             const std::string& curveId, int id) {
+        if (!points.count({curveId, int(PointRole::First)}))
+            return false;
+        const auto& line = lines.at(lineId);
+        for (const auto arcEnd : {PointRole::First, PointRole::Second})
+            for (const auto lineEnd : {PointRole::First, PointRole::Second}) {
+                if (!areSketchPointsCoincident(sketch, {curveId, arcEnd}, {lineId, lineEnd}))
+                    continue;
+                // At a joined endpoint the radial-angle equation stays well
+                // conditioned when the line-to-circle distance is stationary.
+                GCS::Line radius;
+                radius.p1 = circles.at(curveId).center;
+                radius.p2 = point({curveId, arcEnd});
+                const double ux = *line.p2.x - *line.p1.x, uy = *line.p2.y - *line.p1.y;
+                const double vx = *radius.p2.x - *radius.p1.x, vy = *radius.p2.y - *radius.p1.y;
+                auto side = line;
+                system.addConstraintL2LAngle(side, radius, constant((ux * vy - uy * vx < 0 ? -1 : 1) *
+                                                                   1.57079632679489661923), id);
+                return true;
+            }
+        return false;
     }
     void addPolygons(GCS::System& system) {
         for(const auto& g:sketch.polygons) {
@@ -376,8 +416,11 @@ SketchDefinition analyzeSketchDefinition(const Sketch& sketch){
             bool defined=false;
             if(e.kind==EntityKind::Line || e.kind==EntityKind::Rectangle)
                 defined=fixedPoint({e.id,PointRole::First}) && fixedPoint({e.id,PointRole::Second});
-            if(e.kind==EntityKind::Circle)
+            if(isCircular(e.kind)) {
                 defined=fixedPoint({e.id,PointRole::Center}) && !movable.count(work.circles.at(e.id).rad);
+                if(e.kind==EntityKind::Arc)
+                    defined=defined && fixedPoint({e.id,PointRole::First}) && fixedPoint({e.id,PointRole::Second});
+            }
             if(defined)result.definedCurves.push_back(e.id);
         }
         result.degreesOfFreedom=system.dofsNumber();result.valid=true;

@@ -165,10 +165,13 @@ for other outlines. Edges/vertices support ordinary selection and constraints;
 driving dimensions preserve regularity. Existing saved polygons remain readable.
 See [basic sketch tool checks](docs/verification/basic-sketch-tools.md).
 
-Arc, Spline, Trim, Convert,
-Offset, Mirror, Linear Sketch Pattern, Move, Repair
-Sketch, Shaded Sketch Contours, Mass Properties and Check Geometry are
-disabled until implemented.
+**3 Point Arc** takes a start, end, and a point along the curve. **Straight Slot**
+takes two end centers and a width pick. Both show a live preview. A slot's four
+edges stay joined and tangent through sketch relations. Use Smart Dimension on a
+cap to drive the slot width by its diameter.
+
+Spline, Move Entities, Repair Sketch, Shaded Sketch Contours, Mass Properties,
+and Check Geometry are disabled until implemented.
 
 While editing a closed sketch, switch to Features and click Extrude or Extruded
 Cut. The active sketch is used automatically; select the intended regions in the

@@ -124,7 +124,7 @@ void MainWindow::applyRelation() {
             else throw std::runtime_error("Select two distinct points.");
         } else {
             if(d.entities.size()!=2)throw std::runtime_error("Select two distinct entities.");
-            const auto ref=[&](const std::string& id){const auto& e=*std::find_if(m_session.editingSketch()->entities.begin(),m_session.editingSketch()->entities.end(),[&](const auto& e){return e.id==id;});return modeling::SketchPointRef{id,e.kind==modeling::EntityKind::Circle?modeling::PointRole::Center:modeling::PointRole::First};};
+            const auto ref=[&](const std::string& id){const auto& e=*std::find_if(m_session.editingSketch()->entities.begin(),m_session.editingSketch()->entities.end(),[&](const auto& e){return e.id==id;});return modeling::SketchPointRef{id,modeling::isCircular(e.kind)?modeling::PointRole::Center:modeling::PointRole::First};};
             relation.first=ref(d.entities[0]);relation.second=ref(d.entities[1]);
         }
         acceptConstrainedSketch(modeling::setSketchRelation(*m_session.editingSketch(),relation));m_viewport->setSketch(*m_session.editingSketch());setWindowModified(true);d.error->clear();m_viewport->setConstraintErrors({});updateConstraintDraft();updateEntityList();

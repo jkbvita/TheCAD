@@ -111,6 +111,14 @@ QJsonObject writeEntity(const modeling::SketchEntity& entity)
         object["center"] = point(entity.first);
         object["radius"] = entity.radius;
         break;
+    case modeling::EntityKind::Arc:
+        object["type"] = "arc";
+        object["first"] = point(entity.first);
+        object["second"] = point(entity.second);
+        object["center"] = point(entity.center);
+        object["radius"] = entity.radius;
+        object["clockwise"] = entity.clockwise;
+        break;
     case modeling::EntityKind::Point:
         object["type"] = "point";
         object["position"] = point(entity.first);
@@ -144,6 +152,18 @@ modeling::SketchEntity readEntity(const QJsonValue& value, int version)
         entity.kind = modeling::EntityKind::Circle;
         entity.first = readPoint(object.value("center"));
         entity.radius = number(object.value("radius"), "Radius");
+    }
+    else if (type == "arc" && version >= 23)
+    {
+        expected.unite({"first", "second", "center", "radius", "clockwise"});
+        if (!object["clockwise"].isBool())
+            fail("Arc orientation must be boolean.");
+        entity.kind = modeling::EntityKind::Arc;
+        entity.first = readPoint(object["first"]);
+        entity.second = readPoint(object["second"]);
+        entity.center = readPoint(object["center"]);
+        entity.radius = number(object["radius"], "Radius");
+        entity.clockwise = object["clockwise"].toBool();
     }
     else if (type == "line" || type == "rectangle")
     {
@@ -488,7 +508,7 @@ PartDocument PartFileStore::load(const QString& path)
     if (root.value("units") != QJsonValue("mm"))
         fail("Unsupported units; this prototype supports millimeters only.");
     const auto versionValue = root.value("version");
-    if (!versionValue.isDouble() || versionValue.toDouble() < 1 || versionValue.toDouble() > 22 ||
+    if (!versionValue.isDouble() || versionValue.toDouble() < 1 || versionValue.toDouble() > 23 ||
         versionValue.toDouble() != std::floor(versionValue.toDouble()))
         fail("Unsupported part document version; expected versions 1 through 21.");
     const int version = versionValue.toInt();
@@ -1071,9 +1091,17 @@ void PartFileStore::save(const PartDocument& document, const QString& path)
             resultId = feature.id;
         features.append(object);
     }
-    int version = 16;
+    const bool hasArcs = std::any_of(document.features().begin(), document.features().end(), [](const auto& feature) {
+        return feature.kind == FeatureKind::Sketch &&
+               std::any_of(feature.sketch.entities.begin(), feature.sketch.entities.end(), [](const auto& entity) {
+                   return entity.kind == modeling::EntityKind::Arc;
+               });
+    });
+    int version = hasArcs ? 23 : 16;
     for (const auto& feature : document.features())
     {
+        if (version == 23)
+            break;
         if (feature.kind == FeatureKind::CircularPattern ||
             (feature.kind == FeatureKind::ReferenceGeometry &&
              std::any_of(feature.reference.references.begin(), feature.reference.references.end(),

@@ -236,6 +236,8 @@ private:
     QAction* m_line = nullptr;
     QAction* m_rectangle = nullptr;
     QAction* m_circle = nullptr;
+    QAction* m_arc = nullptr;
+    QAction* m_straightSlot = nullptr;
     QAction *m_point=nullptr,*m_centerline=nullptr,*m_polygon=nullptr,*m_construction=nullptr;
     QAction* m_selectEntity = nullptr;
     QGroupBox* m_propertyPanel = nullptr;

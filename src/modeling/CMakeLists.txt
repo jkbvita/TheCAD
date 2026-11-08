@@ -7,6 +7,7 @@ add_library(thecad_modeling STATIC
     DimensionInference.cpp
     DimensionAnnotation.cpp
     SketchTools.cpp
+    SketchArcs.cpp
     SketchModifiers.cpp
     SketchContourEdits.cpp
     SketchOffset.cpp

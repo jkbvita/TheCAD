@@ -6,7 +6,7 @@ target_link_libraries(thecad_widgets PUBLIC Qt6::Widgets thecad_document)
 
 add_library(thecad_viewport_widget STATIC
     CadViewport.cpp CadViewport.h NavigationViewport.cpp
-    ReferenceGeometryViewport.cpp SelectionViewport.cpp SketchReferenceViewport.cpp MeasureViewport.cpp RelationSymbols.cpp)
+    ReferenceGeometryViewport.cpp SelectionViewport.cpp SketchReferenceViewport.cpp ArcSlotViewport.cpp MeasureViewport.cpp RelationSymbols.cpp)
 target_include_directories(thecad_viewport_widget PUBLIC "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(thecad_viewport_widget PUBLIC Qt6::Widgets thecad_application thecad_graphics thecad_widgets)
 

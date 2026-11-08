@@ -1,4 +1,5 @@
 #include "modeling/SketchTools.h"
+#include "modeling/SketchArcs.h"
 #include "modeling/ConstraintSolver.h"
 #include "modeling/DimensionInference.h"
 #include "document/PartDocument.h"
@@ -16,7 +17,69 @@ using namespace thecad::modeling;
 void require(bool v,const char* message){if(!v)throw std::runtime_error(message);}
 void near(double a,double b){if(std::abs(a-b)>1e-5)throw std::runtime_error("Expected "+std::to_string(b)+", got "+std::to_string(a));}
 double volume(const TopoDS_Shape& s){GProp_GProps p;BRepGProp::VolumeProperties(s,p);return p.Mass();}
+void arcAndStraightSlot()
+{
+    constexpr double pi = 3.14159265358979323846;
+    Sketch arc;
+    arc.entities = {threePointArc({0, 0}, {20, 0}, {10, 10}, "arc")};
+    require(closedContours(arc).empty(), "A single arc is an open contour.");
+    near(arcPoint(arc.entities.front(), 0.5).y, 10);
+    near(closestArcPoint(arc.entities.front(), {10, -10}).y, 0);
+    const auto major = threePointArc({0, 0}, {20, 0}, {10, 24}, "major");
+    require(std::abs(arcAngles(major).sweep) > pi, "The third point chooses the major arc.");
+    arc.entities.push_back({EntityKind::Line, {20, 0}, {0, 0}, 1, "chord"});
+    const auto region = closedContours(arc);
+    require(region.size() == 1, "An arc joined to its chord must bound one region.");
+    near(volume(makeExtrusions(arc, {region.front().entityIds}, 5, Direction::Positive)), 250 * pi);
+    arc.entities.front().construction = true;
+    require(closedContours(arc).empty(), "Construction arcs must be excluded.");
+
+    Sketch slot;
+    const auto outline = straightSlot({20, 25}, {65, 25}, {45, 30}, "slot");
+    addStraightSlot(slot, outline, "slot");
+    for (const auto [index, center] : {std::pair{1, Point2{65, 25}}, std::pair{3, Point2{20, 25}}})
+        slot.relations.push_back({"fix-" + std::to_string(index), RelationKind::FixedPoint,
+                                  {outline[index].id, PointRole::Center}, {}, center});
+    auto width = inferDimension(slot, {}, {outline[1].id}, {75, 32}, false);
+    width.id = "width";
+    slot = setSketchDimension(slot, width);
+    near(width.value, 10);
+    const auto original = closedContours(slot);
+    require(original.size() == 1 && original.front().entityIds.size() == 4,
+            "A straight slot must form one closed four-edge region.");
+    require(analyzeSketchDefinition(slot).degreesOfFreedom == 0,
+            "Fixed centers and a width fully define the slot.");
+
+    auto part = thecad::document::PartDocument::createBox({100, 60, 10});
+    const auto slotId = part.addSketch(slot);
+    part.addCutRegions(slotId, {original.front().entityIds}, 4, false, Direction::Positive);
+    near(volume(part.shape()), 60000 - 4 * (450 + 25 * pi));
+    auto feature = part.features()[1];
+    feature.sketch.dimensions.front().value = 16;
+    part.replaceFeature(feature);
+    near(volume(part.shape()), 60000 - 4 * (720 + 64 * pi));
+    const auto& solved = part.features()[1].sketch;
+    near(solved.entities[1].radius, 8);
+    near(solved.entities[3].radius, 8);
+    near(std::abs(arcAngles(solved.entities[1]).sweep), pi);
+
+    QTemporaryDir directory;
+    const auto path = directory.filePath("slot.thepart");
+    part.save(path);
+    QFile file(path);
+    require(file.open(QIODevice::ReadOnly), "Read slot schema.");
+    require(QJsonDocument::fromJson(file.readAll()).object()["version"].toInt() == 23,
+            "An arc sketch requires schema 23.");
+    file.close();
+    const auto loaded = thecad::document::PartDocument::load(path);
+    near(volume(loaded.shape()), volume(part.shape()));
+    require(loaded.features()[1].sketch.entities[1].id == outline[1].id &&
+            loaded.features()[1].sketch.entities[1].clockwise,
+            "Slot cap identity and orientation must survive reopening.");
+}
+
 int main(){try{
+    arcAndStraightSlot();
     Sketch points;points.entities={{EntityKind::Point,{0,0},{},1,"p"},{EntityKind::Point,{10,20},{},1,"q"},{EntityKind::Line,{-30,20},{30,20},1,"axis",true}};
     points.relations={{"origin",RelationKind::Coincident,{"p",PointRole::First},{}},{"on",RelationKind::PointOnLine,{"q",PointRole::First},{"axis",PointRole::First}}};
     require(sketchPoints(points).size()==5,"Point entities expose exactly one reference");require(closedContours(points).empty(),"Points and centerlines cannot bound extrusion profiles");

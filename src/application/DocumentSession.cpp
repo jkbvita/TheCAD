@@ -32,6 +32,11 @@ QByteArray sketchKey(const modeling::Sketch& sketch)
         point(e.first);
         point(e.second);
         out << e.radius;
+        if (e.kind == modeling::EntityKind::Arc)
+        {
+            point(e.center);
+            out << e.clockwise;
+        }
     }
     out << quint64(sketch.projections.size());
     for (const auto& link : sketch.projections)

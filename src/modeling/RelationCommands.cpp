@@ -9,7 +9,7 @@
 namespace thecad::modeling {
 namespace {
 const SketchEntity& entity(const Sketch& s,const std::string& id){const auto e=std::find_if(s.entities.begin(),s.entities.end(),[&](const auto& v){return v.id==id;});if(e==s.entities.end())throw std::runtime_error("Selected geometry is unavailable.");return *e;}
-SketchPointRef ref(const SketchEntity& e){return {e.id,e.kind==EntityKind::Circle?PointRole::Center:PointRole::First};}
+SketchPointRef ref(const SketchEntity& e){return {e.id,isCircular(e.kind)?PointRole::Center:PointRole::First};}
 double length(const SketchEntity& e){return e.kind==EntityKind::Circle?6.28318530717958647692*e.radius:std::hypot(e.second.x-e.first.x,e.second.y-e.first.y);}
 void require(bool v,const char* text){if(!v)throw std::runtime_error(text);}
 }
@@ -24,15 +24,23 @@ std::vector<RelationKind> availableRelations(const Sketch& s,const std::vector<s
     if(ids.empty() || std::set<std::string>(ids.begin(),ids.end()).size()!=ids.size())return {};
     std::vector<const SketchEntity*> selected;for(const auto& id:ids){auto e=std::find_if(s.entities.begin(),s.entities.end(),[&](const auto& v){return v.id==id;});if(e==s.entities.end())return {};selected.push_back(&*e);}
     const auto all=[&](EntityKind kind){return std::all_of(selected.begin(),selected.end(),[&](const auto* e){return e->kind==kind;});};
-    const bool lines=all(EntityKind::Line),circles=all(EntityKind::Circle),points=all(EntityKind::Point);std::vector<RelationKind> result;
+    const bool lines=all(EntityKind::Line),circles=all(EntityKind::Circle),points=all(EntityKind::Point);
+    const bool circular=std::all_of(selected.begin(),selected.end(),[](const auto* e){return isCircular(e->kind);});
+    std::vector<RelationKind> result;
     if(lines || (points && ids.size()>=2)){result.push_back(RelationKind::Horizontal);result.push_back(RelationKind::Vertical);}
     if(lines && ids.size()>=2){result.push_back(RelationKind::Collinear);if(ids.size()==2)result.push_back(RelationKind::Perpendicular);result.push_back(RelationKind::Parallel);result.push_back(RelationKind::Equal);}
     if(points && ids.size()>=2)result.push_back(RelationKind::Coincident);
-    if(circles && ids.size()>=2){result.push_back(RelationKind::Concentric);result.push_back(RelationKind::Equal);result.push_back(RelationKind::EqualCurveLength);}
+    if(circular && ids.size()>=2){
+        result.push_back(RelationKind::Concentric);result.push_back(RelationKind::Equal);
+        if(circles)result.push_back(RelationKind::EqualCurveLength);
+    }
     if(ids.size()==2){
         const auto a=selected[0]->kind,b=selected[1]->kind;
-        if((a==EntityKind::Line && b==EntityKind::Circle)||(b==EntityKind::Line && a==EntityKind::Circle)){result.push_back(RelationKind::Tangent);result.push_back(RelationKind::EqualCurveLength);}
-        if(circles)result.push_back(RelationKind::Tangent);
+        if((a==EntityKind::Line && isCircular(b))||(b==EntityKind::Line && isCircular(a))){
+            result.push_back(RelationKind::Tangent);
+            if(a==EntityKind::Circle || b==EntityKind::Circle)result.push_back(RelationKind::EqualCurveLength);
+        }
+        if(circular)result.push_back(RelationKind::Tangent);
         if((a==EntityKind::Point && b==EntityKind::Circle)||(b==EntityKind::Point && a==EntityKind::Circle)){result.push_back(RelationKind::Concentric);result.push_back(RelationKind::PointOnCircle);}
         if((a==EntityKind::Point && b==EntityKind::Line)||(b==EntityKind::Point && a==EntityKind::Line)){result.push_back(RelationKind::PointOnLine);result.push_back(RelationKind::Midpoint);}
     }
@@ -87,9 +95,10 @@ void validateNewRelation(const Sketch& s,const SketchRelation& r,bool geometry){
     }
     const auto& b=entity(s,r.second.entityId);const auto allowed=availableRelations(s,{a.id,b.id});require(std::find(allowed.begin(),allowed.end(),r.kind)!=allowed.end(),"Invalid relation entity types.");
     require(r.first.role==ref(a).role && r.second.role==ref(b).role,"Invalid relation reference roles.");if(!geometry)return;
-    if(r.kind==RelationKind::Equal){const double x=a.kind==EntityKind::Circle?a.radius:length(a),y=b.kind==EntityKind::Circle?b.radius:length(b);require(std::abs(x-y)<1e-6,"Equal relation is not satisfied.");}
+    if(r.kind==RelationKind::Equal){const double x=isCircular(a.kind)?a.radius:length(a),y=isCircular(b.kind)?b.radius:length(b);require(std::abs(x-y)<1e-6,"Equal relation is not satisfied.");}
     else if(r.kind==RelationKind::EqualCurveLength)require(std::abs(length(a)-length(b))<1e-6,"Equal curve lengths are not satisfied.");
-    else if(r.kind==RelationKind::Concentric)require(a.first.x==b.first.x && a.first.y==b.first.y,"Concentric centers are not coincident.");
+    else if(r.kind==RelationKind::Concentric)require(sketchPointValue(s,r.first).x==sketchPointValue(s,r.second).x &&
+                                                     sketchPointValue(s,r.first).y==sketchPointValue(s,r.second).y,"Concentric centers are not coincident.");
     else if(r.kind==RelationKind::Collinear){const double ux=a.second.x-a.first.x,uy=a.second.y-a.first.y,vx=b.second.x-b.first.x,vy=b.second.y-b.first.y,al=length(a),bl=length(b);require(al>1e-7&&bl>1e-7&&std::abs(ux*vy-uy*vx)<=1e-7*al*bl && std::abs(ux*(b.first.y-a.first.y)-uy*(b.first.x-a.first.x))/al<1e-6,"Collinear relation is not satisfied.");}
 }
 }

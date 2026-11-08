@@ -14,7 +14,8 @@ namespace thecad::modeling {
 
 enum class SketchPlane { XY, XZ, YZ };
 struct Point2 { double x = 0.0; double y = 0.0; };
-enum class EntityKind { Line, Rectangle, Circle, Point, Polygon }; // Polygon is a creation tool; stored boundaries are lines.
+enum class EntityKind { Line, Rectangle, Circle, Point, Polygon, Arc, StraightSlot }; // Polygon and StraightSlot are creation tools.
+inline bool isCircular(EntityKind kind) { return kind == EntityKind::Circle || kind == EntityKind::Arc; }
 struct SketchEntity {
     EntityKind kind = EntityKind::Line;
     Point2 first;
@@ -22,7 +23,13 @@ struct SketchEntity {
     double radius = 1.0;
     std::string id;
     bool construction = false;
+    Point2 center; // Arc center. Arc endpoints use first and second.
+    bool clockwise = false;
 };
+inline Point2 circularCenter(const SketchEntity& entity)
+{
+    return entity.kind == EntityKind::Arc ? entity.center : entity.first;
+}
 enum class PointRole { Origin, First, Second, Center, Midpoint }; // Midpoint is a derived snap target, never serialized as a point reference.
 struct SketchPointRef {
     std::string entityId;

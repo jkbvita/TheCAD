@@ -1,4 +1,5 @@
 #include "modeling/DimensionAnnotation.h"
+#include "modeling/SketchArcs.h"
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -54,7 +55,14 @@ DimensionGraphics dimensionGraphics(const Sketch& s,const SketchDimension& d,dou
     };
     const auto a=sketchPointValue(s,d.first);
     if(d.kind==DimensionKind::CircleRadius || d.kind==DimensionKind::CircleDiameter){
-        const double radius=entity(s,d.first.entityId).radius;const auto u=unit(sub(g.text,a));
+        const auto& curve = entity(s,d.first.entityId);
+        const double radius=curve.radius;
+        if (curve.kind == EntityKind::Arc) {
+            const auto tip = closestArcPoint(curve, g.text);
+            line(a, tip);arrow(tip, sub(a, tip), radius);
+            line(tip, g.text);return g;
+        }
+        const auto u=unit(sub(g.text,a));
         const auto near=add(a,mul(u,radius)),far=sub(a,mul(u,radius));
         if(d.kind==DimensionKind::CircleDiameter){line(far,near);arrow(far,u,2*radius);arrow(near,mul(u,-1),2*radius);}
         else {line(a,near);arrow(near,mul(u,-1),radius);}

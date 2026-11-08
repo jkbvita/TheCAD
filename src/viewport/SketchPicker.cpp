@@ -1,6 +1,7 @@
 #include "viewport/SketchPicker.h"
 #include "viewport/DimensionPresenter.h"
 #include "modeling/SketchSnapping.h"
+#include "modeling/SketchArcs.h"
 #include "modeling/DimensionAnnotation.h"
 #include <QFontMetricsF>
 #include <QLineF>
@@ -102,7 +103,22 @@ SketchPicker::sketchEntityCandidates(const QPointF& position) const
             for (int n = 0; n < 4; ++n)
                 distance = std::min(distance, distanceToSegment(corners[n], corners[(n + 1) % 4]));
         }
-        else
+        else if (entity.kind == modeling::EntityKind::Arc)
+        {
+            const auto center = screenPoint(entity.center);
+            const double radius = std::max(QLineF(center, screenPoint({entity.center.x + entity.radius, entity.center.y})).length(),
+                                           QLineF(center, screenPoint({entity.center.x, entity.center.y + entity.radius})).length());
+            const int segments = std::clamp(int(std::ceil(std::abs(modeling::arcAngles(entity).sweep) *
+                                                          std::sqrt(std::max(1.0, radius)))), 8, 2048);
+            auto first = entity.first;
+            for (int i = 1; i <= segments; ++i)
+            {
+                const auto next = modeling::arcPoint(entity, double(i) / segments);
+                distance = std::min(distance, distanceToSegment(first, next));
+                first = next;
+            }
+        }
+        else if (entity.kind == modeling::EntityKind::Circle)
         {
             const auto center = screenPoint(entity.first);
             const auto edge = screenPoint({entity.first.x + entity.radius, entity.first.y});

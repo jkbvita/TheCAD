@@ -72,6 +72,8 @@ approved scope do not need repeated approval.
 
 - [0040: Sketch tool priorities](0040-sketch-tool-priorities.md)
 
+- [0041: Three-point Arc and Straight Slot](0041-arc-straight-slot.md)
+
 ## Pending owner decisions
 
 - Resilient face references beyond the approved conservative planar-face strategy.

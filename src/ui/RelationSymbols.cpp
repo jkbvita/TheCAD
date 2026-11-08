@@ -1,6 +1,7 @@
 #include "ui/CadViewport.h"
 #include "ui/RelationIcons.h"
 #include "modeling/RelationCommands.h"
+#include "modeling/SketchArcs.h"
 #include <Image_PixMap.hxx>
 #include <Quantity_ColorRGBA.hxx>
 #include <Graphic3d_AspectMarker3d.hxx>
@@ -24,6 +25,8 @@ modeling::Point2 anchor(const modeling::Sketch& sketch,const modeling::SketchRel
     const auto first=modeling::sketchPointValue(sketch,r.first);
     const auto e=std::find_if(sketch.entities.begin(),sketch.entities.end(),[&](const auto& e){return e.id==r.first.entityId;});
     if(e!=sketch.entities.end()){
+        if(e->kind==modeling::EntityKind::Arc && r.first.role==modeling::PointRole::Center)
+            return modeling::arcPoint(*e, 0.5);
         if(e->kind==modeling::EntityKind::Circle)return {e->first.x+0.7071067811865475*e->radius,e->first.y+0.7071067811865475*e->radius};
         if(e->kind==modeling::EntityKind::Line && r.kind!=modeling::RelationKind::Coincident && r.kind!=modeling::RelationKind::PointOnLine && r.kind!=modeling::RelationKind::Midpoint)return {(e->first.x+e->second.x)/2,(e->first.y+e->second.y)/2};
     }
@@ -40,7 +43,7 @@ void CadViewport::updateRelationSymbols(){
         const bool perEntity=group.kind==modeling::RelationKind::Equal || group.kind==modeling::RelationKind::EqualCurveLength;
         const auto entities=perEntity?group.entityIds:std::vector<std::string>{relation.first.entityId};
         for(const auto& entityId:entities){
-        auto r=relation;if(perEntity){const auto e=std::find_if(m_sketch->entities.begin(),m_sketch->entities.end(),[&](const auto& e){return e.id==entityId;});r.first={entityId,e->kind==modeling::EntityKind::Circle?modeling::PointRole::Center:modeling::PointRole::First};}
+        auto r=relation;if(perEntity){const auto e=std::find_if(m_sketch->entities.begin(),m_sketch->entities.end(),[&](const auto& e){return e.id==entityId;});r.first={entityId,modeling::isCircular(e->kind)?modeling::PointRole::Center:modeling::PointRole::First};}
         const auto localAnchor=anchor(*m_sketch,r);const auto origin=screenPoint(localAnchor);if(!rect().adjusted(-20,-20,20,20).contains(origin.toPoint()))continue;
         QRectF area;bool found=false;
         for(int attempt=0;attempt<120;++attempt){

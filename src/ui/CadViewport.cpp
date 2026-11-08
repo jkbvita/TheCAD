@@ -507,6 +507,7 @@ void CadViewport::beginSketch(const modeling::Sketch& sketch)
     m_sketchEditing = true;
     if(isReady())for(auto& datum:m_datumPresentations)m_graphics.context()->Erase(datum,Standard_False);
     m_shiftSelectionChanged=false;
+    clearArcOrSlot();
     m_tools.clearDrawing();m_tools.resetConstruction();m_drawingPreview.reset();
     m_firstPoint.reset();
     m_firstReference.reset();
@@ -531,6 +532,7 @@ void CadViewport::endSketch()
     setSketchModifierPreview(nullptr);
     setDatums(m_datums);
     updateSketchAxes();
+    clearArcOrSlot();
     m_tools.clearDrawing();
     m_firstPoint.reset();
     m_firstReference.reset();
@@ -550,6 +552,7 @@ void CadViewport::beginContourSelection(const modeling::Sketch& sketch)
     clearSelection();
     setSelectedContourFaces({});
     cancelDimensionDrag();cancelPointDrag();resetSketchInference();
+    clearArcOrSlot();
     m_tools.clearDrawing();m_firstPoint.reset();m_firstReference.reset();
     showReferencePlanes(false);
     m_sketchEditing = false;
@@ -638,7 +641,7 @@ void CadViewport::updateSketchHover(const QPointF& position) {
     }
     if(!previous.empty())QToolTip::hideText();
     const auto oldPoint=m_hoveredPoint;
-    const bool midpointTool=m_tools.drawing()==modeling::EntityKind::Line || m_tools.drawing()==modeling::EntityKind::Point;
+    const bool midpointTool=m_tools.drawing()==modeling::EntityKind::Line || m_tools.drawing()==modeling::EntityKind::Point || drawingArcOrSlot();
     const auto hit=m_tools.drawing()?pointAt(position,midpointTool):selectionPointAt(position);
     m_hoveredPoint=hit?std::optional<modeling::SketchPointRef>(hit->reference):std::nullopt;
     if(m_hoveredPoint && m_hoveredPoint->role==modeling::PointRole::Midpoint){if(!oldPoint || oldPoint->entityId!=m_hoveredPoint->entityId || oldPoint->role!=m_hoveredPoint->role)QToolTip::showText(mapToGlobal(position.toPoint()),"Midpoint",this);}
@@ -696,6 +699,7 @@ void CadViewport::setSketchTool(modeling::EntityKind kind,bool construction)
     cancelSketchMultiSelection();
     cancelDimensionDrag();cancelPointDrag(); resetSketchInference();
     m_selectedRelation.clear();
+    clearArcOrSlot();
     m_tools.draw(kind,construction);m_drawingPreview.reset();
     m_firstPoint.reset();
     m_firstReference.reset();
@@ -732,6 +736,7 @@ void CadViewport::selectSketchTool()
 {
     cancelSketchMultiSelection();
     cancelDimensionDrag();cancelPointDrag(); resetSketchInference();
+    clearArcOrSlot();
     m_tools.clearDrawing(); m_firstPoint.reset(); m_firstReference.reset();m_tools.resetConstruction();m_drawingPreview.reset();
     m_hoveredPoint.reset();QToolTip::hideText();
     m_tools.select();
@@ -772,6 +777,12 @@ void CadViewport::setSketch(const modeling::Sketch& sketch)
         try { (void)modeling::sketchPointValue(sketch,*reference); }
         catch(const std::exception&) { reference.reset(); }
     };
+    for (auto& pick : m_curvedPicks)
+    {
+        validReference(pick.reference);
+        if (pick.reference)
+            pick.position = modeling::sketchPointValue(sketch, *pick.reference);
+    }
     validReference(m_hoveredPoint); validReference(m_selectedPoint);
     validReference(m_inference.target);validReference(m_inference.alignX);validReference(m_inference.alignY);
     if(std::none_of(sketch.entities.begin(),sketch.entities.end(),[&](const auto& entity){return entity.id==m_selectedEntity;}))
@@ -820,6 +831,7 @@ void CadViewport::updateSketchPresentation(const std::optional<modeling::SketchE
     if (m_sketch) {
         try {
             auto visible = *m_sketch;
+            visible.entities.insert(visible.entities.end(), m_curvedPreview.begin(), m_curvedPreview.end());
             if(preview){
                 if(preview->kind==modeling::EntityKind::Polygon && preview->radius>1e-6)
                     visible=modeling::addRegularPolygon(visible,"preview-polygon",{preview->first,preview->radius,std::atan2(preview->second.y-preview->first.y,preview->second.x-preview->first.x),6});
@@ -893,7 +905,7 @@ modeling::Point2 CadViewport::drawingPoint(const QPointF& position, std::optiona
     m_boundarySnap.reset();
     const auto previous=m_inference;
     m_inference={};
-    const bool midpointTool=m_tools.drawing()==modeling::EntityKind::Line || m_tools.drawing()==modeling::EntityKind::Point;
+    const bool midpointTool=m_tools.drawing()==modeling::EntityKind::Line || m_tools.drawing()==modeling::EntityKind::Point || drawingArcOrSlot();
     auto hit=pointAt(position,midpointTool);
     if(previous.target && !(hit && hit->reference.role==modeling::PointRole::Origin)) {
         const auto value=modeling::sketchPointValue(*m_sketch,*previous.target);
@@ -993,7 +1005,7 @@ void CadViewport::updatePointPresentation()
             m_graphics.context()->SetDisplayPriority(marker,Graphic3d_DisplayPriority_Topmost);
             m_pointPresentations.push_back(marker);
         }
-        if(m_hoveredPoint && m_hoveredPoint->role==modeling::PointRole::Midpoint && (m_pointDrag || m_tools.drawing()==modeling::EntityKind::Line || m_tools.drawing()==modeling::EntityKind::Point)){
+        if(m_hoveredPoint && m_hoveredPoint->role==modeling::PointRole::Midpoint && (m_pointDrag || m_tools.drawing()==modeling::EntityKind::Line || m_tools.drawing()==modeling::EntityKind::Point || drawingArcOrSlot())){
             Handle(AIS_Point) marker=new AIS_Point(new Geom_CartesianPoint(modeling::sketchPoint(*m_sketch,modeling::sketchPointValue(*m_sketch,*m_hoveredPoint))));
             marker->Attributes()->SetPointAspect(filledPoint(Quantity_NOC_ORANGE,9*devicePixelRatioF()));marker->SetZLayer(Graphic3d_ZLayerId_Topmost);marker->SetInfiniteState(Standard_True);
             m_graphics.context()->Display(marker,0,-1,Standard_False);m_graphics.context()->SetDisplayPriority(marker,Graphic3d_DisplayPriority_Topmost);m_pointPresentations.push_back(marker);
@@ -1114,7 +1126,7 @@ void CadViewport::finishPointDrag()
     clearInteractionPresentation();
     if(drag.moved && drag.candidate) {
         m_sketch=*drag.candidate;
-        const bool changed=m_sketch->relations.size()!=drag.original.relations.size() || !std::equal(m_sketch->entities.begin(),m_sketch->entities.end(),drag.original.entities.begin(),[](const auto& a,const auto& b){return std::hypot(a.first.x-b.first.x,a.first.y-b.first.y)<1e-9 && std::hypot(a.second.x-b.second.x,a.second.y-b.second.y)<1e-9 && std::abs(a.radius-b.radius)<1e-9;});
+        const bool changed=m_sketch->relations.size()!=drag.original.relations.size() || !std::equal(m_sketch->entities.begin(),m_sketch->entities.end(),drag.original.entities.begin(),[](const auto& a,const auto& b){return std::hypot(a.first.x-b.first.x,a.first.y-b.first.y)<1e-9 && std::hypot(a.second.x-b.second.x,a.second.y-b.second.y)<1e-9 && std::abs(a.radius-b.radius)<1e-9 && std::hypot(a.center.x-b.center.x,a.center.y-b.center.y)<1e-9;});
         if(changed)emit sketchChanged(*m_sketch);
     }
     else { m_sketch=drag.original; if(drag.moved && !drag.error.isEmpty()) emit sketchInteractionError(drag.error); }
@@ -1328,6 +1340,10 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
         const auto raw = sketchPosition(event->position());
         if(m_tools.drawing()==modeling::EntityKind::Point && raw){placeSketchPoint(event->position());event->accept();return;}
         if(m_tools.drawing()&&!raw){event->accept();return;}
+        if (drawingArcOrSlot()) {
+            pickArcOrSlot(event->position(), *raw);
+            event->accept();return;
+        }
         if (m_tools.drawing() && raw) {
             const auto point = drawingPoint(event->position(), reference);
             if (!m_firstPoint) { m_firstPoint = point; m_firstReference = reference; m_firstBoundarySnap = m_boundarySnap; }
@@ -1351,7 +1367,7 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
             if(dragRef && !toggle && !m_sketchModifierPicking && dragRef->role!=modeling::PointRole::Origin &&
                !modeling::sketchProjection(*m_sketch, dragRef->entityId)) {
                 const auto entity=std::find_if(m_sketch->entities.begin(),m_sketch->entities.end(),[&](const auto& e){return e.id==dragRef->entityId;});
-                if(entity!=m_sketch->entities.end() && (entity->kind==modeling::EntityKind::Line || entity->kind==modeling::EntityKind::Circle || entity->kind==modeling::EntityKind::Point)) {
+                if(entity!=m_sketch->entities.end() && (entity->kind==modeling::EntityKind::Line || modeling::isCircular(entity->kind) || entity->kind==modeling::EntityKind::Point)) {
                     m_pointDrag=PointDrag{*m_sketch,*dragRef,event->position(),false,*m_sketch,{},{}};
                     if(!hit && raw){m_pointDrag->circleBody=true;m_pointDrag->grabOffset={entity->first.x-raw->x,entity->first.y-raw->y};}
                     std::set<std::pair<std::string,int>> excluded;
@@ -1403,6 +1419,10 @@ void CadViewport::mouseMoveEvent(QMouseEvent* event)
             return;
         }
         updateSketchHover(event->position());
+        if (drawingArcOrSlot()) {
+            previewArcOrSlot(event->position());
+            return;
+        }
         if (m_tools.drawing() && m_firstPoint) {
             std::optional<modeling::SketchPointRef> reference;
             if(!sketchPosition(event->position())){m_drawingPreview.reset();updateSketchPresentation();return;}

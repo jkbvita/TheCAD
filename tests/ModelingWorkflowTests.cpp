@@ -205,6 +205,62 @@ private slots:
         QVERIFY(std::abs(volume(window.document().shape()) - 1600) < 1e-6);
         QVERIFY(window.errors.isEmpty());
     }
+    void drawArcAndStraightSlotFromViewport()
+    {
+        using namespace modeling;
+        WorkflowWindow window;
+        window.showMaximized();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* viewport = window.findChild<CadViewport*>();
+        QTRY_VERIFY(viewport->isReady());
+        createSketch(window);
+
+        const auto click = [&](Point2 p) {
+            QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, point(viewport, p));
+        };
+        const auto hover = [&](Point2 p) {
+            const auto pixel = point(viewport, p);
+            QMouseEvent move(QEvent::MouseMove, pixel, viewport->mapToGlobal(pixel), Qt::NoButton,
+                             Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(viewport, &move);
+        };
+
+        command(window, "actionLine");
+        click({-38, -25});
+        click({-10, -25});
+        command(window, "actionArc");
+        click({-38, -25});
+        click({-10, -25});
+        hover({-24, -12});
+        QCOMPARE(viewport->m_curvedPreview.size(), std::size_t(1));
+        QCOMPARE(viewport->m_curvedPreview.front().kind, EntityKind::Arc);
+        click({-24, -12});
+        QCOMPARE(viewport->m_sketch->entities.size(), std::size_t(2));
+        QCOMPARE(viewport->m_sketch->entities.back().kind, EntityKind::Arc);
+        QCOMPARE(closedContours(*viewport->m_sketch).size(), std::size_t(1));
+
+        command(window, "actionStraightSlot");
+        click({5, 20});
+        click({38, 20});
+        hover({20, 27});
+        QCOMPARE(viewport->m_curvedPreview.size(), std::size_t(4));
+        click({20, 27});
+        QCOMPARE(viewport->m_sketch->entities.size(), std::size_t(6));
+        QCOMPARE(closedContours(*viewport->m_sketch).size(), std::size_t(2));
+        QVERIFY(window.findChild<QAction*>("actionStraightSlot")->isChecked());
+
+        click({5, 44});
+        QTest::keyClick(viewport, Qt::Key_Escape);
+        QVERIFY(viewport->m_curvedPicks.empty());
+        QCOMPARE(viewport->m_sketch->entities.size(), std::size_t(6));
+        window.findChild<QTabWidget*>("modelingTabs")->setCurrentIndex(0);
+        command(window, "actionExtrude");
+        click({20, 20});
+        confirmOperation(window);
+        QVERIFY(!window.document().shape().IsNull());
+        QVERIFY(volume(window.document().shape()) > 1000);
+        QVERIFY(window.errors.isEmpty());
+    }
     void midpointAndRectangleEditsUndoAsSingleActions() {
         using namespace modeling;WorkflowWindow window;window.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&window));auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
         command(window,"actionRectangle");QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{0,0}));QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{-40,30}));command(window,"actionSelectSketchEntity");const auto before=*viewport->m_sketch;

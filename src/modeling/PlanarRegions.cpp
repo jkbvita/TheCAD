@@ -1,4 +1,5 @@
 #include "modeling/PlanarRegions.h"
+#include "modeling/SketchArcs.h"
 #include <BRepAlgoAPI_Splitter.hxx>
 #include <BOPAlgo_BuilderFace.hxx>
 #include <BOPTools_AlgoTools2D.hxx>
@@ -34,7 +35,7 @@ int sign(double value,double scale){return value>tolerance*scale?1:value<-tolera
 struct Primitive {
     std::string entityId,key;
     EntityKind kind;
-    Point2 first,second;
+    Point2 first,second,center;
     double radius;
     TopoDS_Edge edge;
     std::set<int> fragments;
@@ -48,8 +49,9 @@ std::vector<Contour> intersectedContours(const Sketch& sketch){
     const auto axes=sketchAxes(sketch);
     const auto local=[&](const gp_Pnt& p){const gp_Vec v(axes.Location(),p);return Point2{v.Dot(gp_Vec(axes.XDirection())),v.Dot(gp_Vec(axes.YDirection()))};};
     const auto append=[&](const SketchEntity& e,const std::string& id,int side,Point2 a,Point2 b){
-        Primitive p{id,field(id)+":"+std::to_string(side),e.kind,a,b,e.radius,{},{}};
+        Primitive p{id,field(id)+":"+std::to_string(side),e.kind,a,b,circularCenter(e),e.radius,{},{}};
         if(e.kind==EntityKind::Circle)p.edge=BRepBuilderAPI_MakeEdge(gp_Circ(gp_Ax2(sketchPoint(sketch,e.first),axes.Direction(),axes.XDirection()),e.radius));
+        else if (e.kind == EntityKind::Arc) p.edge = sketchArcEdge(sketch, e);
         else p.edge=BRepBuilderAPI_MakeEdge(sketchPoint(sketch,a),sketchPoint(sketch,b));
         primitives.push_back(std::move(p));
     };
@@ -125,11 +127,11 @@ std::vector<Contour> intersectedContours(const Sketch& sketch){
         }}
         for(auto a=owners.begin();a!=owners.end();++a)for(auto b=std::next(a);b!=owners.end();++b){
             const auto& x=primitives[std::size_t(*a)];const auto& y=primitives[std::size_t(*b)];int branch=0;
-            if(x.kind==EntityKind::Circle && y.kind==EntityKind::Circle){
-                const double dx=y.first.x-x.first.x,dy=y.first.y-x.first.y;branch=sign(dx*(point.y-x.first.y)-dy*(point.x-x.first.x),std::hypot(dx,dy));
-            }else if(x.kind==EntityKind::Circle || y.kind==EntityKind::Circle){
-                const auto& line=x.kind==EntityKind::Circle?y:x;const auto& circle=x.kind==EntityKind::Circle?x:y;
-                const double dx=line.second.x-line.first.x,dy=line.second.y-line.first.y;branch=sign(dx*(point.x-circle.first.x)+dy*(point.y-circle.first.y),std::hypot(dx,dy));
+            if(isCircular(x.kind) && isCircular(y.kind)){
+                const double dx=y.center.x-x.center.x,dy=y.center.y-x.center.y;branch=sign(dx*(point.y-x.center.y)-dy*(point.x-x.center.x),std::hypot(dx,dy));
+            }else if(isCircular(x.kind) || isCircular(y.kind)){
+                const auto& line=isCircular(x.kind)?y:x;const auto& circle=isCircular(x.kind)?x:y;
+                const double dx=line.second.x-line.first.x,dy=line.second.y-line.first.y;branch=sign(dx*(point.x-circle.center.x)+dy*(point.y-circle.center.y),std::hypot(dx,dy));
             }
             labels.push_back("intersection:"+field(x.key)+field(y.key)+":"+std::to_string(branch));
         }
@@ -162,7 +164,7 @@ std::vector<Contour> intersectedContours(const Sketch& sketch){
                 const auto first=TopExp::FirstVertex(edge,Standard_True),last=TopExp::LastVertex(edge,Standard_True);
                 BRepAdaptor_Curve curve(edge);gp_Pnt point;gp_Vec tangent;curve.D1((curve.FirstParameter()+curve.LastParameter())/2,point,tangent);if(edge.Orientation()==TopAbs_REVERSED)tangent.Reverse();
                 const auto& source=primitives[std::size_t(n)];int direction;
-                if(source.kind==EntityKind::Circle){const gp_Vec radial(sketchPoint(sketch,source.first),point);direction=radial.Crossed(tangent).Dot(gp_Vec(axes.Direction()))>0?1:-1;}
+                if(isCircular(source.kind)){const gp_Vec radial(sketchPoint(sketch,source.center),point);direction=radial.Crossed(tangent).Dot(gp_Vec(axes.Direction()))>0?1:-1;}
                 else direction=tangent.Dot(gp_Vec(sketchPoint(sketch,source.first),sketchPoint(sketch,source.second)))>0?1:-1;
                 wire.push_back({n,vertexKey(first),vertexKey(last),direction});
             }
@@ -179,7 +181,7 @@ std::vector<Contour> intersectedContours(const Sketch& sketch){
             if(whole[p.entityId])references.insert(p.entityId);
             else references.insert(std::string(fragmentPrefix)+field(p.key)+field(piece.first)+field(piece.last)+(piece.direction>0?"+":"-"));
         }
-        for(TopExp_Explorer e(face,TopAbs_EDGE);e.More();e.Next()){const auto edge=TopoDS::Edge(e.Current());const int index=fragments.FindIndex(edge);const auto& p=primitives[std::size_t(owner[std::size_t(index)])];auto first=vertexKey(TopExp::FirstVertex(edge,Standard_True)),last=vertexKey(TopExp::LastVertex(edge,Standard_True));BRepAdaptor_Curve curve(edge);gp_Pnt pos;gp_Vec tangent;curve.D1((curve.FirstParameter()+curve.LastParameter())/2,pos,tangent);if(edge.Orientation()==TopAbs_REVERSED)tangent.Reverse();if(p.kind==EntityKind::Circle){if(gp_Vec(sketchPoint(sketch,p.first),pos).Crossed(tangent).Dot(gp_Vec(axes.Direction()))<0)std::swap(first,last);}else if(last<first)std::swap(first,last);region.boundaryNames.add(topologyKey("fragment",{p.key+":"+field(first)+field(last)}),edge);}
+        for(TopExp_Explorer e(face,TopAbs_EDGE);e.More();e.Next()){const auto edge=TopoDS::Edge(e.Current());const int index=fragments.FindIndex(edge);const auto& p=primitives[std::size_t(owner[std::size_t(index)])];auto first=vertexKey(TopExp::FirstVertex(edge,Standard_True)),last=vertexKey(TopExp::LastVertex(edge,Standard_True));BRepAdaptor_Curve curve(edge);gp_Pnt pos;gp_Vec tangent;curve.D1((curve.FirstParameter()+curve.LastParameter())/2,pos,tangent);if(edge.Orientation()==TopAbs_REVERSED)tangent.Reverse();if(isCircular(p.kind)){if(gp_Vec(sketchPoint(sketch,p.center),pos).Crossed(tangent).Dot(gp_Vec(axes.Direction()))<0)std::swap(first,last);}else if(last<first)std::swap(first,last);region.boundaryNames.add(topologyKey("fragment",{p.key+":"+field(first)+field(last)}),edge);}
         region.entityIds.assign(references.begin(),references.end());
         if(region.entityIds.empty() || region.entityIds.size()>1000)fail("A region exceeds the supported boundary-reference limit.");
         if(!identities.insert(region.entityIds).second)fail("Two sketch regions have ambiguous identities; adjust the intersecting geometry.");

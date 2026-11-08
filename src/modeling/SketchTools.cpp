@@ -9,7 +9,7 @@ namespace thecad::modeling {
 ConstructionState constructionState(const Sketch& sketch,const std::vector<std::string>& ids){
     if(ids.empty())return ConstructionState::Unavailable;bool normal=false,construction=false;
     for(const auto& id:ids){const auto e=std::find_if(sketch.entities.begin(),sketch.entities.end(),[&](const auto& e){return e.id==id;});
-        if(e==sketch.entities.end() || (e->kind!=EntityKind::Line&&e->kind!=EntityKind::Circle&&e->kind!=EntityKind::Rectangle))return ConstructionState::Unavailable;
+        if(e==sketch.entities.end() || (e->kind!=EntityKind::Line&&!isCircular(e->kind)&&e->kind!=EntityKind::Rectangle))return ConstructionState::Unavailable;
         normal|=!e->construction;construction|=e->construction;
     }return normal&&construction?ConstructionState::Mixed:construction?ConstructionState::Construction:ConstructionState::Normal;
 }

@@ -238,7 +238,7 @@ private slots:
         QVERIFY(tree->palette().color(QPalette::Base).lightness() > 200);
         auto* commands = window.findChild<QToolBar*>("modelingToolbar");
         QVERIFY(commands && !commands->isMovable() && !commands->isFloatable());
-        for (const auto* name : {"actionArc", "actionSpline",
+        for (const auto* name : {"actionSpline",
                 "actionMoveEntities",
                 "actionRepairSketch", "actionShadedSketchContours",
                 "actionMassProperties", "actionCheckGeometry"}) {
@@ -252,7 +252,8 @@ private slots:
         QVERIFY(measure && measure->isCheckable());
         QVERIFY(!measure->isEnabled());
         QVERIFY(!measure->icon().isNull());
-        for (const auto* name : {"actionConvertEntities", "actionMirrorEntities",
+        for (const auto* name : {"actionArc", "actionStraightSlot",
+                                 "actionConvertEntities", "actionMirrorEntities",
                                  "actionLinearSketchPattern", "actionCircularSketchPattern",
                                  "actionTrimEntities", "actionExtendEntities", "actionSplitEntities",
                                  "actionOffsetEntities"}) {

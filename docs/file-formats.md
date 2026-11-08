@@ -6,16 +6,20 @@ inputs: conversion saves to a separate .thepart path, retaining the original fil
 No assembly/drawing reader or placeholder is implemented. Internal serialization
 is provisional and versioned; filename conventions are permanent.
 
-## Current part structure (versions 16–22)
+## Current part structure (versions 16–23)
 
-The UTF-8 JSON root contains exactly format: "TheCAD.Part", version: 16 through 22, units:
+The UTF-8 JSON root contains exactly format: "TheCAD.Part", version: 16 through 23, units:
 "mm", features (ordered array) and resultFeature (last solid feature ID, or empty
 for empty/sketch/reference-only documents). Writers use the highest version
-required by the part. Solid Circular Pattern requires 22, linked sketch offsets
+required by the part. Sketch arcs require 23, Solid Circular Pattern requires 22, linked sketch offsets
 require 21, linked sketch projections
 and copies require 20, sweeps require 19, solid Linear Pattern and Mirror require
-18, revolve/fillet/chamfer require 17, and earlier feature sets use 16. Readers accept versions 1–22 and
+18, revolve/fillet/chamfer require 17, and earlier feature sets use 16. Readers accept versions 1–23 and
 reject unknown versions, fields, units and unsupported features.
+
+Arcs store the start, end, center, radius, and a clockwise flag in local sketch
+coordinates. A straight slot stores two arc and two line entities with regular
+sketch relations. It has no separate entity or file format.
 
 Every feature has stable id, printable name, type and explicit dependencies.
 Types and additional fields:

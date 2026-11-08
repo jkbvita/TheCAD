@@ -312,6 +312,17 @@ private:
     application::SketchToolController m_tools;
     std::optional<modeling::SketchEntity> m_drawingPreview;
     void placeSketchPoint(const QPointF& position);
+    struct CurvedPick {
+        modeling::Point2 position;
+        std::optional<modeling::SketchPointRef> reference;
+        std::optional<BoundarySnap> boundary;
+    };
+    bool drawingArcOrSlot() const;
+    void pickArcOrSlot(const QPointF& position, modeling::Point2 raw);
+    void previewArcOrSlot(const QPointF& position);
+    void clearArcOrSlot();
+    std::vector<CurvedPick> m_curvedPicks;
+    std::vector<modeling::SketchEntity> m_curvedPreview;
     std::optional<modeling::Point2> m_firstPoint;
     std::optional<modeling::SketchPointRef> m_firstReference;
     std::optional<modeling::SketchPointRef> m_hoveredPoint;

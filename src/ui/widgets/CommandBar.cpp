@@ -105,6 +105,12 @@ QIcon commandIcon(const QString& name)
         painter.drawRect(QRectF(3, 24, 4, 4));
         painter.drawRect(QRectF(25, 4, 4, 4));
     }
+    else if (name == "Straight Slot")
+    {
+        painter.drawRoundedRect(QRectF(4, 10, 24, 12), 6, 6);
+        painter.drawPoint(10, 16);
+        painter.drawPoint(22, 16);
+    }
     else if (name.contains("Arc"))
     {
         painter.drawArc(QRectF(5, 5, 22, 22), 15 * 16, 270 * 16);

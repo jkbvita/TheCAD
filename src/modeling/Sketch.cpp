@@ -1,5 +1,6 @@
 #include "modeling/RelationCommands.h"
 #include "modeling/PlanarRegions.h"
+#include "modeling/SketchArcs.h"
 #include "modeling/SketchTools.h"
 #include "modeling/SketchModifiers.h"
 #include "modeling/SketchOffset.h"
@@ -114,6 +115,15 @@ void validate(const Sketch& sketch)
         case EntityKind::Point: break;
         case EntityKind::Circle:
             positiveLength(entity.radius, "Circle radius");
+            break;
+        case EntityKind::Arc:
+            finiteCoordinate(entity.center.x);
+            finiteCoordinate(entity.center.y);
+            positiveLength(entity.radius, "Arc radius");
+            if (samePoint(entity.first, entity.second) ||
+                std::abs(distance(entity.first, entity.center) - entity.radius) > 1e-6 ||
+                std::abs(distance(entity.second, entity.center) - entity.radius) > 1e-6)
+                fail("An arc needs distinct endpoints on its supporting circle.");
             break;
         default:
             fail("Unsupported sketch entity type.");
@@ -484,6 +494,8 @@ TopoDS_Shape sketchShape(const Sketch& sketch)
         for (const auto& entity : sketch.entities) {
             if (entity.kind == EntityKind::Circle) {
                 builder.Add(result, circleEdge(sketch, entity));
+            } else if (entity.kind == EntityKind::Arc) {
+                builder.Add(result, sketchArcEdge(sketch, entity));
             } else if (entity.kind == EntityKind::Line) {
                 builder.Add(result, lineEdge(sketch, entity.first, entity.second));
             } else if(entity.kind==EntityKind::Point) {
@@ -531,6 +543,9 @@ std::vector<Contour> closedContours(const Sketch& sketch)
             }
             identifiers.push_back(identifier);
         }
+        if (std::any_of(sketch.entities.begin(), sketch.entities.end(),
+                        [](const auto& entity) { return entity.kind == EntityKind::Arc; }))
+            return intersectedContours(sketch);
         // Endpoint planar graph. Bridges cannot bound a region; remove them from
         // the analysis only, retaining every original entity in the document.
         std::vector<Point2> nodes;
@@ -898,6 +913,7 @@ void setPoint(Sketch& sketch, const SketchPointRef& ref, Point2 point) {
     auto found = std::find_if(sketch.entities.begin(), sketch.entities.end(), [&](const SketchEntity& entity) { return entity.id == ref.entityId; });
     if (found == sketch.entities.end()) fail("Cannot update a missing sketch point.");
     if (ref.role == PointRole::Second) found->second = point;
+    else if (ref.role == PointRole::Center && found->kind == EntityKind::Arc) found->center = point;
     else found->first = point;
 }
 }
@@ -911,10 +927,10 @@ Point2 sketchPointValue(const Sketch& sketch, const SketchPointRef& reference)
     if (reference.entityId.empty()) fail("A sketch point requires a stable entity ID.");
     const auto found = std::find_if(sketch.entities.begin(), sketch.entities.end(), [&](const SketchEntity& entity) { return entity.id == reference.entityId; });
     if (found == sketch.entities.end()) fail("Sketch point refers to a missing entity.");
-    if (reference.role == PointRole::Center && found->kind == EntityKind::Circle) return found->first;
+    if (reference.role == PointRole::Center && isCircular(found->kind)) return circularCenter(*found);
     if (reference.role == PointRole::Midpoint && found->kind == EntityKind::Line)return {(found->first.x+found->second.x)/2,(found->first.y+found->second.y)/2};
     if(found->kind==EntityKind::Point && reference.role==PointRole::First)return found->first;
-    if (found->kind == EntityKind::Line || found->kind == EntityKind::Rectangle) {
+    if (found->kind == EntityKind::Line || found->kind == EntityKind::Rectangle || found->kind == EntityKind::Arc) {
         if (reference.role == PointRole::First) return found->first;
         if (reference.role == PointRole::Second) return found->second;
     }
@@ -929,8 +945,8 @@ std::vector<std::pair<SketchPointRef, Point2>> sketchPoints(const Sketch& sketch
         // Relation-free legacy construction geometry may not yet have IDs.
         if (entity.id.empty()) continue;
         if (!stableIdentifier(entity.id) || !ids.insert(entity.id).second) fail("Sketch entity IDs must be valid and unique.");
-        if (entity.kind == EntityKind::Circle) points.push_back({{entity.id, PointRole::Center}, entity.first});
-        else {
+        if (isCircular(entity.kind)) points.push_back({{entity.id, PointRole::Center}, circularCenter(entity)});
+        if (entity.kind != EntityKind::Circle) {
             points.push_back({{entity.id, PointRole::First}, entity.first});
             if(entity.kind!=EntityKind::Point)points.push_back({{entity.id, PointRole::Second}, entity.second});
         }
@@ -949,7 +965,7 @@ void validDimension(const Sketch& sketch,const SketchDimension& d) {
     if(d.sense!=1 && d.sense!=-1)fail("Dimension direction must be +1 or -1.");
     const auto a=sketchPointValue(sketch,d.first);(void)a;
     if(d.kind==DimensionKind::CircleRadius || d.kind==DimensionKind::CircleDiameter) {
-        if(d.first.role!=PointRole::Center || referencedEntity(sketch,d.first).kind!=EntityKind::Circle || d.second.role!=PointRole::Origin || !d.second.entityId.empty())fail("Radius/diameter must reference one circle center.");
+        if(d.first.role!=PointRole::Center || !isCircular(referencedEntity(sketch,d.first).kind) || d.second.role!=PointRole::Origin || !d.second.entityId.empty())fail("Radius/diameter must reference one circle or arc center.");
         positiveLength(d.value,"Radius/diameter");
     } else {
         (void)sketchPointValue(sketch,d.second);
@@ -1011,7 +1027,7 @@ void validateSketchConstraintReferences(const Sketch& sketch)
         } else if(relation.kind==RelationKind::PointOnLine || relation.kind==RelationKind::PointOnCircle) {
             if(a.id==b.id || (relation.kind==RelationKind::PointOnLine?b.kind!=EntityKind::Line:b.kind!=EntityKind::Circle))fail("Invalid point-on-geometry relation.");
         } else if(relation.kind==RelationKind::Tangent) {
-            if(a.id==b.id || (a.kind!=EntityKind::Line&&a.kind!=EntityKind::Circle) || (b.kind!=EntityKind::Line&&b.kind!=EntityKind::Circle) || (a.kind==EntityKind::Line&&b.kind==EntityKind::Line))fail("Tangent supports line-circle and external circle-circle relations.");
+            if(a.id==b.id || (a.kind!=EntityKind::Line&&!isCircular(a.kind)) || (b.kind!=EntityKind::Line&&!isCircular(b.kind)) || (a.kind==EntityKind::Line&&b.kind==EntityKind::Line))fail("Tangent requires a line and a circular curve, or two circular curves.");
         } else fail("Unsupported sketch relation type.");
     }
     for(const auto& d:sketch.dimensions){if(!stableIdentifier(d.id)||!ids.insert(d.id).second)fail("Dimension IDs must be valid and unique across all constraints.");if(d.first.role==PointRole::Midpoint || d.second.role==PointRole::Midpoint)fail("Dimensions require an actual sketch point; place a point at the midpoint first.");validDimension(sketch,d);}
@@ -1063,8 +1079,9 @@ void validateSketchRelations(const Sketch& sketch)
             if(!std::isfinite(error)||error>1e-6)fail("Point is no longer on its referenced geometry.");continue;
         } else if(relation.kind==RelationKind::Tangent) {
             const auto& a=referencedEntity(sketch,relation.first);const auto& b=referencedEntity(sketch,relation.second);double residual;
-            if(a.kind==EntityKind::Circle && b.kind==EntityKind::Circle)residual=distance(a.first,b.first)-a.radius-b.radius;
-            else {const auto& line=a.kind==EntityKind::Line?a:b;const auto& circle=a.kind==EntityKind::Circle?a:b;residual=std::abs(cross(line.first,line.second,circle.first))/distance(line.first,line.second)-circle.radius;}
+            if(isCircular(a.kind) && isCircular(b.kind))
+                residual=distance(circularCenter(a),circularCenter(b))-a.radius-b.radius;
+            else {const auto& line=a.kind==EntityKind::Line?a:b;const auto& circle=isCircular(a.kind)?a:b;residual=std::abs(cross(line.first,line.second,circularCenter(circle)))/distance(line.first,line.second)-circle.radius;}
             if(!std::isfinite(residual)||std::abs(residual)>1e-6)fail("Tangent relation is not satisfied.");continue;
         } else if (relation.kind != RelationKind::Coincident) fail("Unsupported sketch relation type.");
         auto a = pointKey(relation.first), b = pointKey(relation.second);
@@ -1102,13 +1119,17 @@ Sketch editSketchEntity(const Sketch& sketch, const SketchEntity& replacement)
     const auto old = std::find_if(sketch.entities.begin(), sketch.entities.end(), [&](const SketchEntity& entity) { return entity.id == replacement.id; });
     if (replacement.id.empty() || old == sketch.entities.end()) fail("Cannot edit a sketch entity without its existing stable ID.");
     if (old->kind != replacement.kind) fail("Editing cannot change a sketch entity type.");
-    const bool solverConstraints=!sketch.offsets.empty() || !sketch.projections.empty() || !sketch.replications.empty() || !sketch.polygons.empty() || !sketch.dimensions.empty() || std::any_of(sketch.relations.begin(),sketch.relations.end(),[](const auto& r){return int(r.kind)>=int(RelationKind::FixedPoint);});
+    const bool solverConstraints=std::any_of(sketch.entities.begin(),sketch.entities.end(),
+        [](const auto& e){return e.kind==EntityKind::Arc;}) || !sketch.offsets.empty() || !sketch.projections.empty() || !sketch.replications.empty() || !sketch.polygons.empty() || !sketch.dimensions.empty() || std::any_of(sketch.relations.begin(),sketch.relations.end(),[](const auto& r){return int(r.kind)>=int(RelationKind::FixedPoint);});
     if(solverConstraints) {
         SolveOptions options;
         const auto target=[&](PointRole role,Point2 before,Point2 after){if(before.x!=after.x || before.y!=after.y)options.pointTargets.push_back({{replacement.id,role},after,true});};
         target(old->kind==EntityKind::Circle?PointRole::Center:PointRole::First,old->first,replacement.first);
-        if(old->kind==EntityKind::Circle){if(old->radius!=replacement.radius)options.radiusTargets.push_back({replacement.id,replacement.radius});}
-        else if(old->kind!=EntityKind::Point)target(PointRole::Second,old->second,replacement.second);
+        if(isCircular(old->kind) && old->radius!=replacement.radius)
+            options.radiusTargets.push_back({replacement.id,replacement.radius});
+        if(old->kind==EntityKind::Arc)target(PointRole::Center,old->center,replacement.center);
+        if(old->kind!=EntityKind::Point && old->kind!=EntityKind::Circle)
+            target(PointRole::Second,old->second,replacement.second);
         auto solved=requireSolvedSketch(solvePlanarSketch(sketch,options));
         for(auto& e:solved.entities)if(e.id==replacement.id)e.construction=replacement.construction;return solved;
     }
@@ -1173,7 +1194,8 @@ Sketch moveSketchPoint(const Sketch& sketch, const SketchPointRef& reference, Po
         if(pointKey(reference)==pointKey(*target)) fail("A point cannot be joined to itself.");
         position=sketchPointValue(sketch,*target);
     }
-    const bool solverConstraints=!sketch.offsets.empty() || !sketch.projections.empty() || !sketch.replications.empty() || !sketch.polygons.empty() || !sketch.dimensions.empty() || std::any_of(sketch.relations.begin(),sketch.relations.end(),[](const auto& r){return int(r.kind)>=int(RelationKind::FixedPoint);});
+    const bool solverConstraints=std::any_of(sketch.entities.begin(),sketch.entities.end(),
+        [](const auto& e){return e.kind==EntityKind::Arc;}) || !sketch.offsets.empty() || !sketch.projections.empty() || !sketch.replications.empty() || !sketch.polygons.empty() || !sketch.dimensions.empty() || std::any_of(sketch.relations.begin(),sketch.relations.end(),[](const auto& r){return int(r.kind)>=int(RelationKind::FixedPoint);});
     const bool midpointTarget=target && target->role==PointRole::Midpoint;
     if(reference.role==PointRole::Midpoint)fail("Drag an endpoint or attached point to change a line midpoint.");
     if(solverConstraints || preserveCircleRadius || midpointTarget) {
@@ -1187,7 +1209,7 @@ Sketch moveSketchPoint(const Sketch& sketch, const SketchPointRef& reference, Po
         }
         SolveOptions options;options.pointTargets.push_back({reference,position,false});
         const auto& entity=referencedEntity(sketch,reference);
-        if(preserveCircleRadius && entity.kind==EntityKind::Circle){
+        if(preserveCircleRadius && isCircular(entity.kind)){
             const bool driven=std::any_of(candidate.dimensions.begin(),candidate.dimensions.end(),[&](const auto& d){return d.driving && d.first.entityId==entity.id && (d.kind==DimensionKind::CircleRadius || d.kind==DimensionKind::CircleDiameter);}) || std::any_of(candidate.relations.begin(),candidate.relations.end(),[&](const auto& r){return r.kind==RelationKind::FixedEntity && r.first.entityId==entity.id;});
             if(!driven)options.radiusTargets.push_back({entity.id,entity.radius});
             auto result=solvePlanarSketch(candidate,options);

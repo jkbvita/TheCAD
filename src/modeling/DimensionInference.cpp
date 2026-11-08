@@ -26,7 +26,7 @@ SketchDimension inferDimension(const Sketch& sketch,const std::vector<SketchPoin
     else if(!points.empty())throw std::runtime_error("Select a second point, then click to place the dimension.");
     else if(entities.size()==1) {
         const auto& e=entity(sketch,entities[0]);
-        if(e.kind==EntityKind::Circle){d.kind=radius?DimensionKind::CircleRadius:DimensionKind::CircleDiameter;d.first={e.id,PointRole::Center};}
+        if(isCircular(e.kind)){d.kind=radius?DimensionKind::CircleRadius:DimensionKind::CircleDiameter;d.first={e.id,PointRole::Center};}
         else if(e.kind==EntityKind::Line){d.first={e.id,PointRole::First};d.second={e.id,PointRole::Second};inferPointDistance(sketch,d,true);}
         else throw std::runtime_error("Select a line, circle or two sketch points.");
     } else if(entities.size()==2) {
