@@ -2,6 +2,7 @@
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
+#include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 #include <TopoDS.hxx>
 #include "document/PartDocument.h"
 #include "document/ReferenceGeometryData.h"
@@ -13,6 +14,7 @@
 #include "modeling/SolidFeatures.h"
 
 #include <BRepCheck_Analyzer.hxx>
+#include <BRep_Tool.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <Standard_Failure.hxx>
 #include <algorithm>
@@ -491,17 +493,60 @@ std::string PartDocument::addSolidFeature(Feature feature)
     return feature.id;
 }
 
-std::vector<ReferenceOption> PartDocument::edgeOptions() const
+std::vector<TopoDS_Shape> PartDocument::edgeTreatmentFaces(const std::string& featureId) const
+{
+    const auto feature = std::find_if(m_features.begin(), m_features.end(), [&](const auto& item) {
+        return item.id == featureId;
+    });
+    if (feature == m_features.end() || !isEdgeFeature(feature->kind) || feature->dependencies.empty()) return {};
+    const auto& support = m_namedBodies.at(feature->dependencies.front());
+    const auto& result = m_namedBodies.at(featureId);
+    TopTools_IndexedMapOfShape seen;
+    std::vector<TopoDS_Shape> faces;
+    for (const auto& edge : feature->edges) {
+        const auto canonical = support.nameOf(support.resolve(edge.topologyName, TopAbs_EDGE));
+        for (const auto* role : {"treatment", "treatment-start", "treatment-end"}) {
+            const auto found = result.images.find(modeling::topologyKey(role, {featureId, canonical}));
+            if (found == result.images.end()) continue;
+            for (const auto& face : found->second)
+                if (face.ShapeType() == TopAbs_FACE && !seen.Contains(face)) {
+                    seen.Add(face);
+                    faces.push_back(face);
+                }
+        }
+    }
+    return faces;
+}
+
+std::vector<ReferenceOption> PartDocument::edgeOptions(bool sharpOnly) const
 {
     std::string bodyId;for(const auto& f:m_features)if(isSolidFeature(f.kind))bodyId=f.id;
     if(bodyId.empty())return {};
     const auto& body=m_bodies.at(bodyId);const auto& names=m_namedBodies.at(bodyId);
     const auto signature=referenceBodySignature(body);
-    TopTools_IndexedMapOfShape edges;TopExp::MapShapes(body,TopAbs_EDGE,edges);
+    TopTools_IndexedMapOfShape edges;
+    TopExp::MapShapes(body, TopAbs_EDGE, edges);
+    TopTools_IndexedDataMapOfShapeListOfShape adjacent;
+    if (sharpOnly) TopExp::MapShapesAndUniqueAncestors(body, TopAbs_EDGE, TopAbs_FACE, adjacent);
     std::vector<ReferenceOption> result;
-    for(int i=1;i<=edges.Extent();++i){const auto name=names.nameOf(edges(i));if(name.empty())continue;
-        modeling::GeometryReference ref;ref.source=modeling::ReferenceSource::BodyEdge;ref.featureId=bodyId;ref.index=i;ref.signature=signature;ref.topologyName=name;
-        result.push_back({"Edge "+std::to_string(i),ref,{modeling::DatumKind::Axis,{}},edges(i)});
+    for (int i = 1; i <= edges.Extent(); ++i) {
+        const auto& edge = edges(i);
+        if (sharpOnly) {
+            if (!adjacent.Contains(edge) || BRep_Tool::Degenerated(TopoDS::Edge(edge))) continue;
+            const auto& faces = adjacent.FindFromKey(edge);
+            if (faces.Extent() != 2 || BRep_Tool::Continuity(
+                    TopoDS::Edge(edge), TopoDS::Face(faces.First()), TopoDS::Face(faces.Last())) != GeomAbs_C0)
+                continue;
+        }
+        const auto name = names.nameOf(edge);
+        if (name.empty()) continue;
+        modeling::GeometryReference ref;
+        ref.source = modeling::ReferenceSource::BodyEdge;
+        ref.featureId = bodyId;
+        ref.index = i;
+        ref.signature = signature;
+        ref.topologyName = name;
+        result.push_back({"Edge " + std::to_string(i), ref, {modeling::DatumKind::Axis, {}}, edge});
     }
     return result;
 }

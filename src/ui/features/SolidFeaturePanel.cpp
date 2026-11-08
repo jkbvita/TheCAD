@@ -64,7 +64,7 @@ QString description(document::FeatureKind kind)
     if (document::isRevolveFeature(kind))
         return "Select a closed sketch region and a line or reference axis in its plane. "
                "Set the angle and inspect the preview.";
-    return "Select solid edges in the viewport or list. Edit the size and inspect the preview.";
+    return "Select sharp edges in the viewport or list. Smooth seams are excluded.";
 }
 } // namespace
 SolidFeaturePanel::SolidFeaturePanel(document::PartDocument source, document::Feature feature,
@@ -369,15 +369,28 @@ void SolidFeaturePanel::rebuildOptions()
     }
     else
     {
-        m_options = m_support.edgeOptions();
+        m_options = m_support.edgeOptions(true);
+        const auto wasSelected = [&](const auto& option) {
+            return std::any_of(m_feature.edges.begin(), m_feature.edges.end(), [&](const auto& saved) {
+                return saved.featureId == option.reference.featureId && saved.index == option.reference.index;
+            });
+        };
+        // Regeneration already rebound the saved indices against this support.
+        // Keep those picks when editing, including old topology aliases.
+        if (m_editing) {
+            for (const auto& option : m_support.edgeOptions())
+                if (wasSelected(option) && std::none_of(m_options.begin(), m_options.end(), [&](const auto& candidate) {
+                        return candidate.reference.index == option.reference.index;
+                    })) m_options.push_back(option);
+            std::sort(m_options.begin(), m_options.end(), [](const auto& a, const auto& b) {
+                return a.reference.index < b.reference.index;
+            });
+        }
         const QSignalBlocker blocker(m_edges);
         m_edges->clear();
-        for (const auto& option : m_options)
-        {
+        for (const auto& option : m_options) {
             auto* item = new QListWidgetItem(QString::fromStdString(option.label), m_edges);
-            for (const auto& edge : m_feature.edges)
-                if (same(edge, option.reference))
-                    item->setSelected(true);
+            item->setSelected(wasSelected(option));
         }
     }
 }
@@ -477,7 +490,8 @@ void SolidFeaturePanel::queueEdgePreview()
     m_page->buttons->button(QDialogButtonBox::Ok)->setEnabled(false);
     if (hadPreview) emit previewChanged();
     if (m_edges->selectedItems().isEmpty()) {
-        m_page->setStatus("Select one or more solid edges.");
+        m_page->setStatus(m_options.empty() ? "This body has no available sharp edges." :
+                                             "Select one or more sharp edges.");
         return;
     }
     if (!m_parameter->hasAcceptableInput()) {
@@ -509,10 +523,10 @@ void SolidFeaturePanel::startEdgePreview()
          promise = std::move(promise)]() mutable {
             EdgePreview outcome;
             try {
-                auto preview = application::FeatureOperation::preview(source, feature, {}, editing);
+                auto preview = application::FeatureOperation::preview(source, feature, {}, editing,
+                    application::PreviewHighlight::EdgeTreatmentFaces);
+                // Highlight faces already share the result's triangulation.
                 presentation::prepareSolidTriangulation(preview.previewShape);
-                presentation::prepareSolidTriangulation(preview.changes.added);
-                presentation::prepareSolidTriangulation(preview.changes.removed);
                 outcome.candidate = std::move(preview);
             } catch (const std::exception& error) {
                 outcome.error = QString::fromUtf8(error.what());

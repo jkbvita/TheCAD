@@ -80,6 +80,8 @@ approved scope do not need repeated approval.
 
 - [0044. Mirror-junction edge treatments and preview responsiveness](0044-mirror-junction-edge-treatments.md)
 
+- [0045. Interactive Fillet and Chamfer previews](0045-interactive-edge-previews.md)
+
 ## Pending owner decisions
 
 - Resilient face references beyond the approved conservative planar-face strategy.

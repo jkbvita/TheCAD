@@ -182,7 +182,8 @@ TopoDS_Shape makeEdgeTreatment(const TopoDS_Shape& base, const std::vector<TopoD
     require(std::isfinite(size) && size > 0 && size <= 1e9,
             "Radius or distance must be positive and at most 1e9 mm.");
     require(!edges.empty() && edges.size() <= 1000, "Select between 1 and 1000 solid edges.");
-    BRepBuilderAPI_Copy copy(base, true, false);
+    // Unchanged faces can reuse a private copy of the stock's triangulation.
+    BRepBuilderAPI_Copy copy(base, true, true);
     auto privateNames = propagateTopology(names, copy, copy.Shape());
     TopTools_IndexedMapOfShape original;
     TopExp::MapShapes(base, TopAbs_EDGE, original);
@@ -230,7 +231,7 @@ TopoDS_Shape makeEdgeTreatment(const TopoDS_Shape& base, const std::vector<TopoD
     // Native rolling blends can fail where a straight planar edge terminates
     // at a mirror or at a previous blend. Keep the exact requested section.
     try {
-        BRepBuilderAPI_Copy fresh(base, true, false);
+        BRepBuilderAPI_Copy fresh(base, true, true);
         auto fallbackNames = propagateTopology(names, fresh, fresh.Shape());
         std::vector<TopoDS_Shape> fallbackEdges;
         for (const auto& edge : edges) fallbackEdges.push_back(fresh.ModifiedShape(edge));

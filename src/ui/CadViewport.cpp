@@ -19,6 +19,7 @@
 #include <TopExp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
+#include <TopExp_Explorer.hxx>
 #include "ui/CadViewport.h"
 #include "modeling/SketchSnapping.h"
 
@@ -579,11 +580,21 @@ void CadViewport::previewShape(const TopoDS_Shape& shape,const modeling::Materia
     m_previewPresentation = makeSolidPresentation(shape);
     if (!m_presentation.IsNull()) { m_graphics.context()->Erase(m_presentation, Standard_False); }
     m_graphics.context()->Display(m_previewPresentation,AIS_Shaded,-1,Standard_False);
-    const auto displayChange=[&](const TopoDS_Shape& material,const Quantity_Color& color){
-        if(material.IsNull())return;
-        auto presentation=makeSolidPresentation(material);presentation->SetColor(color);presentation->SetTransparency(0.25);
+    const auto displayChange = [&](const TopoDS_Shape& material, const Quantity_Color& color) {
+        if (material.IsNull()) return;
+        Handle(AIS_Shape) presentation;
+        if (TopExp_Explorer(material, TopAbs_SOLID).More()) {
+            presentation = makeSolidPresentation(material);
+        } else {
+            // Edge-treatment highlights reuse faces already meshed on the result.
+            presentation = new AIS_Shape(material);
+            presentation->Attributes()->SetAutoTriangulation(false);
+        }
+        presentation->SetColor(color);
+        presentation->SetTransparency(0.25);
         presentation->SetZLayer(Graphic3d_ZLayerId_Topmost);
-        m_graphics.context()->Display(presentation,AIS_Shaded,-1,Standard_False);m_materialPreviewPresentations.push_back(presentation);
+        m_graphics.context()->Display(presentation, AIS_Shaded, -1, false);
+        m_materialPreviewPresentations.push_back(presentation);
     };
     displayChange(changes.added,Quantity_Color(1.0,0.74,0.20,Quantity_TOC_RGB));
     displayChange(changes.removed,removedMaterialYellow());

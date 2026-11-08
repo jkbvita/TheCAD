@@ -8,11 +8,15 @@
 #include <GProp_GProps.hxx>
 #include <Graphic3d_Camera.hxx>
 #include <TopoDS.hxx>
+#include <TopExp_Explorer.hxx>
 #include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
+#include <QElapsedTimer>
+#include <QLabel>
+#include <QSignalSpy>
 #include <QListWidget>
 #include <QPushButton>
 #include <QSpinBox>
@@ -77,6 +81,54 @@ class SolidFeaturesWorkflowTest final : public QObject
         QCOMPARE(a->ProjectionType(), b->ProjectionType());
     }
 private slots:
+    void savedFilletPreviewPerformance()
+    {
+        const auto path = qEnvironmentVariable("THECAD_TEST_FILLET_PART");
+        if (path.isEmpty()) QSKIP("Set THECAD_TEST_FILLET_PART to run the saved-part performance regression.");
+        SolidTestWindow window;
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* viewport = window.findChild<CadViewport*>("cadViewport");
+        QTRY_VERIFY(viewport->isReady());
+        QVERIFY(window.openPartFile(path));
+        QElapsedTimer timer;
+        command(window, "actionFillet");
+        auto* panel = window.findChild<SolidFeaturePanel*>();
+        QVERIFY(panel);
+        const auto originalCount = window.document().features().size();
+        const int requested = qEnvironmentVariable("THECAD_TEST_FILLET_EDGE", "1").toInt();
+        const int budgetMs = qEnvironmentVariable("THECAD_TEST_FILLET_BUDGET_MS", "1500").toInt();
+        for (int i = 0; i < int(panel->options().size()); ++i) {
+            const auto& option = panel->options()[std::size_t(i)];
+            if (option.reference.index != requested) continue;
+            panel->parameter()->setValue(qEnvironmentVariable("THECAD_TEST_FILLET_SIZE", "2").toDouble());
+            const BRepAdaptor_Curve curve(TopoDS::Edge(option.selectionShape));
+            const auto midpoint = curve.Value((curve.FirstParameter() + curve.LastParameter()) * 0.5);
+            const auto pixel = project(viewport, midpoint);
+            QCOMPARE(viewport->referenceCandidateAt(pixel), i);
+            QSignalSpy changed(panel, &SolidFeaturePanel::previewChanged);
+            timer.start();
+            QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, pixel);
+            const auto dispatch = timer.elapsed();
+            QTRY_VERIFY_WITH_TIMEOUT(changed.size() >= 2, budgetMs);
+            const auto preview = timer.elapsed();
+            QVERIFY2(panel->candidate().has_value(), qPrintable(panel->page()->status->text()));
+            QVERIFY(!viewport->m_previewPresentation.IsNull());
+            const auto& highlight = panel->candidate()->changes;
+            QVERIFY(!highlight.removed.IsNull() || !highlight.added.IsNull());
+            timer.restart();
+            panel->page()->buttons->button(QDialogButtonBox::Ok)->click();
+            const auto confirm = timer.elapsed();
+            qInfo() << "Edge" << requested << "click" << dispatch << "ms, preview" << preview
+                    << "ms, confirmation" << confirm << "ms";
+            QVERIFY2(preview < budgetMs, "The treatment preview missed its latency budget.");
+            QCOMPARE(window.document().features().size(), originalCount + 1);
+            QCOMPARE(window.document().features().back().kind, document::FeatureKind::Fillet);
+            QVERIFY(window.errors.isEmpty());
+            return;
+        }
+        QFAIL("Edge unavailable");
+    }
     void revolveCreateEditUndoCancel()
     {
         QTemporaryDir temp;
@@ -505,6 +557,8 @@ private slots:
         QApplication::processEvents();
         QCOMPARE(window.document().features().size(), std::size_t(2));
         QVERIFY(volume(window.document().shape()) < 24000);
+        if (!chamfer)
+            QVERIFY(window.document().edgeOptions(true).size() < window.document().edgeOptions().size());
         const double original = volume(window.document().shape());
         const auto id = window.document().features().back().id;
         select(window, id);
@@ -519,8 +573,10 @@ private slots:
         Quantity_Color removed;
         viewport->m_materialPreviewPresentations.front()->Color(removed);
         QVERIFY(removed.Distance(presentation::removedMaterialYellow()) < 1e-8);
-        QVERIFY(std::abs(volume(panel->candidate()->changes.removed) -
-                         (24000 - volume(panel->candidate()->previewShape))) < 1e-6);
+        const auto treatment = panel->candidate()->changes.removed;
+        QVERIFY(TopExp_Explorer(treatment, TopAbs_FACE).More());
+        QVERIFY(!TopExp_Explorer(treatment, TopAbs_SOLID).More());
+        QVERIFY(volume(panel->candidate()->previewShape) < 24000);
         panel->parameter()->setValue(1.5);
         panel->parameter()->setValue(2);
         QVERIFY(!panel->candidate());

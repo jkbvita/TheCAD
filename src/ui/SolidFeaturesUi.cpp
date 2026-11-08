@@ -65,7 +65,8 @@ void MainWindow::startSolidFeature(document::FeatureKind kind, const document::F
         m_selectedPlane.reset();
         m_viewport->setSelectedReferencePlane({});
         m_viewport->endSketch();
-        if (!m_viewport->setShape(panel->support().shape()))
+        if (!m_viewport->displayedShape().IsEqual(panel->support().shape()) &&
+            !m_viewport->setShape(panel->support().shape()))
         {
             finishSolidFeature(false);
             return;
@@ -143,8 +144,10 @@ void MainWindow::finishSolidFeature(bool accepted)
         m_viewport->clearPreview();
         // History must capture the committed body's display, not the earlier
         // support body temporarily shown while editing a feature.
-        if (!m_viewport->setShape(m_session.document().shape()) ||
-            !applyModel(result.document, result.featureId))
+        if (!m_viewport->displayedShape().IsEqual(m_session.document().shape()) &&
+            !m_viewport->setShape(m_session.document().shape()))
+            return;
+        if (!applyModel(result.document, result.featureId))
             return;
     }
     auto* panel = m_solidFeature;
@@ -163,7 +166,8 @@ void MainWindow::finishSolidFeature(bool accepted)
     m_viewport->endContourSelection();
     m_viewport->setReferenceCandidates({}, {});
     m_viewport->setFeatureReferenceShapes({});
-    m_viewport->setShape(m_session.document().shape());
+    if (!m_viewport->displayedShape().IsEqual(m_session.document().shape()))
+        m_viewport->setShape(m_session.document().shape());
     if (resume)
     {
         m_mode = WorkspaceMode::EditingSketch;
