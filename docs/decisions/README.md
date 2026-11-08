@@ -70,6 +70,8 @@ approved scope do not need repeated approval.
 
 - [0039: Coincident sketch boundaries](0039-coincident-sketch-boundaries.md)
 
+- [0040: Sketch tool priorities](0040-sketch-tool-priorities.md)
+
 ## Pending owner decisions
 
 - Resilient face references beyond the approved conservative planar-face strategy.
