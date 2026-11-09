@@ -10,7 +10,9 @@
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QIcon>
 #include <QLabel>
+#include <QPixmap>
 #include <QPushButton>
 #include <QTreeWidget>
 #include <QFile>
@@ -23,6 +25,7 @@
 #include <QListWidget>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTimer>
 
 namespace thecad::ui {
 
@@ -55,6 +58,33 @@ class MainWindowTest final : public QObject {
     Q_OBJECT
 
 private slots:
+    void aboutMenuDisplaysBundledLogo()
+    {
+        TestWindow window;
+        auto* about = window.findChild<QAction*>("actionAboutTheCAD");
+        QVERIFY(about);
+        QVERIFY(!QIcon(":/branding/thecad-mark.png").pixmap(16).isNull());
+
+        QPixmap displayedLogo;
+        bool closedWithButton = false;
+        QTimer::singleShot(0, &window, [&] {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            if (!dialog) return;
+            for (auto* label : dialog->findChildren<QLabel*>()) {
+                if (label->accessibleName() == "TheCAD logo") displayedLogo = label->pixmap();
+            }
+            auto* buttons = dialog->findChild<QDialogButtonBox*>();
+            if (buttons && buttons->button(QDialogButtonBox::Close)) {
+                buttons->button(QDialogButtonBox::Close)->click();
+                closedWithButton = !dialog->isVisible();
+            }
+            if (dialog->isVisible()) dialog->reject();
+        });
+        about->trigger();
+        QVERIFY(!displayedLogo.isNull());
+        QVERIFY(closedWithButton);
+    }
+
     void consumedSketchIsSharedByEveryFeatureAndRemainsEditable()
     {
         QTemporaryDir directory;

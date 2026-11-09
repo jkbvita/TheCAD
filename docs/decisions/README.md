@@ -32,6 +32,7 @@ approved scope do not need repeated approval.
 
 - [0011: Shared-edge regions and direct Smart Dimension](0011-shared-regions-direct-dimensions.md).
 - [0015: Clean part tree and fixed hexagon command](0015-clean-feature-tree-hexagon.md).
+- [0016: TheCAD logo and Windows app icon](0016-thecad-logo.md).
 
 ## Pending owner decisions
 

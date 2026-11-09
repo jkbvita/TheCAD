@@ -2,6 +2,7 @@
 
 #include <QApplication>
 #include <QDir>
+#include <QIcon>
 #include <QMessageBox>
 #include <Standard_Failure.hxx>
 #include <exception>
@@ -11,6 +12,7 @@ int main(int argc, char* argv[])
     QApplication application(argc, argv);
     QApplication::setApplicationName("TheCAD");
     QApplication::setApplicationVersion("0.1.0");
+    QApplication::setWindowIcon(QIcon(":/branding/thecad-mark.png"));
     // A deployed folder carries OCCT resources next to the executable.
     // Development startup uses the environment helper when this directory is absent.
     const QString shaderDirectory = QCoreApplication::applicationDirPath() + "/resources/Shaders";

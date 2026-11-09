@@ -35,8 +35,13 @@ add_library(thecad_ui STATIC
     src/ui/MainWindow.cpp src/ui/MainWindow.h src/ui/SketchConstraintsUi.cpp src/ui/SmartDimensionUi.cpp src/ui/EditHistory.cpp src/ui/SketchToolsUi.cpp)
 target_include_directories(thecad_ui PUBLIC src)
 target_link_libraries(thecad_ui PUBLIC Qt6::Widgets thecad_document thecad_occt TKV3d TKOpenGl)
+qt_add_resources(thecad_ui thecad_branding
+    PREFIX "/branding"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/resources"
+    FILES resources/thecad-logo.png resources/thecad-mark.png)
 
-qt_add_executable(TheCAD WIN32 src/main.cpp)
+qt_add_executable(TheCAD WIN32 src/main.cpp resources/thecad.rc)
+target_include_directories(TheCAD PRIVATE resources)
 target_link_libraries(TheCAD PRIVATE thecad_ui thecad_modeling)
 
 foreach(target thecad_modeling thecad_document thecad_ui TheCAD)
