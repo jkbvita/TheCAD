@@ -13,7 +13,9 @@
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QIcon>
 #include <QLabel>
+#include <QPixmap>
 #include <QPushButton>
 #include <QTreeWidget>
 #include <QFile>
@@ -26,6 +28,7 @@
 #include <QListWidget>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTimer>
 
 namespace thecad::ui {
 
@@ -99,6 +102,33 @@ private slots:
         const auto wrongSuffix=directory.filePath("model.theprt");QVERIFY(QFile::copy(first,wrongSuffix));QVERIFY(!window.openPartFile(wrongSuffix));QCOMPARE(window.errors.size(),3);QVERIFY(window.errors.back().contains(".thepart"));QCOMPARE(window.currentPath(),first);
         window.choice=TestWindow::Choice::Save;QVERIFY(window.openPartFile(second));QVERIFY(!window.isWindowModified());QCOMPARE(window.currentPath(),second);QCOMPARE(document::PartDocument::load(first).parameters().width,3.0);
     }
+    void aboutMenuDisplaysBundledLogo()
+    {
+        TestWindow window;
+        auto* about = window.findChild<QAction*>("actionAboutTheCAD");
+        QVERIFY(about);
+        QVERIFY(!QIcon(":/branding/thecad-mark.png").pixmap(16).isNull());
+
+        QPixmap displayedLogo;
+        bool closedWithButton = false;
+        QTimer::singleShot(0, &window, [&] {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            if (!dialog) return;
+            for (auto* label : dialog->findChildren<QLabel*>()) {
+                if (label->accessibleName() == "TheCAD logo") displayedLogo = label->pixmap();
+            }
+            auto* buttons = dialog->findChild<QDialogButtonBox*>();
+            if (buttons && buttons->button(QDialogButtonBox::Close)) {
+                buttons->button(QDialogButtonBox::Close)->click();
+                closedWithButton = !dialog->isVisible();
+            }
+            if (dialog->isVisible()) dialog->reject();
+        });
+        about->trigger();
+        QVERIFY(!displayedLogo.isNull());
+        QVERIFY(closedWithButton);
+    }
+
     void consumedSketchIsSharedByEveryFeatureAndRemainsEditable()
     {
         QTemporaryDir directory;

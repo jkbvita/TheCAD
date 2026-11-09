@@ -4,6 +4,7 @@
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QDir>
+#include <QIcon>
 #include <QMessageBox>
 #include <QTimer>
 #include <Standard_Failure.hxx>
@@ -14,6 +15,7 @@ int main(int argc, char* argv[])
     QApplication application(argc, argv);
     QApplication::setApplicationName("TheCAD");
     QApplication::setApplicationVersion("0.1.0");
+    QApplication::setWindowIcon(QIcon(":/branding/thecad-mark.png"));
     QCommandLineParser parser;
     parser.setApplicationDescription("TheCAD parametric CAD application");
     parser.addHelpOption();parser.addVersionOption();

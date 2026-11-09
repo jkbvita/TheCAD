@@ -17,3 +17,9 @@ add_library(thecad_ui STATIC
     SmartDimensionUi.cpp SketchToolsUi.cpp SketchModifierUi.cpp RelationsContextUi.cpp)
 target_include_directories(thecad_ui PUBLIC "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(thecad_ui PUBLIC thecad_viewport_widget thecad_widgets thecad_application thecad_exchange)
+qt_add_resources(thecad_ui thecad_branding
+    PREFIX "/branding"
+    BASE "${PROJECT_SOURCE_DIR}/resources"
+    FILES
+        "${PROJECT_SOURCE_DIR}/resources/thecad-logo.png"
+        "${PROJECT_SOURCE_DIR}/resources/thecad-mark.png")

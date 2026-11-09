@@ -386,8 +386,28 @@ MainWindow::MainWindow(QWidget* parent)
     auto* restore = windowMenu->addAction("Restore");
     connect(restore, &QAction::triggered, this, &QWidget::showNormal);
     auto* about = helpMenu->addAction("About TheCAD");
+    about->setObjectName("actionAboutTheCAD");
     connect(about, &QAction::triggered, this, [this] {
-        QMessageBox::about(this, "About TheCAD", "TheCAD\nOpen-source parametric mechanical CAD prototype.\nC++ / Qt 6 / Open CASCADE Technology");
+        QDialog dialog(this);
+        dialog.setWindowTitle("About TheCAD");
+        auto* layout = new QVBoxLayout(&dialog);
+
+        auto* logo = new QLabel(&dialog);
+        logo->setAccessibleName("TheCAD logo");
+        logo->setAlignment(Qt::AlignCenter);
+        const QIcon artwork(":/branding/thecad-logo.png");
+        logo->setPixmap(artwork.pixmap(QSize(280, 280), dialog.devicePixelRatioF()));
+        layout->addWidget(logo);
+
+        auto* description = new QLabel("Open-source parametric mechanical CAD prototype.\n"
+                                       "C++ / Qt 6 / Open CASCADE Technology", &dialog);
+        description->setAlignment(Qt::AlignCenter);
+        layout->addWidget(description);
+
+        auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
+        connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+        layout->addWidget(buttons);
+        dialog.exec();
     });
     auto* historyDock = new QDockWidget("FeatureManager", this);
     m_historyDock = historyDock;
