@@ -1303,6 +1303,10 @@ void MainWindow::startOperation(document::Feature feature, bool editing)
         if (sketch != sourceDocument.features().end() && sketch->sketch.attachment)
             feature.direction = modeling::Direction::Negative;
     }
+    const auto profile = std::find_if(sourceDocument.features().begin(), sourceDocument.features().end(),
+        [&](const auto& item) { return item.kind == document::FeatureKind::Sketch && item.id == feature.sketchId; });
+    m_viewport->prepareFeatureView(profile != sourceDocument.features().end()
+        ? std::optional<gp_Ax3>(modeling::sketchAxes(profile->sketch)) : std::nullopt);
     m_operation=std::make_unique<OperationDraft>();auto& draft=*m_operation;
     draft.feature=std::move(feature);draft.editing=editing;
     draft.fromSketch=m_session.editingSketch().has_value();draft.modifiedBefore=isWindowModified();

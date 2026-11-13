@@ -78,6 +78,9 @@ void MainWindow::startSolidFeature(document::FeatureKind kind, const document::F
         m_viewport->setDatums(datums);
         if (kind == document::FeatureKind::Mirror)
             m_viewport->showReferencePlanes(true);
+        const auto* profile = panel->sketch();
+        m_viewport->prepareFeatureView(profile
+            ? std::optional<gp_Ax3>(modeling::sketchAxes(*profile)) : std::nullopt);
         connect(panel, &SolidFeaturePanel::pickingChanged, this,
                 &MainWindow::syncSolidFeaturePicking);
         connect(panel, &SolidFeaturePanel::previewChanged, this,

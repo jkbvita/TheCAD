@@ -81,6 +81,30 @@ void CadViewport::setStandardView(StandardView orientation)
     update();
 }
 
+void CadViewport::prepareFeatureView(const std::optional<gp_Ax3>& profile)
+{
+    if (!isReady()) return;
+    const auto camera = m_graphics.view()->Camera();
+    const gp_Ax3 frame = profile.value_or(gp_Ax3());
+    const auto direction = camera->Direction();
+    const double normalAlignment = std::abs(direction.Dot(frame.Direction()));
+    // A profile needs both its area and its depth visible. For features without
+    // a profile, leave arbitrary 3D views alone and only leave flat standard views.
+    const bool needsAngle = profile ? normalAlignment > 0.95 || normalAlignment < 0.2
+        : std::max({normalAlignment, std::abs(direction.Dot(frame.XDirection())),
+                    std::abs(direction.Dot(frame.YDirection()))}) > 0.95;
+    if (!needsAngle) return;
+    m_camera.resetAnchor();
+    const gp_Dir towardViewer(gp_Vec(frame.XDirection()) + gp_Vec(frame.YDirection()) +
+                              gp_Vec(frame.Direction()));
+    camera->SetDirection(towardViewer.Reversed());
+    camera->SetUp(frame.YDirection());
+    camera->OrthogonalizeUp();
+    m_graphics.view()->ZFitAll();
+    m_cameraAnnotationsDirty = true;
+    update();
+}
+
 void CadViewport::normalTo(){
     if(!isReady())return;m_camera.resetAnchor();
     if(m_sketch&&(m_sketchEditing||m_regionSelecting)){orientSketch();update();return;}

@@ -719,6 +719,10 @@ private slots:
         command(window,"actionExtrude");auto* panel=window.findChild<QWidget*>("operationPanel");QVERIFY(panel);
         QVERIFY(!smartDimension->isChecked());
         QVERIFY(!viewport->smartDimensionActive());
+        const auto extrusionView=viewport->m_graphics.view()->Camera()->Direction();
+        const auto extrusionNormal=modeling::sketchAxes(*viewport->m_sketch).Direction();
+        QVERIFY(std::abs(extrusionView.Dot(extrusionNormal))>0.3);
+        QVERIFY(std::abs(extrusionView.Dot(extrusionNormal))<0.8);
         auto* depth=panel->findChild<QDoubleSpinBox*>("featureLength");auto* editor=depth->findChild<QLineEdit*>();QVERIFY(editor);
         QTRY_VERIFY(depth->hasFocus()||editor->hasFocus());QVERIFY(editor->hasSelectedText());
         QTest::keyClicks(QApplication::focusWidget(),"23.5");QCOMPARE(depth->value(),23.5);
@@ -758,6 +762,7 @@ private slots:
         command(window,"actionExtrudedCut");panel=window.findChild<QWidget*>("operationPanel");depth=panel->findChild<QDoubleSpinBox*>("featureLength");editor=depth->findChild<QLineEdit*>();
         QVERIFY(!smartDimension->isChecked());
         QVERIFY(!viewport->smartDimensionActive());
+        QVERIFY(std::abs(viewport->m_graphics.view()->Camera()->Direction().Dot(modeling::sketchAxes(*viewport->m_sketch).Direction()))<0.8);
         QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{25,0}));QTest::keyClicks(QApplication::focusWidget(),"5");QCOMPARE(depth->value(),5.0);
         QCOMPARE(viewport->m_materialPreviewPresentations.size(),std::size_t(1));GProp_GProps cutProperties;BRepGProp::SurfaceProperties(viewport->m_selectedContourPresentations[0]->Shape(),cutProperties);QVERIFY(std::abs(volume(viewport->m_materialPreviewPresentations[0]->Shape())-cutProperties.Mass()*5)<1e-4);
         QTest::keyClick(QApplication::focusWidget(),Qt::Key_Escape);QCOMPARE(window.document().features().size(),std::size_t(3));QVERIFY(viewport->m_sketchEditing);QVERIFY(viewport->m_selectedContourPresentations.empty());QVERIFY(viewport->m_materialPreviewPresentations.empty());

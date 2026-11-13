@@ -37,6 +37,34 @@ class PlaneNavigationTest:public QObject {
     void select(PlaneWindow& w,const QString& id){auto* tree=w.findChild<QTreeWidget*>("featureTree");for(QTreeWidgetItemIterator i(tree);*i;++i)if((*i)->data(0,Qt::UserRole).toString()==id){tree->setCurrentItem(*i,0,QItemSelectionModel::ClearAndSelect);return;}QFAIL("Missing feature");}
     void confirm(PlaneWindow& w){auto* buttons=w.findChild<QDialogButtonBox*>("referenceGeometryButtons");QVERIFY(buttons->button(QDialogButtonBox::Ok)->isEnabled());QTest::mouseClick(buttons->button(QDialogButtonBox::Ok),Qt::LeftButton);QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);}
 private slots:
+    void featureViewUsesProfileFrame()
+    {
+        PlaneWindow window; window.show(); QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* viewport=window.findChild<CadViewport*>(); QTRY_VERIFY(viewport->isReady());
+        const auto camera=viewport->m_graphics.view()->Camera();
+        const gp_Pnt center(23,17,9); camera->SetCenter(center); camera->SetScale(137);
+        const std::array<gp_Ax3,4> frames{sketchAxes(SketchPlane::XY), sketchAxes(SketchPlane::XZ),
+            sketchAxes(SketchPlane::YZ), gp_Ax3(gp_Pnt(30,20,10),gp_Dir(1,2,3),gp_Dir(2,-1,0))};
+        for (const auto projection : {Graphic3d_Camera::Projection_Orthographic, Graphic3d_Camera::Projection_Perspective}) {
+            camera->SetProjectionType(projection);
+            for (const auto& frame : frames) {
+                for (const auto& direction : {frame.Direction(), frame.Direction().Reversed(), frame.XDirection()}) {
+                    camera->SetDirection(direction); camera->SetUp(frame.YDirection()); camera->OrthogonalizeUp();
+                    const auto scale=camera->Scale();
+                    viewport->prepareFeatureView(frame);
+                    const auto depth=std::abs(camera->Direction().Dot(frame.Direction()));
+                    QVERIFY(depth>0.3 && depth<0.8);
+                    QVERIFY(camera->Center().Distance(center)<1e-10); QCOMPARE(camera->Scale(),scale);
+                    QCOMPARE(camera->ProjectionType(),projection);
+                    QVERIFY(std::abs(camera->Up().Dot(camera->Direction()))<1e-12);
+                    const auto eye=camera->Eye(); const auto up=camera->Up();
+                    viewport->prepareFeatureView(frame); // Already useful: leave it alone.
+                    QVERIFY(camera->Eye().Distance(eye)<1e-10); QVERIFY(camera->Up().IsEqual(up,1e-12));
+                }
+            }
+        }
+    }
+
     void solidWorksStandardViewShortcuts()
     {
         PlaneWindow window;

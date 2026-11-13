@@ -24,6 +24,7 @@
 #include <QTest>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
+#include <cmath>
 namespace thecad::ui
 {
 class SolidTestWindow : public MainWindow
@@ -81,6 +82,35 @@ class SolidFeaturesWorkflowTest final : public QObject
         QCOMPARE(a->ProjectionType(), b->ProjectionType());
     }
 private slots:
+    void solidCommandLeavesFlatView_data()
+    {
+        QTest::addColumn<QString>("action");
+        for (const auto* action : {"actionRevolve", "actionRevolvedCut", "actionSweep", "actionSweptCut",
+                                  "actionFillet", "actionChamfer", "actionLinearPattern", "actionMirror", "actionCircularPattern"})
+            QTest::newRow(action) << QString(action);
+    }
+    void solidCommandLeavesFlatView()
+    {
+        QFETCH(QString, action);
+        QTemporaryDir temp; auto document=document::PartDocument::createBox({40,30,20});
+        modeling::Sketch sketch; sketch.entities.push_back({modeling::EntityKind::Rectangle,{5,5},{15,15},1,"profile"});
+        const auto sketchId=document.addSketch(sketch); const auto path=temp.filePath("camera.thepart"); document.save(path);
+        SolidTestWindow window; window.show(); QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* viewport=window.findChild<CadViewport*>(); QTRY_VERIFY(viewport->isReady());
+        QVERIFY(window.openPartFile(path)); select(window,sketchId);
+        viewport->setStandardView(CadViewport::StandardView::Front);
+        const auto camera=viewport->m_graphics.view()->Camera();
+        const auto center=camera->Center(); const auto scale=camera->Scale(); const auto projection=camera->ProjectionType();
+        command(window,action.toUtf8().constData());
+        auto* panel=window.findChild<SolidFeaturePanel*>(); QVERIFY(panel);
+        QVERIFY(std::abs(camera->Direction().Z())>0.3 && std::abs(camera->Direction().Z())<0.8);
+        QVERIFY(camera->Center().Distance(center)<1e-10); QCOMPARE(camera->Scale(),scale); QCOMPARE(camera->ProjectionType(),projection);
+        const Handle(Graphic3d_Camera) featureCamera=new Graphic3d_Camera(camera);
+        if (panel->parameter()) panel->parameter()->setValue(2);
+        panel->refreshPreview(); QApplication::processEvents(); sameCamera(featureCamera,camera);
+        command(window,"actionCancelFeature"); QVERIFY(window.errors.isEmpty());
+    }
+
     void savedDraftJunctionEdit()
     {
         const auto path = qEnvironmentVariable("THECAD_TEST_DRAFT_JUNCTION_PART");

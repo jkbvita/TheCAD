@@ -107,6 +107,7 @@ public:
     void fitAll();
     enum class StandardView { Front, Back, Left, Right, Top, Bottom, Isometric };
     void setStandardView(StandardView view);
+    void prepareFeatureView(const std::optional<gp_Ax3>& profile = {});
     void resetView();
     void normalTo();
     void setTreeBodySelected(bool selected);
