@@ -86,6 +86,7 @@ approved scope do not need repeated approval.
 
 - [0047. Preserve the seam at a draft junction](0047-draft-junction-fillets.md)
 - [0048. TheCAD logo and Windows app icon](0048-thecad-logo.md)
+- [0049. Match the approved SolidWorks extrusion PropertyManagers](0049-extrusion-propertymanager-ui.md)
 
 ## Pending owner decisions
 

@@ -2,6 +2,7 @@
 #include <QWidget>
 class QDialogButtonBox;
 class QLabel;
+class QPushButton;
 class QVBoxLayout;
 namespace thecad::ui {
 // Shared visual shell for feature editors; commands own their actual controls.
@@ -12,5 +13,10 @@ public:
     QDialogButtonBox* buttons;
     QLabel* status;
     void setStatus(const QString& message,bool error=false);
+    void useCompactFeatureHeader(QPushButton* preview);
+private:
+    QLabel* m_heading;
+    QLabel* m_description;
+    QLabel* m_shortcuts;
 };
 }

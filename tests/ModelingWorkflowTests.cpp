@@ -645,8 +645,8 @@ private slots:
         operation=window.findChild<QWidget*>("operationPanel");operation->findChild<QListWidget*>("operationContour")->setCurrentRow(0,QItemSelectionModel::ClearAndSelect);
         operation->findChild<QDoubleSpinBox*>("featureLength")->setValue(25);
         QTest::mouseClick(operation->findChild<QPushButton*>("featureReverseDirection"),Qt::LeftButton);
-        QCOMPARE(operation->findChild<QComboBox*>("featureDirection")->currentIndex(),1);QVERIFY(!viewport->m_previewPresentation.IsNull());
-        operation->findChild<QComboBox*>("featureDirection")->setCurrentIndex(0);confirmOperation(window);
+        QVERIFY(operation->findChild<QPushButton*>("featureReverseDirection")->isChecked());QVERIFY(!viewport->m_previewPresentation.IsNull());
+        QTest::mouseClick(operation->findChild<QPushButton*>("featureReverseDirection"),Qt::LeftButton);confirmOperation(window);
         QCOMPARE(window.document().features().size(),std::size_t(2));QCOMPARE(window.document().features()[0].sketch.relations.size(),active.relations.size());
         const double solidVolume=volume(window.document().shape());
         createSketch(window);command(window,"actionCircle");
@@ -734,6 +734,13 @@ private slots:
         QTest::keyClicks(QApplication::focusWidget(),"17.25");QCOMPARE(depth->value(),17.25);
         QVERIFY(direction.Angle(viewport->m_graphics.view()->Camera()->Direction())<1e-10);QVERIFY(center.Distance(viewport->m_graphics.view()->Camera()->Center())<1e-10);QCOMPARE(viewport->m_graphics.view()->Camera()->Scale(),scale);
         QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{25,0}));QCOMPARE(contours->selectedItems().size(),2);QCOMPARE(viewport->m_selectedContourPresentations.size(),std::size_t(2));
+        for (int row=0; row<contours->count(); ++row)
+            QCOMPARE(contours->item(row)->isHidden(), !contours->item(row)->isSelected());
+        contours->setFocus(); QTest::keyClick(contours,Qt::Key_Delete);
+        QCOMPARE(contours->selectedItems().size(),1);
+        QCOMPARE(window.document().features().size(),std::size_t(1));
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{25,0}));
+        QCOMPARE(contours->selectedItems().size(),2);
         QVERIFY(panel->findChild<QLabel*>("operationSelectionCount")->text().startsWith("2 regions"));
         QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{-25,0}));QCOMPARE(contours->selectedItems().size(),1);QCOMPARE(viewport->m_selectedContourPresentations.size(),std::size_t(1));
         QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{25,0}));QVERIFY(contours->selectedItems().isEmpty());QVERIFY(viewport->m_selectedContourPresentations.empty());QVERIFY(viewport->m_previewPresentation.IsNull());QVERIFY(viewport->m_materialPreviewPresentations.empty());
@@ -756,6 +763,36 @@ private slots:
         QTest::keyClick(QApplication::focusWidget(),Qt::Key_Escape);QCOMPARE(window.document().features().size(),std::size_t(3));QVERIFY(viewport->m_sketchEditing);QVERIFY(viewport->m_selectedContourPresentations.empty());QVERIFY(viewport->m_materialPreviewPresentations.empty());
         QVERIFY(!smartDimension->isChecked());
         QVERIFY(window.errors.isEmpty());QVERIFY(window.close());
+    }
+    void extrusionSelectsProfileFromTreeWithoutMovingCamera()
+    {
+        WorkflowWindow window; window.showMaximized(); QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* viewport=window.findChild<CadViewport*>(); QTRY_VERIFY(viewport->isReady());
+        createSketch(window); command(window,"actionRectangle");
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{5,5}));
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{25,15}));
+        command(window,"actionFinishSketch");
+        auto* tree=window.findChild<QTreeWidget*>("featureTree");
+        tree->clearSelection(); tree->setCurrentItem(tree->topLevelItem(0),0,QItemSelectionModel::ClearAndSelect);
+        command(window,"actionExtrude");
+        auto* panel=window.findChild<QWidget*>("operationPanel"); QVERIFY(panel);
+        auto* profile=panel->findChild<QComboBox*>("operationSketch");
+        QVERIFY(profile->isVisible()); QVERIFY(profile->property("picking").toBool()); QVERIFY(tree->isVisible());
+        const auto camera=viewport->m_graphics.view()->Camera();
+        const auto eye=camera->Eye(), center=camera->Center(); const auto up=camera->Up(); const auto scale=camera->Scale();
+        const auto projection=camera->ProjectionType();
+        for (QTreeWidgetItemIterator it(tree); *it; ++it)
+            if ((*it)->data(0,Qt::UserRole).toString()==QString::fromStdString(window.document().features().front().id)) {
+                tree->setCurrentItem(*it); break;
+            }
+        QVERIFY(!tree->isVisible()); QVERIFY(!profile->isVisible());
+        QVERIFY(!viewport->m_previewPresentation.IsNull());
+        QVERIFY(eye.Distance(camera->Eye())<1e-10); QVERIFY(center.Distance(camera->Center())<1e-10);
+        QVERIFY(up.Angle(camera->Up())<1e-10); QCOMPARE(scale,camera->Scale()); QCOMPARE(projection,camera->ProjectionType());
+        auto* depth=panel->findChild<QDoubleSpinBox*>("featureLength");
+        QVERIFY(depth->hasFocus() || depth->findChild<QLineEdit*>()->hasFocus());
+        QVERIFY(depth->findChild<QLineEdit*>()->hasSelectedText());
+        command(window,"actionCancelFeature"); QVERIFY(window.errors.isEmpty()); QVERIFY(window.close());
     }
     void invalidActiveSketchStaysEditable() {
         WorkflowWindow window;window.show();QVERIFY(QTest::qWaitForWindowExposed(&window));
@@ -791,11 +828,9 @@ private slots:
         QVERIFY(panel);
         auto* start = panel->findChild<QComboBox*>("operationStartingReference");
         start->setCurrentText("Surface/Face/Plane");
-        QPushButton* pick = nullptr;
-        for (auto* button : panel->findChildren<QPushButton*>())
-            if (button->accessibleName() == "Pick start reference") pick = button;
+        auto* pick = panel->findChild<QComboBox*>("extrudeStartReference");
         QVERIFY(pick);
-        pick->click();
+        QTest::mouseClick(pick, Qt::LeftButton);
         auto* tree = window.findChild<QTreeWidget*>("featureTree");
         QVERIFY(tree->isVisible());
         for (QTreeWidgetItemIterator it(tree); *it; ++it)

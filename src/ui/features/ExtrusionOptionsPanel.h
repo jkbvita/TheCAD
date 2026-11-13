@@ -4,6 +4,7 @@
 #include <functional>
 
 class QCheckBox;
+class QAbstractButton;
 class QComboBox;
 class QDoubleSpinBox;
 class QFormLayout;
@@ -24,6 +25,8 @@ public:
     modeling::Direction direction() const;
     void setOpenProfile(bool available, bool onlyOpen, bool canFillet);
     bool thinEnabled() const;
+    void stopPicking();
+    void setContoursExpanded(bool expanded);
     void picked(int);
     std::vector<TopoDS_Shape> selectedReferences() const;
     const std::vector<document::ReferenceOption>& references() const { return m_options; }
@@ -77,7 +80,7 @@ private:
     QDoubleSpinBox* m_startOffset = nullptr;
     QCheckBox* m_reverseStart = nullptr;
     ReferenceField m_start, m_direction;
-    QComboBox* m_reverse = nullptr;
+    QPushButton* m_reverse = nullptr;
     Leg m_first, m_second;
     QCheckBox* m_secondOn = nullptr;
     QCheckBox* m_thinOn = nullptr;
@@ -92,7 +95,7 @@ private:
     QDoubleSpinBox* m_capThickness = nullptr;
     QCheckBox* m_merge = nullptr;
     QCheckBox* m_flip = nullptr;
-    QCheckBox* m_scopeOn = nullptr;
+    QAbstractButton* m_scopeOn = nullptr;
     QListWidget* m_scope = nullptr;
     ReferenceField* m_picking = nullptr;
     bool m_pickingScope = false;

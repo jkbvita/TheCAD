@@ -1,4 +1,5 @@
 #include "ui/features/ExtrusionOptionsPanel.h"
+#include "ui/widgets/PropertyManagerControls.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -9,8 +10,11 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>
+#include <QRadioButton>
 #include <QSignalBlocker>
+#include <QStyle>
 #include <QToolButton>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
@@ -22,7 +26,7 @@ namespace {
 struct Choice { const char* label; ExtrudeEnd end; };
 constexpr Choice ends[] = {
     {"Blind", ExtrudeEnd::Blind}, {"Through All", ExtrudeEnd::ThroughAll},
-    {"Through All Both", ExtrudeEnd::ThroughAllBoth}, {"Up To Next", ExtrudeEnd::UpToNext},
+    {"Through All - Both", ExtrudeEnd::ThroughAllBoth}, {"Up To Next", ExtrudeEnd::UpToNext},
     {"Up To Vertex", ExtrudeEnd::Vertex}, {"Up To Surface", ExtrudeEnd::Surface},
     {"Offset From Surface", ExtrudeEnd::SurfaceOffset}, {"Up To Body", ExtrudeEnd::Body},
     {"Mid Plane", ExtrudeEnd::MidPlane}
@@ -36,17 +40,37 @@ bool sameReference(const GeometryReference& a, const GeometryReference& b)
     return a.index == b.index && a.signature == b.signature;
 }
 
+QLabel* symbolLabel(QWidget* context, const QString& text, PropertySymbol symbol)
+{
+    auto* label = new QLabel;
+    label->setPixmap(propertyIcon(symbol, context->palette().color(QPalette::WindowText)).pixmap(18,18));
+    label->setFixedWidth(22); label->setToolTip(text); label->setAccessibleName(text);
+    label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    return label;
+}
+
+void replaceLabel(QFormLayout* form, QWidget* field, QWidget* label)
+{
+    int row; QFormLayout::ItemRole role;
+    form->getWidgetPosition(field, &row, &role);
+    if (auto* item = form->itemAt(row, QFormLayout::LabelRole)) {
+        auto* old = item->widget(); form->removeWidget(old); delete old;
+    }
+    form->setWidget(row, QFormLayout::LabelRole, label);
+}
+
 QDoubleSpinBox* dimension(QFormLayout* form, const QString& label, double value, const char* name,
                           double minimum = 0.000001, double maximum = 1e9, const QString& unit = " mm")
 {
-    auto* field = new QDoubleSpinBox;
+    auto* field = new PropertyDimension;
     field->setObjectName(name);
     field->setDecimals(6);
     field->setRange(minimum, maximum);
     field->setSuffix(unit);
     field->setValue(value);
+    field->setAccessibleName(label); field->setToolTip(label);
     field->setKeyboardTracking(true);
-    form->addRow(label, field);
+    form->addRow(symbolLabel(field, label, label.contains("angle") ? PropertySymbol::Draft : PropertySymbol::Depth), field);
     return field;
 }
 
@@ -77,13 +101,13 @@ QFormLayout* ExtrusionOptionsPanel::section(QVBoxLayout* layout, const QString& 
     auto* head = new QWidget;
     auto* row = new QHBoxLayout(head);
     row->setContentsMargins(0, 0, 0, 0);
-    auto* fold = new QToolButton;
+    auto* fold = new PropertySectionButton;
     fold->setObjectName("extrusionSection");
     fold->setText(title);
-    fold->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    fold->setArrowType(Qt::DownArrow);
+    fold->setAccessibleName(title);
     fold->setCheckable(true);
     fold->setChecked(true);
+    fold->setMinimumHeight(26);
     fold->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     if (enabled) {
         *enabled = new QCheckBox;
@@ -94,18 +118,20 @@ QFormLayout* ExtrusionOptionsPanel::section(QVBoxLayout* layout, const QString& 
     layout->addWidget(head);
     auto* body = new QWidget;
     auto* form = new QFormLayout(body);
-    form->setContentsMargins(5, 1, 5, 4);
-    form->setRowWrapPolicy(QFormLayout::WrapLongRows);
+    form->setContentsMargins(0, 4, 0, 7);
+    form->setSpacing(5);
+    form->setRowWrapPolicy(QFormLayout::DontWrapRows);
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    body->setProperty("sectionToggle", QVariant::fromValue<QObject*>(fold));
     layout->addWidget(body);
     QObject::connect(fold, &QToolButton::toggled, body, [fold, body](bool expanded) {
-        fold->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
         body->setVisible(expanded);
     });
     if (enabled) {
         body->setEnabled((*enabled)->isChecked());
         QObject::connect(*enabled, &QCheckBox::toggled, body, [body, fold](bool on) {
             body->setEnabled(on);
-            if (on) fold->setChecked(true);
+            fold->setChecked(on);
         });
         fold->setChecked(false);
     }
@@ -134,19 +160,23 @@ ExtrusionOptionsPanel::ExtrusionOptionsPanel(QVBoxLayout* layout, QWidget* conte
     m_reverseStart = flag(m_fromForm, "Reverse start offset", initial.startOffset < 0);
 
     auto* first = section(layout, "Direction 1");
-    m_reverse = new QComboBox;
-    m_reverse->setObjectName("featureDirection");
-    m_reverse->addItems({"Along sketch normal", "Opposite sketch normal"});
-    m_reverse->setCurrentIndex(feature.direction == Direction::Positive ? 0 : 1);
-    auto* reverse = new QPushButton("Reverse direction");
+    m_reverse = new QPushButton;
+    auto* reverse = m_reverse;
     reverse->setObjectName("featureReverseDirection");
-    first->addRow(reverse, m_reverse);
-    QObject::connect(reverse, &QPushButton::clicked, m_context, [this] { m_reverse->setCurrentIndex(1 - m_reverse->currentIndex()); });
+    reverse->setAccessibleName("Reverse direction"); reverse->setToolTip("Reverse direction");
+    reverse->setIcon(propertyIcon(PropertySymbol::Reverse, m_context->palette().color(QPalette::WindowText)));
+    reverse->setCheckable(true); reverse->setChecked(feature.direction == Direction::Negative);
+    reverse->setProperty("propertyAction", true); reverse->setFixedSize(24,24);
+    addLeg(m_first, first, initial.first, false);
+    replaceLabel(first, m_first.end, reverse);
     m_direction = referenceField(first, "Direction of extrusion", "extrudeDirectionReference");
     fill(m_direction, choices(DatumKind::Axis));
-    m_direction.choices->setItemText(0, "Normal to sketch");
+    m_direction.choices->setToolTip("Direction of extrusion (optional). Leave empty for normal to sketch.");
     restore(m_direction, initial.direction);
-    addLeg(m_first, first, initial.first, false);
+    // Keep the standard direction-vector box between the end condition and depth.
+    auto directionRow = first->takeRow(m_direction.row);
+    first->insertRow(1, directionRow.labelItem->widget(), directionRow.fieldItem->widget());
+    delete directionRow.labelItem; delete directionRow.fieldItem;
     if (m_cut) m_flip = flag(first, "Flip side to cut", initial.flipCut);
     else {
         m_merge = flag(first, "Merge result", initial.merge);
@@ -168,7 +198,7 @@ ExtrusionOptionsPanel::ExtrusionOptionsPanel(QVBoxLayout* layout, QWidget* conte
     m_thinMode->setObjectName("extrudeThinMode");
     m_thinMode->addItems({"One-Direction", "Mid Plane", "Two-Direction"});
     m_thinMode->setCurrentIndex(int(thin.mode));
-    m_thinForm->addRow("Type", m_thinMode);
+    m_thinForm->addRow(m_thinMode);
     m_wall = dimension(m_thinForm, "Thickness", thin.thickness, "extrudeThinThickness");
     m_otherWall = dimension(m_thinForm, "Thickness 2", thin.secondThickness, "extrudeThinThickness2");
     m_reverseWall = flag(m_thinForm, "Reverse thickness direction", thin.reverse);
@@ -182,12 +212,13 @@ ExtrusionOptionsPanel::ExtrusionOptionsPanel(QVBoxLayout* layout, QWidget* conte
     m_contourForm = section(layout, "Selected Contours");
     const auto bodyFaces = choices(DatumKind::Plane, false, true);
     if (!bodyFaces.empty()) {
-        auto* scope = section(layout, "Feature Scope", &m_scopeOn);
+        auto* scope = section(layout, "Feature Scope");
+        auto* allBodies = new QRadioButton("All bodies", scope->parentWidget());
+        m_scopeOn = new QRadioButton("Selected bodies", scope->parentWidget());
+        allBodies->setChecked(initial.scope.empty());
         m_scopeOn->setObjectName("extrudeFeatureScope");
-        auto* hint = new QLabel("Choose one face per body to limit which bodies are affected. All intersecting bodies are used by default.");
-        hint->setWordWrap(true);
-        scope->addRow(hint);
-        m_scope = new QListWidget;
+        scope->addRow(allBodies); scope->addRow(m_scopeOn);
+        m_scope = new PropertySelectionList;
         m_scope->setObjectName("extrudeScopeBodies");
         m_scope->setSelectionMode(QAbstractItemView::MultiSelection);
         m_scope->setMaximumHeight(100);
@@ -199,14 +230,17 @@ ExtrusionOptionsPanel::ExtrusionOptionsPanel(QVBoxLayout* layout, QWidget* conte
                 [&](const auto& ref) { return sameReference(ref, option.reference); }));
         }
         scope->addRow(m_scope);
-        auto* pick = new QPushButton("Pick body face");
-        scope->addRow(pick);
         m_scopeOn->setChecked(!initial.scope.empty());
-        QObject::connect(pick, &QPushButton::clicked, m_context, [this] {
+        auto* scopeBox = static_cast<PropertySelectionList*>(m_scope);
+        scopeBox->placeholder = "Select bodies";
+        scopeBox->refreshMembers();
+        scopeBox->pick = [this] {
+            m_scopeOn->setChecked(true);
+            if (m_picking) static_cast<PropertyReference*>(m_picking->choices)->setPicking(false);
             m_picking = nullptr;
             m_pickingScope = true;
             m_pick(choices(DatumKind::Plane, false, true));
-        });
+        };
         QObject::connect(m_scope, &QListWidget::itemSelectionChanged, m_context, [this] { changed(); });
     }
 
@@ -215,13 +249,17 @@ ExtrusionOptionsPanel::ExtrusionOptionsPanel(QVBoxLayout* layout, QWidget* conte
     restore(m_first.target, initial.first.target);
     if (initial.second) restore(m_second.target, initial.second->target);
     const auto watchCombo = [this](QComboBox* field) {
-        QObject::connect(field, &QComboBox::currentIndexChanged, m_context, [this] { changed(); });
+        QObject::connect(field, &QComboBox::currentIndexChanged, m_context, [this, field] {
+            if (!dynamic_cast<PropertyReference*>(field)) stopPicking();
+            changed();
+        });
     };
-    const auto watchCheck = [this](QCheckBox* field) {
-        if (field) QObject::connect(field, &QCheckBox::toggled, m_context, [this] { changed(); });
+    const auto watchCheck = [this](QAbstractButton* field) {
+        if (field) QObject::connect(field, &QAbstractButton::toggled, m_context, [this] { changed(); });
     };
     const auto watchNumber = [this](QDoubleSpinBox* field) {
         if (!field) return;
+        static_cast<PropertyDimension*>(field)->activated = [this] { stopPicking(); };
         QObject::connect(field, &QDoubleSpinBox::valueChanged, m_context, [this] { changed(); });
         QObject::connect(field->findChild<QLineEdit*>(), &QLineEdit::textChanged, m_context,
             [this, field, invalid = false]() mutable {
@@ -230,14 +268,37 @@ ExtrusionOptionsPanel::ExtrusionOptionsPanel(QVBoxLayout* layout, QWidget* conte
                 if (invalid || wasInvalid) changed();
             });
     };
-    for (auto* field : {m_from, m_start.choices, m_direction.choices, m_reverse, m_thinMode}) watchCombo(field);
-    for (auto* field : {m_reverseStart, m_secondOn, m_thinOn, m_reverseWall, m_autoFillet, m_cap, m_merge, m_flip, m_scopeOn}) watchCheck(field);
+    for (auto* field : {m_from, m_start.choices, m_direction.choices, m_thinMode}) watchCombo(field);
+    for (auto* field : std::initializer_list<QAbstractButton*>{m_reverse, m_reverseStart, m_secondOn, m_thinOn, m_reverseWall, m_autoFillet, m_cap, m_merge, m_flip, m_scopeOn}) watchCheck(field);
     for (auto* field : {m_startOffset, m_wall, m_otherWall, m_filletRadius, m_capThickness}) watchNumber(field);
     for (const auto* leg : {&m_first, &m_second}) {
         for (auto* field : {leg->end, leg->target.choices}) watchCombo(field);
         for (auto* field : {leg->reverseOffset, leg->translate, leg->draft, leg->outward}) watchCheck(field);
         for (auto* field : {leg->depth, leg->offset, leg->angle}) watchNumber(field);
     }
+    QObject::connect(m_from, &QComboBox::currentIndexChanged, m_context, [this] {
+        const auto start = ExtrudeStart(m_from->currentIndex());
+        if ((start == ExtrudeStart::Surface || start == ExtrudeStart::Vertex) && m_start.choices->currentIndex() == 0)
+            startPicking(m_start);
+    });
+    for (auto* leg : {&m_first, &m_second})
+        QObject::connect(leg->end, &QComboBox::currentIndexChanged, m_context, [this, leg] {
+            const auto end = condition(leg->end);
+            if ((end == ExtrudeEnd::Vertex || end == ExtrudeEnd::Surface || end == ExtrudeEnd::SurfaceOffset || end == ExtrudeEnd::Body)
+                && leg->target.choices->currentIndex() == 0) startPicking(leg->target);
+        });
+    QObject::connect(m_secondOn, &QCheckBox::toggled, m_context, [this](bool on) {
+        if (on) QTimer::singleShot(0, m_context, [this] {
+            if (m_second.depth->isVisible() && m_second.depth->isEnabled()) {
+                m_second.depth->setFocus(); m_second.depth->selectAll();
+            }
+        });
+    });
+    QObject::connect(m_thinOn, &QCheckBox::toggled, m_context, [this](bool on) {
+        if (on) QTimer::singleShot(0, m_context, [this] {
+            if (m_wall->isVisible() && m_wall->isEnabled()) { m_wall->setFocus(); m_wall->selectAll(); }
+        });
+    });
 }
 
 void ExtrusionOptionsPanel::addLeg(Leg& leg, QFormLayout* form, const ExtrudeLeg& value, bool second)
@@ -255,49 +316,69 @@ void ExtrusionOptionsPanel::addLeg(Leg& leg, QFormLayout* form, const ExtrudeLeg
         leg.end->addItem(option.label, int(option.end));
     }
     leg.end->setCurrentIndex(leg.end->findData(int(value.end)));
-    form->addRow("End condition", leg.end);
+    leg.end->setAccessibleName(second ? "Direction 2 end condition" : "Direction 1 end condition");
+    form->addRow(symbolLabel(m_context, "End condition", PropertySymbol::Direction), leg.end);
     leg.depth = dimension(form, "Depth", value.depth, second ? "extrudeDepth2" : "featureLength");
     leg.depth->setAccessibleName("Feature depth in millimeters");
     leg.target = referenceField(form, "Limit reference", second ? "extrudeEndReference2" : "extrudeEndReference");
     leg.offset = dimension(form, "Offset distance", value.offset, second ? "extrudeEndOffset2" : "extrudeEndOffset", 0);
     leg.reverseOffset = flag(form, "Reverse offset", value.reverseOffset);
     leg.translate = flag(form, "Translate surface", value.translateSurface);
-    leg.draft = flag(form, "Draft", value.draftAngle > 0);
+    leg.draft = new QCheckBox;
+    leg.draft->setChecked(value.draftAngle > 0);
+    leg.draft->setAccessibleName(second ? "Enable draft in Direction 2" : "Enable draft in Direction 1");
+    leg.draft->setToolTip("Enable draft");
+    leg.draft->setIcon(propertyIcon(PropertySymbol::Draft, m_context->palette().color(QPalette::WindowText)));
+    leg.draft->setIconSize({16,16});
     leg.angle = dimension(form, "Draft angle", value.draftAngle > 0 ? value.draftAngle : 1,
                           second ? "extrudeDraftAngle2" : "extrudeDraftAngle", 0.000001, 89.999999, "°");
+    replaceLabel(form, leg.angle, leg.draft);
     leg.outward = flag(form, "Draft outward", value.draftOutward);
 }
 
 ExtrusionOptionsPanel::ReferenceField ExtrusionOptionsPanel::referenceField(QFormLayout* form,
         const QString& label, const char* name)
 {
-    ReferenceField field{new QWidget, new QComboBox};
+    ReferenceField field{new QWidget, new PropertyReference};
     field.choices->setObjectName(name);
     field.choices->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-    field.choices->setMinimumContentsLength(8);
+    field.choices->setMinimumContentsLength(1);
+    field.choices->setAccessibleName("Select " + label.toLower());
+    field.choices->setToolTip("Select " + label.toLower() + " in the viewport or FeatureManager");
     auto* layout = new QHBoxLayout(field.row);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(field.choices, 1);
-    auto* button = new QPushButton("Pick");
-    button->setAccessibleName("Pick " + label.toLower());
-    layout->addWidget(button);
-    form->addRow(label, field.row);
-    QObject::connect(button, &QPushButton::clicked, m_context, [this, combo = field.choices] {
+    form->addRow(symbolLabel(m_context, label, PropertySymbol::Reference), field.row);
+    static_cast<PropertyReference*>(field.choices)->pick = [this, combo = field.choices] {
         for (auto* field : {&m_start, &m_direction, &m_first.target, &m_second.target})
             if (field->choices == combo) { startPicking(*field); break; }
-    });
+    };
     return field;
 }
 
 void ExtrusionOptionsPanel::startPicking(ReferenceField& field)
 {
-    const bool cancel = m_picking == &field;
-    m_picking = cancel ? nullptr : &field;
+    if (m_picking == &field) return;
+    if (m_picking) static_cast<PropertyReference*>(m_picking->choices)->setPicking(false);
+    m_picking = &field;
+    static_cast<PropertyReference*>(field.choices)->setPicking(true);
     m_pickingScope = false;
     std::vector<int> indexes;
-    if (cancel) { m_pick({}); return; }
     for (int i = 1; i < field.choices->count(); ++i) indexes.push_back(field.choices->itemData(i).toInt());
     m_pick(indexes);
+}
+
+void ExtrusionOptionsPanel::stopPicking()
+{
+    if (!m_picking && !m_pickingScope) return;
+    if (m_picking) static_cast<PropertyReference*>(m_picking->choices)->setPicking(false);
+    m_picking = nullptr; m_pickingScope = false; m_pick({});
+}
+
+void ExtrusionOptionsPanel::setContoursExpanded(bool expanded)
+{
+    auto* toggle = qobject_cast<QToolButton*>(m_contourForm->parentWidget()->property("sectionToggle").value<QObject*>());
+    if (toggle) toggle->setChecked(expanded);
 }
 
 void ExtrusionOptionsPanel::picked(int index)
@@ -306,6 +387,7 @@ void ExtrusionOptionsPanel::picked(int index)
     const bool scope = m_pickingScope;
     m_picking = nullptr;
     m_pickingScope = false;
+    if (field) static_cast<PropertyReference*>(field->choices)->setPicking(false);
     m_pick({});
     if (field) field->choices->setCurrentIndex(field->choices->findData(index));
     if (scope) {
@@ -342,7 +424,7 @@ void ExtrusionOptionsPanel::fill(ReferenceField& field, const std::vector<int>& 
         if (same) return;
     }
     field.choices->clear();
-    field.choices->addItem("Select reference");
+    field.choices->addItem("");
     for (const int index : indexes)
         field.choices->addItem(QString::fromStdString(m_options[std::size_t(index)].label), index);
     field.choices->setCurrentIndex(std::max(0, field.choices->findData(before)));
@@ -369,8 +451,8 @@ void ExtrusionOptionsPanel::refreshLeg(Leg& leg)
     leg.form->setRowVisible(leg.offset, offset);
     leg.form->setRowVisible(leg.reverseOffset, offset);
     leg.form->setRowVisible(leg.translate, offset);
-    leg.form->setRowVisible(leg.angle, leg.draft->isChecked());
-    leg.form->setRowVisible(leg.outward, leg.draft->isChecked());
+    leg.angle->setEnabled(leg.draft->isChecked());
+    leg.outward->setEnabled(leg.draft->isChecked());
     if (end == ExtrudeEnd::Vertex) fill(leg.target, choices(DatumKind::Point));
     else if (face || end == ExtrudeEnd::Body) fill(leg.target, choices(DatumKind::Plane, face, end == ExtrudeEnd::Body));
 }
@@ -381,6 +463,7 @@ void ExtrusionOptionsPanel::refresh()
     m_fromForm->setRowVisible(m_startOffset, from == ExtrudeStart::Offset);
     m_fromForm->setRowVisible(m_reverseStart, from == ExtrudeStart::Offset);
     if (m_scopeOn) m_scopeOn->setEnabled(!m_merge || m_merge->isChecked());
+    if (m_scope) m_scope->setVisible(m_scopeOn->isChecked());
     m_fromForm->setRowVisible(m_start.row, from == ExtrudeStart::Vertex || from == ExtrudeStart::Surface);
     if (from == ExtrudeStart::Vertex) fill(m_start, choices(DatumKind::Point));
     else if (from == ExtrudeStart::Surface) fill(m_start, choices(DatumKind::Plane, true));
@@ -426,7 +509,7 @@ void ExtrusionOptionsPanel::setOpenProfile(bool available, bool onlyOpen, bool c
 }
 
 bool ExtrusionOptionsPanel::thinEnabled() const { return m_thinOn->isChecked(); }
-Direction ExtrusionOptionsPanel::direction() const { return m_reverse->currentIndex() == 0 ? Direction::Positive : Direction::Negative; }
+Direction ExtrusionOptionsPanel::direction() const { return m_reverse->isChecked() ? Direction::Negative : Direction::Positive; }
 
 std::optional<GeometryReference> ExtrusionOptionsPanel::reference(const ReferenceField& field) const
 {

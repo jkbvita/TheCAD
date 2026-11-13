@@ -1,6 +1,6 @@
 add_library(thecad_widgets STATIC
     Theme.cpp Theme.h PropertyManagerPage.cpp RelationIcons.cpp
-    widgets/CommandBar.cpp widgets/FeatureTreePresenter.cpp)
+    widgets/CommandBar.cpp widgets/FeatureTreePresenter.cpp widgets/PropertyManagerControls.cpp)
 target_include_directories(thecad_widgets PUBLIC "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(thecad_widgets PUBLIC Qt6::Widgets thecad_document)
 

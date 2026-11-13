@@ -590,7 +590,8 @@ private slots:
         window.trigger("actionExtrude");
         auto* dialog = window.findChild<QWidget*>("operationPanel");
         QVERIFY(dialog);
-        QCOMPARE(window.findChild<QStackedWidget*>("managerStack")->currentWidget(), dialog);
+        auto* manager=window.findChild<QStackedWidget*>("managerStack")->currentWidget();
+        QVERIFY(manager==dialog || manager->isAncestorOf(dialog));
         QVERIFY(!dialog->isWindow());
         QVERIFY(window.findChild<QDialog*>("operationDialog") == nullptr);
         auto* source = dialog->findChild<QComboBox*>("operationSketch");
@@ -601,11 +602,12 @@ private slots:
         QCOMPARE(source->currentIndex(), -1);
         QVERIFY(!buttons->button(QDialogButtonBox::Ok)->isEnabled());
         QVERIFY(!status->text().isEmpty());
-        source->setCurrentIndex(0);
+        QVERIFY(source->property("picking").toBool());
+        source->setCurrentIndex(source->findData(QString::fromStdString(part.features()[0].id)));
         QCOMPARE(contours->count(), 1);
         QCOMPARE(contours->currentRow(), -1);
         QVERIFY(buttons->button(QDialogButtonBox::Ok)->isEnabled());
-        source->setCurrentIndex(1);
+        source->setCurrentIndex(source->findData(QString::fromStdString(part.features()[1].id)));
         QCOMPARE(contours->count(), 1);
         QVERIFY(dialog->findChild<QCheckBox*>("extrudeThinFeature")->isChecked());
         QVERIFY(buttons->button(QDialogButtonBox::Ok)->isEnabled());

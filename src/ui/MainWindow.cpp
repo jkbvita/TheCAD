@@ -12,6 +12,7 @@
 #include "ui/CadViewport.h"
 #include "ui/PropertyManagerPage.h"
 #include "ui/features/ExtrusionOptionsPanel.h"
+#include "ui/widgets/PropertyManagerControls.h"
 #include "ui/ReferenceGeometryUi.h"
 #include "ui/features/SolidFeaturePanel.h"
 #include "modeling/Sketch.h"
@@ -118,6 +119,7 @@ struct MainWindow::OperationDraft {
     bool fromSketch = false;
     bool modifiedBefore = false;
     bool defaultContour = false;
+    bool pickingSketch = false;
     std::optional<document::PartDocument> sourceDocument;
     PropertyManagerPage* panel = nullptr;
     QComboBox* sketches = nullptr;
@@ -870,6 +872,13 @@ void MainWindow::selectionChanged()
 {
     if(m_solidFeature){const auto* item=m_tree->currentItem();if(item)m_solidFeature->pickTree(item->data(0,Qt::UserRole).toString());return;}
     if(m_referenceDraft){const auto* item=m_tree->currentItem();if(item)referenceGeometryTreePicked(item->data(0,Qt::UserRole).toString());return;}
+    if (m_operation && m_operation->pickingSketch) {
+        if (const auto* item=m_tree->currentItem()) {
+            const auto index=m_operation->sketches->findData(item->data(0,Qt::UserRole));
+            if (index>0) { m_operation->sketches->setCurrentIndex(index); focusOperationDepth(); }
+        }
+        return;
+    }
     if (m_operation && !m_operation->pickOptions.empty()) {
         if (const auto* item = m_tree->currentItem()) {
             const auto id = item->data(0, Qt::UserRole).toString();
@@ -1306,6 +1315,7 @@ void MainWindow::startOperation(document::Feature feature, bool editing)
     draft.preview->setObjectName("operationPreview");
     draft.preview->setCheckable(true);
     draft.preview->setChecked(true);
+    draft.panel->useCompactFeatureHeader(draft.preview);
     const auto support = editing ? draft.sourceDocument->beforeFeature(draft.feature.id) : *draft.sourceDocument;
     draft.options = std::make_unique<ExtrusionOptionsPanel>(settings, draft.panel, draft.feature,
         support.referenceOptions(false, true), [this] { updateOperationPreview(); }, [this](const std::vector<int>& indexes) {
@@ -1331,7 +1341,17 @@ void MainWindow::startOperation(document::Feature feature, bool editing)
     draft.length = draft.options->depth();
     if (editing) m_viewport->setShape(support.shape());
     auto* selectionForm = draft.options->contourForm();
-    draft.sketches=new QComboBox;draft.sketches->setObjectName("operationSketch");draft.sketches->setPlaceholderText("Select a sketch");
+    auto* sketchBox = new PropertyReference;
+    draft.sketches=sketchBox;draft.sketches->setObjectName("operationSketch");draft.sketches->setPlaceholderText("Select a sketch");
+    draft.sketches->setAccessibleName("Profile sketch");
+    draft.sketches->addItem("");
+    sketchBox->pick = [this,sketchBox] {
+        m_operation->options->stopPicking();
+        m_operation->pickingSketch=true;
+        sketchBox->setPicking(true);
+        showOperationReferenceTree(true);
+        m_operation->panel->setStatus("Select a sketch in the FeatureManager.");
+    };
     int selectedIndex=-1;
     for(const auto& item:draft.sourceDocument->features()) {
         if(editing && item.id==draft.feature.id) break;
@@ -1339,13 +1359,23 @@ void MainWindow::startOperation(document::Feature feature, bool editing)
         draft.sketches->addItem(QString::fromStdString(item.name),QString::fromStdString(item.id));
         if(item.id==draft.feature.sketchId) selectedIndex=draft.sketches->count()-1;
     }
-    selectionForm->addRow("Sketch",draft.sketches);draft.sketches->setEnabled(!draft.fromSketch);
-    draft.contours=new QListWidget;draft.contours->setObjectName("operationContour");
-    draft.contours->setSelectionMode(QAbstractItemView::MultiSelection);draft.contours->setMaximumHeight(150);draft.contours->setMinimumHeight(80);
-    draft.selectionCount=new QLabel("0 regions selected");draft.selectionCount->setObjectName("operationSelectionCount");selectionForm->addRow(draft.selectionCount);
-    selectionForm->addRow("Contour",draft.contours);
-    auto* instructions=new QLabel("Click regions to add or remove them, or select multiple contours here. Inner boundaries form holes in their surrounding region.");
-    instructions->setWordWrap(true);selectionForm->addRow(instructions);
+    settings->insertWidget(0,draft.sketches);draft.sketches->setEnabled(!draft.fromSketch);
+    draft.sketches->setVisible(selectedIndex < 0);
+    auto* contourBox = new PropertySelectionList;
+    contourBox->placeholder = "Select contours";
+    contourBox->setAccessibleName("Selected Contours");
+    contourBox->setToolTip("Click inside sketch regions to add or remove them. Delete removes the current selection.");
+    contourBox->pick = [this] {
+        m_operation->options->stopPicking();
+        m_operation->panel->setStatus("Select contours in the viewport.");
+    };
+    draft.contours=contourBox;draft.contours->setObjectName("operationContour");
+    draft.selectionCount=new QLabel("0 regions selected", draft.panel);draft.selectionCount->setObjectName("operationSelectionCount");
+    draft.selectionCount->hide();
+    auto* contourSymbol = new QLabel;
+    contourSymbol->setPixmap(propertyIcon(PropertySymbol::Contour, palette().color(QPalette::WindowText)).pixmap(18,18));
+    contourSymbol->setFixedWidth(22); contourSymbol->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+    selectionForm->addRow(contourSymbol,draft.contours);
     settings->addStretch();
     connect(draft.sketches,&QComboBox::currentIndexChanged,this,[this]{operationSketchChanged();});
     connect(draft.contours,&QListWidget::itemSelectionChanged,this,[this]{
@@ -1377,9 +1407,12 @@ void MainWindow::startOperation(document::Feature feature, bool editing)
         if(draft.sketches->currentIndex()<0)draft.panel->setStatus("The saved source sketch is unavailable. Select a replacement explicitly.",true);
         else if(draft.contours->selectedItems().isEmpty())draft.panel->setStatus("The saved contour is unavailable. Select a replacement explicitly.",true);
     }
+    contourBox->refreshMembers();
+    draft.options->setContoursExpanded(!draft.defaultContour || !draft.contours->selectedItems().isEmpty());
     m_managerStack->addWidget(draft.panel);m_managerStack->setCurrentWidget(draft.panel);
     m_historyDock->setWindowTitle("PropertyManager");updateDocumentUi();
-    focusOperationDepth();
+    if (selectedIndex < 0) sketchBox->pick();
+    else focusOperationDepth();
 }
 
 void MainWindow::showOperationReferenceTree(bool show)
@@ -1396,11 +1429,13 @@ void MainWindow::showOperationReferenceTree(bool show)
         operation.pickPanel->addWidget(m_tree);
         operation.pickPanel->setStretchFactor(0, 3);
         operation.pickPanel->setStretchFactor(1, 1);
+        operation.pickPanel->setCollapsible(0, false);
         m_tree->clearSelection();
         m_tree->setCurrentItem(nullptr);
         m_tree->show();
         m_managerStack->addWidget(operation.pickPanel);
         m_managerStack->setCurrentWidget(operation.pickPanel);
+        operation.panel->show();
     } else if (!show && operation.pickPanel) {
         auto* splitter = operation.pickPanel;
         operation.pickPanel = nullptr;
@@ -1455,6 +1490,11 @@ void MainWindow::operationSketchChanged()
 {
     if (!m_operation) return;
     auto& draft = *m_operation;
+    if (draft.pickingSketch && draft.sketches->currentData().isValid()) {
+        draft.pickingSketch=false;
+        static_cast<PropertyReference*>(draft.sketches)->setPicking(false);
+        showOperationReferenceTree(false);
+    }
     draft.candidate.reset();
     draft.availableContours.clear();
     draft.grips.clear();
@@ -1464,6 +1504,7 @@ void MainWindow::operationSketchChanged()
     m_viewport->clearPreview();
     const QSignalBlocker blocker(draft.contours);
     draft.contours->clear();
+    draft.sketches->setVisible(!draft.sketches->currentData().isValid());
     const auto sourceId = draft.sketches->currentData().toString().toStdString();
     const auto found = std::find_if(draft.sourceDocument->features().begin(), draft.sourceDocument->features().end(),
                                     [&sourceId](const auto& item) { return item.id == sourceId; });
@@ -1479,7 +1520,7 @@ void MainWindow::operationSketchChanged()
         for (std::size_t i = 0; i < draft.availableContours.size(); ++i) {
             QVariantList ids;
             for (const auto& id : draft.availableContours[i].entityIds) ids.append(QString::fromStdString(id));
-            auto* item=new QListWidgetItem(QString("Region %1").arg(i+1),draft.contours);
+            auto* item=new QListWidgetItem(QString("%1-Contour<%2>").arg(QString::fromStdString(found->name)).arg(i+1),draft.contours);
             item->setData(Qt::UserRole,ids);
         }
         const auto open = modeling::openExtrusionProfile(found->sketch);
@@ -1491,6 +1532,7 @@ void MainWindow::operationSketchChanged()
             if (onlyOpen && !draft.editing) item->setSelected(true);
         }
         draft.contours->setCurrentRow(-1, QItemSelectionModel::NoUpdate);
+        static_cast<PropertySelectionList*>(draft.contours)->refreshMembers();
         draft.panel->setStatus(draft.availableContours.empty()
             ? "This sketch has no closed region or supported open profile."
             : "Select a contour to generate a preview.");
@@ -1513,6 +1555,7 @@ void MainWindow::updateOperationPreview()
     draft.grips.clear();
     m_viewport->setExtrusionDepthGrips({});
     auto selected = draft.contours->selectedItems();
+    static_cast<PropertySelectionList*>(draft.contours)->refreshMembers();
     if (draft.defaultContour && selected.isEmpty()) selected.push_back(draft.contours->item(0));
     draft.selectionCount->setText(draft.defaultContour ? QString("Using the whole profile") :
         QString("%1 region%2 selected").arg(selected.size()).arg(selected.size()==1?"":"s"));
@@ -1550,9 +1593,7 @@ void MainWindow::updateOperationPreview()
             updateOperationDepthGrips(feature, options, selectedFaces);
         } else m_viewport->clearPreview();
         draft.candidate=std::move(result.document);draft.candidateFeatureId=std::move(result.featureId);
-        draft.panel->setStatus(draft.preview->isChecked() ?
-            "Preview ready. Edit the settings or select more regions. Enter confirms." :
-            "Feature is valid. Preview is hidden. Enter confirms.");
+        draft.panel->setStatus(draft.preview->isChecked() ? "" : "Preview hidden");
         draft.buttons->button(QDialogButtonBox::Ok)->setEnabled(true);
     } catch (const std::exception& error) {
         m_viewport->clearPreview();
@@ -1584,6 +1625,7 @@ void MainWindow::operationRegionClicked(modeling::Point2 point)
             {const QSignalBlocker blocker(draft.contours);draft.contours->setCurrentRow(selected,QItemSelectionModel::NoUpdate);
             draft.contours->item(selected)->setSelected(!draft.contours->item(selected)->isSelected());}
             updateOperationPreview();
+            draft.options->setContoursExpanded(true);
             focusOperationDepth();
         } else draft.panel->setStatus("No valid closed contour contains this point. Click inside a region or choose it in the list.");
     } catch (const std::exception& error) { draft.panel->setStatus(QString::fromUtf8(error.what()),true); }

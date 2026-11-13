@@ -33,7 +33,18 @@ void ThemeManager::apply(){
         "QLabel#operationTitle {font-size:16px;font-weight:600;} QLabel#operationDescription,QLabel#secondaryCaption {color:%5;} QLabel#secondaryCaption {font-size:10px;} "
         "QLabel#operationStatus {background:%2;border:1px solid %6;border-radius:4px;padding:9px;} QFrame#sketchRelationsContext {background:%2;border:1px solid %6;border-radius:3px;} "
     ).arg(bg,panel,input,text,muted,border,selection,hover);
-    css+=dark?"QLabel#operationStatus[error=true] {background:#492f30;color:#ffb6a5;border-color:#a16b60;}":"QLabel#operationStatus[error=true] {background:#fff0e8;color:#8c3821;border-color:#e5b599;}";
+    css += QString(
+        "QWidget#operationPanel[compactFeature=true] QLabel#operationTitle {font-size:13px;font-weight:600;padding:2px 0 3px 0;} "
+        "QWidget#operationPanel[compactFeature=true] QComboBox,QWidget#operationPanel[compactFeature=true] QDoubleSpinBox {min-height:22px;border-radius:0;} "
+        "QWidget#operationPanel[compactFeature=true] QPushButton[propertyAction=true] {min-height:0;min-width:0;padding:0;border:0;background:transparent;} "
+        "QWidget#operationPanel[compactFeature=true] QPushButton[propertyAction=true]:hover {background:%1;} "
+        "QWidget#operationPanel[compactFeature=true] QPushButton[propertyAction=true]:checked {background:%2;border:1px solid %3;} "
+        "QComboBox[referenceSelection=true],QListWidget[referenceSelection=true] {border-radius:0;border-left:5px solid #559bd3;min-height:24px;padding-left:3px;} "
+        "QComboBox[referenceSelection=true]::drop-down {width:0;border:0;} QComboBox[referenceSelection=true]::down-arrow {image:none;width:0;} "
+        "QComboBox[referenceSelection=true][picking=true] {background:%2;border-color:#559bd3;} "
+        "QWidget#operationPanel[compactFeature=true] QLabel#operationStatus {background:transparent;border:0;border-radius:0;padding:4px 1px;color:%4;} "
+    ).arg(hover,selection,border,muted);
+    css+=dark?"QLabel#operationStatus[error=true],QWidget#operationPanel[compactFeature=true] QLabel#operationStatus[error=true] {background:#492f30;color:#ffb6a5;border:1px solid #a16b60;}":"QLabel#operationStatus[error=true],QWidget#operationPanel[compactFeature=true] QLabel#operationStatus[error=true] {background:#fff0e8;color:#8c3821;border:1px solid #e5b599;}";
     css+="QWidget:disabled {color:"+QString(dark?"#7f8b98":"#989fa5")+";}";qApp->setStyleSheet(css);emit changed();
 }
 QColor themeColor(ThemeColor role){const bool dark=ThemeManager::instance().isDark();switch(role){

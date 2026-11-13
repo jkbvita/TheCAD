@@ -167,6 +167,11 @@ if(THECAD_BUILD_GUI AND THECAD_GUI_TESTS)
         ENVIRONMENT "QT_SCALE_FACTOR=1.5;THECAD_TEST_ARTIFACT_DIR=${CMAKE_BINARY_DIR}/test-artifacts/hidpi")
     set_tests_properties(ui.documents PROPERTIES TIMEOUT 60 LABELS "gui;documents")
     add_executable(thecad_workflow_tests ModelingWorkflowTests.cpp)
+    add_executable(thecad_extrusion_panel_tests ExtrusionPanelTests.cpp)
+    target_link_libraries(thecad_extrusion_panel_tests PRIVATE thecad_ui Qt6::Test)
+    add_test(NAME ui.extrusion-panel COMMAND thecad_extrusion_panel_tests)
+    set_tests_properties(ui.extrusion-panel PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE LABELS "gui;extrusion"
+        ENVIRONMENT "THECAD_TEST_ARTIFACT_DIR=${CMAKE_BINARY_DIR}/test-artifacts/extrusion-panel")
     target_link_libraries(thecad_workflow_tests PRIVATE thecad_ui Qt6::Test)
     add_test(NAME ui.modeling-workflow COMMAND thecad_workflow_tests
         -o "${CMAKE_BINARY_DIR}/modeling-workflow-results.txt,txt")
