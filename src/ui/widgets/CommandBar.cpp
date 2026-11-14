@@ -22,6 +22,8 @@ QIcon commandIcon(const QString& name)
     painter.setPen(
         QPen(themeColor(ThemeColor::Accent), 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     painter.setBrush(Qt::NoBrush);
+    const QColor solid=ThemeManager::instance().isDark()?QColor("#b7c7d3"):QColor("#c7d3db");
+    const QColor side=ThemeManager::instance().isDark()?QColor("#708da4"):QColor("#7996aa");
     if (name.contains("Point"))
     {
         painter.setBrush(themeColor(ThemeColor::Accent));
@@ -47,9 +49,10 @@ QIcon commandIcon(const QString& name)
         painter.drawLine(24, 19, 28, 23);
         painter.drawLine(24, 27, 28, 23);
     }
-    else if (name == "Circular Sketch Pattern")
+    else if (name == "Circular Sketch Pattern" || name == "Circular Pattern")
     {
         painter.drawArc(QRectF(5, 5, 22, 22), 35 * 16, 290 * 16);
+        if(name=="Circular Pattern")painter.setBrush(solid);
         for (const auto& point : {QPointF(16, 5), QPointF(5, 16), QPointF(16, 27), QPointF(27, 16)})
             painter.drawEllipse(point, 2.5, 2.5);
         painter.drawPoint(QPointF(16, 16));
@@ -93,6 +96,7 @@ QIcon commandIcon(const QString& name)
     }
     else if (name == "Mirror" || name == "Mirror Entities")
     {
+        if(name=="Mirror")painter.setBrush(solid);
         painter.drawPolygon(QPolygonF{QPointF(5, 25), QPointF(12, 25), QPointF(12, 7)});
         painter.drawPolygon(QPolygonF{QPointF(27, 25), QPointF(20, 25), QPointF(20, 7)});
         painter.setPen(QPen(themeColor(ThemeColor::Accent), 1.4, Qt::DashLine));
@@ -145,17 +149,21 @@ QIcon commandIcon(const QString& name)
     }
     else if (name.contains("Plane"))
     {
+        painter.setBrush(solid);
         painter.drawPolygon(
             QPolygonF{QPointF(4, 11), QPointF(23, 5), QPointF(28, 23), QPointF(9, 28)});
     }
     else if(name.contains("Revol"))
     {
-        painter.drawEllipse(QRectF(7,6,17,20));painter.drawArc(QRectF(3,9,25,14),30*16,290*16);
+        painter.setBrush(solid); painter.drawEllipse(QRectF(7,6,17,20)); painter.setBrush(Qt::NoBrush);
+        painter.drawArc(QRectF(3,9,25,14),30*16,290*16);
         painter.drawLine(16,3,16,29);painter.drawLine(27,15,25,10);painter.drawLine(27,15,22,16);
         if(name.contains("Cut")){painter.setPen(QPen(QColor("#b83b42"),2));painter.drawLine(8,9,23,23);}
     }
     else if(name=="Fillet"||name=="Chamfer")
     {
+        painter.setBrush(solid); painter.drawPolygon(QPolygonF{QPointF(5,27),QPointF(5,7),QPointF(26,7),QPointF(26,27)});
+        painter.setBrush(Qt::NoBrush);
         painter.drawLine(5,27,5,7);painter.drawLine(5,7,26,7);painter.drawLine(26,7,26,27);
         if(name=="Fillet")painter.drawArc(QRectF(5,7,20,20),0,90*16);
         else painter.drawLine(5,22,20,7);
@@ -177,11 +185,12 @@ QIcon commandIcon(const QString& name)
     }
     else if (name.contains("Extrude") || name.contains("Part"))
     {
+        painter.setBrush(solid);
         painter.drawPolygon(
             QPolygonF{QPointF(6, 10), QPointF(20, 5), QPointF(27, 11), QPointF(13, 17)});
-        painter.drawPolygon(
+        painter.setBrush(side); painter.drawPolygon(
             QPolygonF{QPointF(6, 10), QPointF(13, 17), QPointF(13, 28), QPointF(6, 21)});
-        painter.drawPolygon(
+        painter.setBrush(ThemeManager::instance().isDark()?QColor("#8ca9bf"):QColor("#a3bdce")); painter.drawPolygon(
             QPolygonF{QPointF(13, 17), QPointF(27, 11), QPointF(27, 22), QPointF(13, 28)});
         if (name.contains("Cut"))
         {

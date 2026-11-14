@@ -89,6 +89,7 @@ approved scope do not need repeated approval.
 - [0049. Match the approved SolidWorks extrusion PropertyManagers](0049-extrusion-propertymanager-ui.md)
 - [0050. Reveal feature depth when starting a solid command](0050-feature-preview-camera.md)
 - [0051. Planar fit-point Spline](0051-planar-fit-point-spline.md)
+- [0052. Features CommandManager layout](0052-features-commandmanager.md)
 
 ## Pending owner decisions
 

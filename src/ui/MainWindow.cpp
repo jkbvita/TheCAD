@@ -14,6 +14,7 @@
 #include "ui/features/ExtrusionOptionsPanel.h"
 #include "ui/features/SplineParametersDialog.h"
 #include "ui/widgets/PropertyManagerControls.h"
+#include "ui/widgets/FeatureCommandBar.h"
 #include "ui/ReferenceGeometryUi.h"
 #include "ui/features/SolidFeaturePanel.h"
 #include "modeling/Sketch.h"
@@ -240,35 +241,22 @@ MainWindow::MainWindow(QWidget* parent)
         connect(result, &QAction::triggered, this, callback);
         return result;
     };
-    QGridLayout* featureGrid = nullptr;
-    commandGroup(featureButtons, "Solid features", featureGrid);
-    m_extrude = action("Extrude", "actionExtrude", [this] { extrude(false); });
+    m_extrude = action("Extruded Boss/Base", "actionExtrude", [this] { extrude(false); });
     m_cut = action("Extruded Cut", "actionExtrudedCut", [this] { extrude(true); });
-    commandButton(m_extrude, featureGrid, 0, 0, true);
-    commandButton(m_cut, featureGrid, 0, 1, true);
     m_revolve=action("Revolved Boss/Base","actionRevolve",[this]{startSolidFeature(document::FeatureKind::Revolve);});
     m_revolvedCut=action("Revolved Cut","actionRevolvedCut",[this]{startSolidFeature(document::FeatureKind::RevolvedCut);});
-    commandButton(m_revolve,featureGrid,0,2,true);commandButton(m_revolvedCut,featureGrid,0,3,true);
     m_sweep=action("Swept Boss/Base","actionSweep",[this]{startSolidFeature(document::FeatureKind::Sweep);});
     m_sweptCut=action("Swept Cut","actionSweptCut",[this]{startSolidFeature(document::FeatureKind::SweptCut);});
-    commandButton(m_sweep,featureGrid,0,4,true);commandButton(m_sweptCut,featureGrid,0,5,true);
-    QGridLayout* finishGrid=nullptr;commandGroup(featureButtons,"Edge features",finishGrid);
     m_fillet=action("Fillet","actionFillet",[this]{startSolidFeature(document::FeatureKind::Fillet);});
     m_chamfer=action("Chamfer","actionChamfer",[this]{startSolidFeature(document::FeatureKind::Chamfer);});
-    commandButton(m_fillet,finishGrid,0,0,true);commandButton(m_chamfer,finishGrid,0,1,true);
-    QGridLayout* patternGrid=nullptr;commandGroup(featureButtons,"Pattern / Mirror",patternGrid);
     m_linearPattern=action("Linear Pattern","actionLinearPattern",[this]{startSolidFeature(document::FeatureKind::LinearPattern);});
     m_mirror=action("Mirror","actionMirror",[this]{startSolidFeature(document::FeatureKind::Mirror);});
     m_circularPattern=action("Circular Pattern","actionCircularPattern",[this]{startSolidFeature(document::FeatureKind::CircularPattern);});
-    commandButton(m_linearPattern,patternGrid,0,0,true);
-    commandButton(m_circularPattern,patternGrid,0,1,true);
-    commandButton(m_mirror,patternGrid,0,2,true);
-    QGridLayout* referenceGrid=nullptr;commandGroup(featureButtons,"Reference Geometry",referenceGrid);
     m_referencePlane=action("Reference Plane","actionReferencePlane",[this]{startReferenceGeometry(modeling::DatumKind::Plane);});
     m_referenceAxis=action("Reference Axis","actionReferenceAxis",[this]{startReferenceGeometry(modeling::DatumKind::Axis);});
     m_referencePoint=action("Reference Point","actionReferencePoint",[this]{startReferenceGeometry(modeling::DatumKind::Point);});
-    commandButton(m_referencePlane,referenceGrid,0,0);commandButton(m_referenceAxis,referenceGrid,1,0);commandButton(m_referencePoint,referenceGrid,2,0);
-    featureButtons->addStretch();
+    populateFeatureCommands(featureButtons,{m_extrude,m_revolve,m_sweep,m_cut,m_revolvedCut,m_sweptCut,
+        m_fillet,m_chamfer,m_linearPattern,m_circularPattern,m_mirror,m_referencePlane,m_referenceAxis,m_referencePoint});
 
     QGridLayout *sketchGrid = nullptr, *drawGrid = nullptr, *modifyGrid = nullptr, *relationGrid = nullptr;
     commandGroup(sketchButtons, "Sketch", sketchGrid);
