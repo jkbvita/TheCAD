@@ -49,6 +49,11 @@ public:
                 if (!linked) {unknowns.push_back(&entity.second.x);unknowns.push_back(&entity.second.y);}
                 if(entity.kind==EntityKind::Line){GCS::Line line;line.p1=point({entity.id,PointRole::First});line.p2=point({entity.id,PointRole::Second});lines.emplace(entity.id,line);}
             }
+            if(entity.kind==EntityKind::Spline)for(std::size_t i=0;i<entity.splinePoints.size();++i) {
+                auto& p=entity.splinePoints[i];
+                points.emplace(std::make_pair(entity.id,int(splinePointRole(i))),GCS::Point(&p.x,&p.y));
+                if(!linked){unknowns.push_back(&p.x);unknowns.push_back(&p.y);}
+            }
         }
     }
     GCS::Point& point(const SketchPointRef& ref) {
@@ -416,6 +421,10 @@ SketchDefinition analyzeSketchDefinition(const Sketch& sketch){
             bool defined=false;
             if(e.kind==EntityKind::Line || e.kind==EntityKind::Rectangle)
                 defined=fixedPoint({e.id,PointRole::First}) && fixedPoint({e.id,PointRole::Second});
+            if(e.kind==EntityKind::Spline) {
+                defined=fixedPoint({e.id,PointRole::First}) && fixedPoint({e.id,PointRole::Second});
+                for(std::size_t i=0;i<e.splinePoints.size();++i)defined=defined&&fixedPoint({e.id,splinePointRole(i)});
+            }
             if(isCircular(e.kind)) {
                 defined=fixedPoint({e.id,PointRole::Center}) && !movable.count(work.circles.at(e.id).rad);
                 if(e.kind==EntityKind::Arc)

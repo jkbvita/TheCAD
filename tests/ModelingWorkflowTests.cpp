@@ -1,5 +1,6 @@
 #include "modeling/RelationCommands.h"
 #include "modeling/DimensionInference.h"
+#include "modeling/SketchSplines.h"
 #include <QFrame>
 #include <QInputDialog>
 #include "modeling/SketchTools.h"
@@ -143,6 +144,102 @@ private:
         QVERIFY(window.errors.isEmpty());
     }
 private slots:
+    void splineDrawDragUndoAndPersistence()
+    {
+        WorkflowWindow window; window.show(); QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* viewport=window.findChild<CadViewport*>(); QTRY_VERIFY(viewport->isReady()); createSketch(window);
+        command(window,"actionSpline"); auto* action=window.findChild<QAction*>("actionSpline"); QVERIFY(action->isChecked());
+        for(const auto p:{modeling::Point2{0,0},modeling::Point2{12,20},modeling::Point2{30,5}})
+            QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,p));
+        QVERIFY(viewport->m_sketch->entities.empty()); QVERIFY(!viewport->m_curvedPreview.empty());
+        QTest::mouseDClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{30,5}));
+        QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(1));
+        QCOMPARE(viewport->m_sketch->entities[0].kind,modeling::EntityKind::Spline);
+        QCOMPARE(viewport->m_sketch->entities[0].splinePoints.size(),std::size_t(1));
+        const auto id=viewport->m_sketch->entities[0].id; QVERIFY(!viewport->m_sketch->relations.empty());
+        QVERIFY(action->isChecked()); QTest::keyClick(viewport,Qt::Key_Escape); QVERIFY(!action->isChecked());
+        const auto original=viewport->m_sketch->entities[0].splinePoints[0];
+        QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,original));
+        const auto destination=point(viewport,{15,26});
+        QMouseEvent move(QEvent::MouseMove,destination,viewport->mapToGlobal(destination),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);
+        QApplication::sendEvent(viewport,&move);
+        QVERIFY(viewport->m_pointDrag && viewport->m_pointDrag->candidate);
+        QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,destination);
+        const auto changed=viewport->m_sketch->entities[0].splinePoints[0]; QVERIFY(changed.y>24);
+        command(window,"actionUndo"); QVERIFY(std::abs(viewport->m_sketch->entities[0].splinePoints[0].y-original.y)<1e-8);
+        command(window,"actionRedo"); QVERIFY(std::abs(viewport->m_sketch->entities[0].splinePoints[0].y-changed.y)<1e-8);
+        command(window,"actionSpline");
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{-25,-20}));
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{-10,-15}));
+        QTest::keyClick(viewport,Qt::Key_Return); QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(2));
+        command(window,"actionUndo"); QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(1));
+        // An incomplete second spline is discarded without altering the first.
+        command(window,"actionSpline");
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{-25,-20}));
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{-10,-15}));
+        QTest::keyClick(viewport,Qt::Key_Escape); QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(1));
+        QTemporaryDir directory; command(window,"actionFinishSketch");
+        window.path=directory.filePath("spline.thepart"); command(window,"actionSaveAs");
+        command(window,"actionNew"); command(window,"actionOpen");
+        const auto& restored=window.document().features()[0].sketch.entities[0];
+        QCOMPARE(restored.id,id); QCOMPARE(restored.kind,modeling::EntityKind::Spline);
+        QVERIFY(std::abs(restored.splinePoints[0].y-changed.y)<1e-8);
+        auto* tree=window.findChild<QTreeWidget*>("featureTree");
+        for(QTreeWidgetItemIterator it(tree);*it;++it)if((*it)->data(0,Qt::UserRole).toString()==QString::fromStdString(window.document().features()[0].id)){tree->setCurrentItem(*it);break;}
+        command(window,"actionEditFeature");
+        command(window,"actionSelectSketchEntity");
+        const auto curve=modeling::sketchSplineCurve(*viewport->m_sketch,viewport->m_sketch->entities[0]);
+        const auto middle=curve->Value(curve->FirstParameter()+(curve->LastParameter()-curve->FirstParameter())*0.27);
+        const auto pixel=point(viewport,{middle.X(),middle.Y()});
+        QVERIFY(viewport->entityAt(pixel).value_or("")==id);
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,pixel);
+        QCOMPARE(viewport->selectedSketchEntity(),id);
+        bool edited=false,invalidRejected=false;
+        QTimer::singleShot(0,&window,[&] {
+            auto* dialog=window.findChild<QDialog*>("splineParametersDialog"); if(!dialog)return;
+            edited=true;
+            auto* x=dialog->findChild<QDoubleSpinBox*>("splineFit2X"); auto* y=dialog->findChild<QDoubleSpinBox*>("splineFit2Y");
+            x->setValue(0); y->setValue(0);
+            dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
+            invalidRejected=dialog->isVisible() && !dialog->findChild<QLabel*>("splineParametersError")->text().isEmpty();
+            x->setValue(changed.x); y->setValue(31);
+            dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
+        });
+        command(window,"actionEditEntity"); QVERIFY(edited); QVERIFY(invalidRejected);
+        QVERIFY(std::abs(viewport->m_sketch->entities[0].splinePoints[0].y-31)<1e-8);
+        QTest::keyClick(viewport,Qt::Key_Delete); QVERIFY(viewport->m_sketch->entities.empty());
+        command(window,"actionUndo"); QCOMPARE(viewport->m_sketch->entities[0].id,id);
+        QVERIFY2(window.errors.isEmpty(),qPrintable(window.errors.join('\n'))); QVERIFY(window.close());
+    }
+    void closedSplineExtrudeAndCut()
+    {
+        WorkflowWindow window; window.show(); QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* viewport=window.findChild<CadViewport*>(); QTRY_VERIFY(viewport->isReady()); createSketch(window);
+        const auto draw=[&](double radius) {
+            command(window,"actionSpline");
+            for(const auto p:{modeling::Point2{-radius,0},modeling::Point2{0,radius},modeling::Point2{radius,0},modeling::Point2{0,-radius},modeling::Point2{-radius,0}})
+                QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,p));
+            QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(1));
+        };
+        draw(20); command(window,"actionExtrude");
+        QVERIFY(!viewport->m_previewPresentation.IsNull());
+        auto* panel=window.findChild<QWidget*>("operationPanel"); panel->findChild<QDoubleSpinBox*>("featureLength")->setValue(15);
+        QTest::mouseClick(panel->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok),Qt::LeftButton);
+        QCOMPARE(window.document().features().size(),std::size_t(2)); const auto original=volume(window.document().shape());
+        createSketch(window); draw(8); command(window,"actionExtrudedCut");
+        panel=window.findChild<QWidget*>("operationPanel"); panel->findChild<QDoubleSpinBox*>("featureLength")->setValue(5);
+        QVERIFY(!viewport->m_previewPresentation.IsNull());
+        QTest::mouseClick(panel->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok),Qt::LeftButton);
+        QCOMPARE(window.document().features().size(),std::size_t(4));
+        QVERIFY(volume(window.document().shape())<original); QVERIFY(BRepCheck_Analyzer(window.document().shape()).IsValid());
+        QTemporaryDir directory; window.path=directory.filePath("spline-features.thepart");
+        command(window,"actionSaveAs"); command(window,"actionNew"); command(window,"actionOpen");
+        QCOMPARE(window.document().features().size(),std::size_t(4));
+        QCOMPARE(window.document().features()[0].sketch.entities[0].kind,modeling::EntityKind::Spline);
+        QCOMPARE(window.document().features()[2].sketch.entities[0].kind,modeling::EntityKind::Spline);
+        QVERIFY2(window.errors.isEmpty(),qPrintable(window.errors.join('\n'))); QVERIFY(window.close());
+    }
+
     void intersectingCircleRectangleExtrudeCutAndReopen() {
         using namespace modeling;WorkflowWindow window;window.showMaximized();QVERIFY(QTest::qWaitForWindowExposed(&window));auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
         Sketch sketch;sketch.entities={{EntityKind::Line,{0,0},{15,0},1,"top"},{EntityKind::Line,{15,0},{15,-15},1,"right"},{EntityKind::Line,{15,-15},{0,-15},1,"bottom"},{EntityKind::Line,{0,-15},{0,0},1,"left"},{EntityKind::Circle,{0,0},{},10,"circle"},{EntityKind::Line,{7.5,-20},{7.5,5},1,"center-v",true},{EntityKind::Line,{-5,-7.5},{20,-7.5},1,"center-h",true}};

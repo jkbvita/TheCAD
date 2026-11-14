@@ -11,6 +11,7 @@
 #include <functional>
 #include <BRepAdaptor_Surface.hxx>
 #include "modeling/Sketch.h"
+#include "modeling/SketchSplines.h"
 #include "modeling/ConstraintSolver.h"
 
 #include <BRep_Builder.hxx>
@@ -113,6 +114,7 @@ void validate(const Sketch& sketch)
             }
             break;
         case EntityKind::Point: break;
+        case EntityKind::Spline: (void)sketchSplineCurve(sketch,entity); break;
         case EntityKind::Circle:
             positiveLength(entity.radius, "Circle radius");
             break;
@@ -285,7 +287,11 @@ TopoDS_Face simpleProfileFace(const Sketch& sketch,TopologyNames* names=nullptr)
         fail("The sketch is empty. Draw a closed profile before extruding.");
     }
     BRepBuilderAPI_MakeWire wire;
-    if (sketch.entities.size() == 1 && sketch.entities.front().kind == EntityKind::Circle) {
+    if (sketch.entities.size() == 1 && sketch.entities.front().kind == EntityKind::Spline) {
+        if (!samePoint(sketch.entities.front().first,sketch.entities.front().second)) fail("The spline profile is open.");
+        wire.Add(sketchSplineEdge(sketch,sketch.entities.front()));
+        if(names)names->add(topologyKey("curve",{sketch.entities.front().id}),wire.Edge());
+    } else if (sketch.entities.size() == 1 && sketch.entities.front().kind == EntityKind::Circle) {
         const auto edge=circleEdge(sketch,sketch.entities.front());wire.Add(edge);if(names)names->add(topologyKey("curve",{sketch.entities.front().id}),wire.Edge());
     } else {
         const auto points = sketch.entities.size() == 1
@@ -496,6 +502,8 @@ TopoDS_Shape sketchShape(const Sketch& sketch)
                 builder.Add(result, circleEdge(sketch, entity));
             } else if (entity.kind == EntityKind::Arc) {
                 builder.Add(result, sketchArcEdge(sketch, entity));
+            } else if (entity.kind == EntityKind::Spline) {
+                builder.Add(result, sketchSplineEdge(sketch, entity));
             } else if (entity.kind == EntityKind::Line) {
                 builder.Add(result, lineEdge(sketch, entity.first, entity.second));
             } else if(entity.kind==EntityKind::Point) {
@@ -544,7 +552,9 @@ std::vector<Contour> closedContours(const Sketch& sketch)
             identifiers.push_back(identifier);
         }
         if (std::any_of(sketch.entities.begin(), sketch.entities.end(),
-                        [](const auto& entity) { return entity.kind == EntityKind::Arc; }))
+                        [](const auto& entity) { return entity.kind == EntityKind::Arc || entity.kind == EntityKind::Spline; }) &&
+            !(sketch.entities.size()==1 && sketch.entities.front().kind==EntityKind::Spline &&
+              samePoint(sketch.entities.front().first,sketch.entities.front().second)))
             return intersectedContours(sketch);
         // Endpoint planar graph. Bridges cannot bound a region; remove them from
         // the analysis only, retaining every original entity in the document.
@@ -912,7 +922,8 @@ void setPoint(Sketch& sketch, const SketchPointRef& ref, Point2 point) {
     if (ref.role == PointRole::Origin) return;
     auto found = std::find_if(sketch.entities.begin(), sketch.entities.end(), [&](const SketchEntity& entity) { return entity.id == ref.entityId; });
     if (found == sketch.entities.end()) fail("Cannot update a missing sketch point.");
-    if (ref.role == PointRole::Second) found->second = point;
+    if (found->kind==EntityKind::Spline && isSplinePoint(ref.role)) found->splinePoints.at(int(ref.role)-int(PointRole::SplineInterior))=point;
+    else if (ref.role == PointRole::Second) found->second = point;
     else if (ref.role == PointRole::Center && found->kind == EntityKind::Arc) found->center = point;
     else found->first = point;
 }
@@ -930,7 +941,8 @@ Point2 sketchPointValue(const Sketch& sketch, const SketchPointRef& reference)
     if (reference.role == PointRole::Center && isCircular(found->kind)) return circularCenter(*found);
     if (reference.role == PointRole::Midpoint && found->kind == EntityKind::Line)return {(found->first.x+found->second.x)/2,(found->first.y+found->second.y)/2};
     if(found->kind==EntityKind::Point && reference.role==PointRole::First)return found->first;
-    if (found->kind == EntityKind::Line || found->kind == EntityKind::Rectangle || found->kind == EntityKind::Arc) {
+    if(found->kind==EntityKind::Spline && isSplinePoint(reference.role))return found->splinePoints.at(int(reference.role)-int(PointRole::SplineInterior));
+    if (found->kind == EntityKind::Line || found->kind == EntityKind::Rectangle || found->kind == EntityKind::Arc || found->kind == EntityKind::Spline) {
         if (reference.role == PointRole::First) return found->first;
         if (reference.role == PointRole::Second) return found->second;
     }
@@ -946,6 +958,8 @@ std::vector<std::pair<SketchPointRef, Point2>> sketchPoints(const Sketch& sketch
         if (entity.id.empty()) continue;
         if (!stableIdentifier(entity.id) || !ids.insert(entity.id).second) fail("Sketch entity IDs must be valid and unique.");
         if (isCircular(entity.kind)) points.push_back({{entity.id, PointRole::Center}, circularCenter(entity)});
+        if (entity.kind==EntityKind::Spline)for(std::size_t i=0;i<entity.splinePoints.size();++i)
+            points.push_back({{entity.id,splinePointRole(i)},entity.splinePoints[i]});
         if (entity.kind != EntityKind::Circle) {
             points.push_back({{entity.id, PointRole::First}, entity.first});
             if(entity.kind!=EntityKind::Point)points.push_back({{entity.id, PointRole::Second}, entity.second});
@@ -1120,7 +1134,7 @@ Sketch editSketchEntity(const Sketch& sketch, const SketchEntity& replacement)
     if (replacement.id.empty() || old == sketch.entities.end()) fail("Cannot edit a sketch entity without its existing stable ID.");
     if (old->kind != replacement.kind) fail("Editing cannot change a sketch entity type.");
     const bool solverConstraints=std::any_of(sketch.entities.begin(),sketch.entities.end(),
-        [](const auto& e){return e.kind==EntityKind::Arc;}) || !sketch.offsets.empty() || !sketch.projections.empty() || !sketch.replications.empty() || !sketch.polygons.empty() || !sketch.dimensions.empty() || std::any_of(sketch.relations.begin(),sketch.relations.end(),[](const auto& r){return int(r.kind)>=int(RelationKind::FixedPoint);});
+        [](const auto& e){return e.kind==EntityKind::Arc || e.kind==EntityKind::Spline;}) || !sketch.offsets.empty() || !sketch.projections.empty() || !sketch.replications.empty() || !sketch.polygons.empty() || !sketch.dimensions.empty() || std::any_of(sketch.relations.begin(),sketch.relations.end(),[](const auto& r){return int(r.kind)>=int(RelationKind::FixedPoint);});
     if(solverConstraints) {
         SolveOptions options;
         const auto target=[&](PointRole role,Point2 before,Point2 after){if(before.x!=after.x || before.y!=after.y)options.pointTargets.push_back({{replacement.id,role},after,true});};
@@ -1128,6 +1142,10 @@ Sketch editSketchEntity(const Sketch& sketch, const SketchEntity& replacement)
         if(isCircular(old->kind) && old->radius!=replacement.radius)
             options.radiusTargets.push_back({replacement.id,replacement.radius});
         if(old->kind==EntityKind::Arc)target(PointRole::Center,old->center,replacement.center);
+        if(old->kind==EntityKind::Spline) {
+            if(old->splinePoints.size()!=replacement.splinePoints.size())fail("Editing a spline must preserve its fit-point slots.");
+            for(std::size_t i=0;i<old->splinePoints.size();++i)target(splinePointRole(i),old->splinePoints[i],replacement.splinePoints[i]);
+        }
         if(old->kind!=EntityKind::Point && old->kind!=EntityKind::Circle)
             target(PointRole::Second,old->second,replacement.second);
         auto solved=requireSolvedSketch(solvePlanarSketch(sketch,options));
@@ -1195,7 +1213,7 @@ Sketch moveSketchPoint(const Sketch& sketch, const SketchPointRef& reference, Po
         position=sketchPointValue(sketch,*target);
     }
     const bool solverConstraints=std::any_of(sketch.entities.begin(),sketch.entities.end(),
-        [](const auto& e){return e.kind==EntityKind::Arc;}) || !sketch.offsets.empty() || !sketch.projections.empty() || !sketch.replications.empty() || !sketch.polygons.empty() || !sketch.dimensions.empty() || std::any_of(sketch.relations.begin(),sketch.relations.end(),[](const auto& r){return int(r.kind)>=int(RelationKind::FixedPoint);});
+        [](const auto& e){return e.kind==EntityKind::Arc || e.kind==EntityKind::Spline;}) || !sketch.offsets.empty() || !sketch.projections.empty() || !sketch.replications.empty() || !sketch.polygons.empty() || !sketch.dimensions.empty() || std::any_of(sketch.relations.begin(),sketch.relations.end(),[](const auto& r){return int(r.kind)>=int(RelationKind::FixedPoint);});
     const bool midpointTarget=target && target->role==PointRole::Midpoint;
     if(reference.role==PointRole::Midpoint)fail("Drag an endpoint or attached point to change a line midpoint.");
     if(solverConstraints || preserveCircleRadius || midpointTarget) {

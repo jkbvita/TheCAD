@@ -37,6 +37,10 @@ QByteArray sketchKey(const modeling::Sketch& sketch)
             point(e.center);
             out << e.clockwise;
         }
+        if (e.kind == modeling::EntityKind::Spline) {
+            out << quint64(e.splinePoints.size());
+            for(const auto& fit:e.splinePoints)point(fit);
+        }
     }
     out << quint64(sketch.projections.size());
     for (const auto& link : sketch.projections)

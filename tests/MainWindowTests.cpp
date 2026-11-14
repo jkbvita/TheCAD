@@ -269,8 +269,7 @@ private slots:
         QVERIFY(tree->palette().color(QPalette::Base).lightness() > 200);
         auto* commands = window.findChild<QToolBar*>("modelingToolbar");
         QVERIFY(commands && !commands->isMovable() && !commands->isFloatable());
-        for (const auto* name : {"actionSpline",
-                "actionMoveEntities",
+        for (const auto* name : {"actionMoveEntities",
                 "actionRepairSketch", "actionShadedSketchContours",
                 "actionMassProperties", "actionCheckGeometry"}) {
             auto* tool = window.findChild<QAction*>(name);

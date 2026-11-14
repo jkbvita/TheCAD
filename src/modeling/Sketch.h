@@ -14,7 +14,7 @@ namespace thecad::modeling {
 
 enum class SketchPlane { XY, XZ, YZ };
 struct Point2 { double x = 0.0; double y = 0.0; };
-enum class EntityKind { Line, Rectangle, Circle, Point, Polygon, Arc, StraightSlot }; // Polygon and StraightSlot are creation tools.
+enum class EntityKind { Line, Rectangle, Circle, Point, Polygon, Arc, StraightSlot, Spline }; // Polygon and StraightSlot are creation tools.
 inline bool isCircular(EntityKind kind) { return kind == EntityKind::Circle || kind == EntityKind::Arc; }
 struct SketchEntity {
     EntityKind kind = EntityKind::Line;
@@ -25,12 +25,15 @@ struct SketchEntity {
     bool construction = false;
     Point2 center; // Arc center. Arc endpoints use first and second.
     bool clockwise = false;
+    std::vector<Point2> splinePoints; // Interior interpolation points; endpoints remain first/second.
 };
 inline Point2 circularCenter(const SketchEntity& entity)
 {
     return entity.kind == EntityKind::Arc ? entity.center : entity.first;
 }
-enum class PointRole { Origin, First, Second, Center, Midpoint }; // Midpoint is a derived snap target, never serialized as a point reference.
+enum class PointRole { Origin, First, Second, Center, Midpoint, SplineInterior = 100 }; // Midpoint is derived; spline interiors use stable consecutive slots.
+inline PointRole splinePointRole(std::size_t index) { return PointRole(int(PointRole::SplineInterior)+int(index)); }
+inline bool isSplinePoint(PointRole role) { return int(role)>=int(PointRole::SplineInterior); }
 struct SketchPointRef {
     std::string entityId;
     PointRole role = PointRole::Origin;

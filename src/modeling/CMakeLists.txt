@@ -8,6 +8,7 @@ add_library(thecad_modeling STATIC
     DimensionAnnotation.cpp
     SketchTools.cpp
     SketchArcs.cpp
+    SketchSplines.cpp
     SketchModifiers.cpp
     SketchContourEdits.cpp
     SketchOffset.cpp

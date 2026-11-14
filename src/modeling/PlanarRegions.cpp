@@ -1,5 +1,6 @@
 #include "modeling/PlanarRegions.h"
 #include "modeling/SketchArcs.h"
+#include "modeling/SketchSplines.h"
 #include <BRepAlgoAPI_Splitter.hxx>
 #include <BOPAlgo_BuilderFace.hxx>
 #include <BOPTools_AlgoTools2D.hxx>
@@ -52,6 +53,7 @@ std::vector<Contour> intersectedContours(const Sketch& sketch){
         Primitive p{id,field(id)+":"+std::to_string(side),e.kind,a,b,circularCenter(e),e.radius,{},{}};
         if(e.kind==EntityKind::Circle)p.edge=BRepBuilderAPI_MakeEdge(gp_Circ(gp_Ax2(sketchPoint(sketch,e.first),axes.Direction(),axes.XDirection()),e.radius));
         else if (e.kind == EntityKind::Arc) p.edge = sketchArcEdge(sketch, e);
+        else if (e.kind == EntityKind::Spline) p.edge = sketchSplineEdge(sketch, e);
         else p.edge=BRepBuilderAPI_MakeEdge(sketchPoint(sketch,a),sketchPoint(sketch,b));
         primitives.push_back(std::move(p));
     };

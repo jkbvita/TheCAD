@@ -326,6 +326,9 @@ private:
         std::optional<BoundarySnap> boundary;
     };
     bool drawingArcOrSlot() const;
+    void pickSpline(const QPointF& position);
+    void previewSpline(const QPointF& position);
+    void finishSpline();
     void pickArcOrSlot(const QPointF& position, modeling::Point2 raw);
     void previewArcOrSlot(const QPointF& position);
     void clearArcOrSlot();

@@ -229,6 +229,11 @@ QJsonObject writeEntity(const modeling::SketchEntity& entity)
         object["type"] = "point";
         object["position"] = point(entity.first);
         break;
+    case modeling::EntityKind::Spline: {
+        object["type"]="spline"; object["first"]=point(entity.first); object["second"]=point(entity.second);
+        QJsonArray fit; for(const auto& p:entity.splinePoints)fit.append(point(p));
+        object["fitPoints"]=fit; break;
+    }
     default:
         fail("Unsupported stored entity type.");
     }
@@ -271,6 +276,13 @@ modeling::SketchEntity readEntity(const QJsonValue& value, int version)
         entity.radius = number(object["radius"], "Radius");
         entity.clockwise = object["clockwise"].toBool();
     }
+    else if (type == "spline" && version >= 27)
+    {
+        expected.unite({"first","second","fitPoints"}); entity.kind=modeling::EntityKind::Spline;
+        entity.first=readPoint(object["first"]); entity.second=readPoint(object["second"]);
+        if(!object["fitPoints"].isArray() || object["fitPoints"].toArray().size()>126)fail("Invalid spline fit points.");
+        for(const auto& p:object["fitPoints"].toArray())entity.splinePoints.push_back(readPoint(p));
+    }
     else if (type == "line" || type == "rectangle")
     {
         expected.insert("first");
@@ -292,6 +304,7 @@ modeling::SketchEntity readEntity(const QJsonValue& value, int version)
 }
 QJsonObject writePointRef(const modeling::SketchPointRef& ref)
 {
+    if(modeling::isSplinePoint(ref.role))return {{"entity",q(ref.entityId)},{"point",QString("spline:%1").arg(int(ref.role)-int(modeling::PointRole::SplineInterior))}};
     const char* role = nullptr;
     switch (ref.role)
     {
@@ -329,6 +342,11 @@ modeling::SketchPointRef readPointRef(const QJsonValue& value)
         ref.role = modeling::PointRole::Second;
     else if (role == "center")
         ref.role = modeling::PointRole::Center;
+    else if (role.startsWith("spline:")) {
+        bool ok=false; const auto index=role.mid(7).toInt(&ok);
+        if(!ok || index<0 || index>=126 || role!=QString("spline:%1").arg(index))fail("Invalid spline point slot.");
+        ref.role=modeling::splinePointRole(index);
+    }
     else
         fail("Unsupported sketch point role.");
     if (ref.role == modeling::PointRole::Origin)
@@ -614,9 +632,9 @@ PartDocument PartFileStore::load(const QString& path)
     if (root.value("units") != QJsonValue("mm"))
         fail("Unsupported units; this prototype supports millimeters only.");
     const auto versionValue = root.value("version");
-    if (!versionValue.isDouble() || versionValue.toDouble() < 1 || versionValue.toDouble() > 26 ||
+    if (!versionValue.isDouble() || versionValue.toDouble() < 1 || versionValue.toDouble() > 27 ||
         versionValue.toDouble() != std::floor(versionValue.toDouble()))
-        fail("Unsupported part document version; expected versions 1 through 26.");
+        fail("Unsupported part document version; expected versions 1 through 27.");
     const int version = versionValue.toInt();
     if (!root.value("features").isArray())
         fail("Part features must be an ordered array.");
@@ -1257,6 +1275,8 @@ void PartFileStore::save(const PartDocument& document, const QString& path)
         else if (feature.edgeTermination == modeling::EdgeTermination::Trimmed)
             version = std::max(version, 25);
     }
+    for(const auto& feature:document.features())if(feature.kind==FeatureKind::Sketch &&
+        std::any_of(feature.sketch.entities.begin(),feature.sketch.entities.end(),[](const auto& e){return e.kind==modeling::EntityKind::Spline;}))version=27;
     const QJsonObject root{{"format", "TheCAD.Part"},
                            {"version", version},
                            {"units", "mm"},

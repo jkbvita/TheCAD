@@ -12,6 +12,7 @@
 #include "ui/CadViewport.h"
 #include "ui/PropertyManagerPage.h"
 #include "ui/features/ExtrusionOptionsPanel.h"
+#include "ui/features/SplineParametersDialog.h"
 #include "ui/widgets/PropertyManagerControls.h"
 #include "ui/ReferenceGeometryUi.h"
 #include "ui/features/SolidFeaturePanel.h"
@@ -216,7 +217,7 @@ MainWindow::MainWindow(QWidget* parent)
     const auto action = [this](const QString& text, const char* name, auto callback) {
         auto* result = new QAction(commandIcon(text), text, this);
         result->setObjectName(name);
-        if(QStringList{"actionSmartDimension","actionSelectSketchEntity","actionLine","actionRectangle","actionCircle","actionArc","actionStraightSlot","actionPoint","actionCenterline","actionPolygon"}.contains(name))result->setCheckable(true);
+        if(QStringList{"actionSmartDimension","actionSelectSketchEntity","actionLine","actionRectangle","actionCircle","actionArc","actionSpline","actionStraightSlot","actionPoint","actionCenterline","actionPolygon"}.contains(name))result->setCheckable(true);
         result->setToolTip(text);
         connect(result, &QAction::triggered, this, callback);
         return result;
@@ -295,7 +296,11 @@ MainWindow::MainWindow(QWidget* parent)
         statusBar()->showMessage("Straight Slot. Click both end centers, then set the width.");
     });
     commandButton(m_straightSlot, drawGrid, 1, 2);
-    commandButton(unavailable("Spline", "actionSpline"), drawGrid, 2, 1);
+    m_spline=action("Spline","actionSpline",[this] {
+        closeSmartDimension(); m_viewport->setSketchTool(modeling::EntityKind::Spline);
+        statusBar()->showMessage("Spline. Click fit points; double-click or Enter to finish. Esc cancels.");
+    });
+    commandButton(m_spline,drawGrid,2,1);
     m_point=action("Point","actionPoint",[this]{closeSmartDimension();m_viewport->setSketchTool(modeling::EntityKind::Point);});
     m_centerline=action("Centerline","actionCenterline",[this]{closeSmartDimension();m_viewport->setSketchTool(modeling::EntityKind::Line,true);});
     m_polygon=action("Polygon","actionPolygon",[this]{closeSmartDimension();m_viewport->setSketchTool(modeling::EntityKind::Polygon);});
@@ -537,7 +542,7 @@ MainWindow::MainWindow(QWidget* parent)
         m_constraintPoint=modeling::SketchPointRef{id.toStdString(),modeling::PointRole(role)};
         constraintPointSelected(*m_constraintPoint);
         const QString pointName = id.isEmpty() ? "Sketch origin (0, 0)" : QString("%1 of %2")
-            .arg(role == int(modeling::PointRole::Second) ? "Endpoint" : role == int(modeling::PointRole::Center) ? "Center" : "Start point", id);
+            .arg(modeling::isSplinePoint(modeling::PointRole(role)) ? QString("Fit point %1").arg(role-int(modeling::PointRole::SplineInterior)+2) : role == int(modeling::PointRole::Second) ? "Endpoint" : role == int(modeling::PointRole::Center) ? "Center" : "Start point", id);
         statusBar()->showMessage(pointName + " selected. Snapping uses exact sketch coordinates.");
     });
     connect(m_viewport,&CadViewport::sketchSelectionChanged,this,[this]{hideRelationsContext();updateActions();if(m_constraints && m_viewport->selectedSketchRelation().empty())updateConstraintDraft();if(m_sketchModifier)refreshSketchModifier(true);});
@@ -692,6 +697,7 @@ bool MainWindow::chooseFeatureParameters(document::Feature& feature)
 
 bool MainWindow::chooseEntityParameters(modeling::SketchEntity& entity)
 {
+    if(entity.kind==modeling::EntityKind::Spline)return editSplineParameters(entity,this);
     QDialog dialog(this);
     dialog.setWindowTitle("Edit sketch geometry");
     dialog.setObjectName("sketchEntityDialog");
@@ -979,6 +985,7 @@ void MainWindow::updateSketchToolActions()
     m_rectangle->setChecked(editing && tool==modeling::EntityKind::Rectangle);
     m_circle->setChecked(editing && tool==modeling::EntityKind::Circle);
     m_arc->setChecked(editing && tool==modeling::EntityKind::Arc);
+    m_spline->setChecked(editing && tool==modeling::EntityKind::Spline);
     m_straightSlot->setChecked(editing && tool==modeling::EntityKind::StraightSlot);
 }
 
@@ -1023,6 +1030,7 @@ void MainWindow::updateActions()
     m_rectangle->setEnabled(editing && !operation);
     m_circle->setEnabled(editing && !operation);
     m_arc->setEnabled(editing && !operation);
+    m_spline->setEnabled(editing && !operation);
     m_straightSlot->setEnabled(editing && !operation);
     for(auto* tool:{m_point,m_centerline,m_polygon})tool->setEnabled(editing && !operation);
     updateConstructionControls();
@@ -1179,7 +1187,7 @@ void MainWindow::updateEntityProperties()
     const bool circle = entity.kind == modeling::EntityKind::Circle;
     const bool editing = m_mode == WorkspaceMode::EditingSketch;
     m_entitySummary->setText(QString("%1\n%2 supported relation(s)")
-        .arg(circle ? "Circle" : entity.kind==modeling::EntityKind::Arc?"Arc":entity.kind==modeling::EntityKind::Point?"Point":entity.kind == modeling::EntityKind::Line ? (entity.construction?"Centerline":"Line") : "Legacy rectangle")
+        .arg(circle ? "Circle" : entity.kind==modeling::EntityKind::Spline?"Spline":entity.kind==modeling::EntityKind::Arc?"Arc":entity.kind==modeling::EntityKind::Point?"Point":entity.kind == modeling::EntityKind::Line ? (entity.construction?"Centerline":"Line") : "Legacy rectangle")
         .arg(std::count_if(sketch->relations.begin(), sketch->relations.end(), [&entity](const auto& relation) {
             return relation.first.entityId == entity.id || relation.second.entityId == entity.id;
         })));

@@ -677,7 +677,7 @@ void CadViewport::updateSketchHover(const QPointF& position) {
     }
     if(!previous.empty())QToolTip::hideText();
     const auto oldPoint=m_hoveredPoint;
-    const bool midpointTool=m_tools.drawing()==modeling::EntityKind::Line || m_tools.drawing()==modeling::EntityKind::Point || drawingArcOrSlot();
+    const bool midpointTool=m_tools.drawing()==modeling::EntityKind::Line || m_tools.drawing()==modeling::EntityKind::Point || m_tools.drawing()==modeling::EntityKind::Spline || drawingArcOrSlot();
     const auto hit=m_tools.drawing()?pointAt(position,midpointTool):selectionPointAt(position);
     m_hoveredPoint=hit?std::optional<modeling::SketchPointRef>(hit->reference):std::nullopt;
     if(m_hoveredPoint && m_hoveredPoint->role==modeling::PointRole::Midpoint){if(!oldPoint || oldPoint->entityId!=m_hoveredPoint->entityId || oldPoint->role!=m_hoveredPoint->role)QToolTip::showText(mapToGlobal(position.toPoint()),"Midpoint",this);}
@@ -710,6 +710,9 @@ void CadViewport::setDimensionSelection(const std::vector<std::string>& entities
 void CadViewport::setConstraintErrors(const std::vector<std::string>& ids){m_constraintErrors=ids;updateConstraintPresentation();update();}
 void CadViewport::setConstraintPicking(bool enabled) {selectSketchTool();m_tools.relations(enabled);emit sketchToolChanged();}
 void CadViewport::mouseDoubleClickEvent(QMouseEvent* event) {
+    if(event->button()==Qt::LeftButton && m_sketchEditing && m_tools.drawing()==modeling::EntityKind::Spline) {
+        finishSpline(); event->accept(); return;
+    }
     if(m_sketchLineEditPicking && event->button()==Qt::LeftButton){event->accept();return;}
     if(m_sketchEditing && m_sketch && isReady() && event->button()==Qt::LeftButton) {
         cancelPointDrag();
@@ -941,7 +944,7 @@ modeling::Point2 CadViewport::drawingPoint(const QPointF& position, std::optiona
     m_boundarySnap.reset();
     const auto previous=m_inference;
     m_inference={};
-    const bool midpointTool=m_tools.drawing()==modeling::EntityKind::Line || m_tools.drawing()==modeling::EntityKind::Point || drawingArcOrSlot();
+    const bool midpointTool=m_tools.drawing()==modeling::EntityKind::Line || m_tools.drawing()==modeling::EntityKind::Point || m_tools.drawing()==modeling::EntityKind::Spline || drawingArcOrSlot();
     auto hit=pointAt(position,midpointTool);
     if(previous.target && !(hit && hit->reference.role==modeling::PointRole::Origin)) {
         const auto value=modeling::sketchPointValue(*m_sketch,*previous.target);
@@ -1162,7 +1165,7 @@ void CadViewport::finishPointDrag()
     clearInteractionPresentation();
     if(drag.moved && drag.candidate) {
         m_sketch=*drag.candidate;
-        const bool changed=m_sketch->relations.size()!=drag.original.relations.size() || !std::equal(m_sketch->entities.begin(),m_sketch->entities.end(),drag.original.entities.begin(),[](const auto& a,const auto& b){return std::hypot(a.first.x-b.first.x,a.first.y-b.first.y)<1e-9 && std::hypot(a.second.x-b.second.x,a.second.y-b.second.y)<1e-9 && std::abs(a.radius-b.radius)<1e-9 && std::hypot(a.center.x-b.center.x,a.center.y-b.center.y)<1e-9;});
+        const bool changed=m_sketch->relations.size()!=drag.original.relations.size() || !std::equal(m_sketch->entities.begin(),m_sketch->entities.end(),drag.original.entities.begin(),[](const auto& a,const auto& b){return std::hypot(a.first.x-b.first.x,a.first.y-b.first.y)<1e-9 && std::hypot(a.second.x-b.second.x,a.second.y-b.second.y)<1e-9 && std::abs(a.radius-b.radius)<1e-9 && std::hypot(a.center.x-b.center.x,a.center.y-b.center.y)<1e-9 && a.splinePoints.size()==b.splinePoints.size() && std::equal(a.splinePoints.begin(),a.splinePoints.end(),b.splinePoints.begin(),[](const auto& p,const auto& q){return std::hypot(p.x-q.x,p.y-q.y)<1e-9;});});
         if(changed)emit sketchChanged(*m_sketch);
     }
     else { m_sketch=drag.original; if(drag.moved && !drag.error.isEmpty()) emit sketchInteractionError(drag.error); }
@@ -1376,6 +1379,9 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
         const auto raw = sketchPosition(event->position());
         if(m_tools.drawing()==modeling::EntityKind::Point && raw){placeSketchPoint(event->position());event->accept();return;}
         if(m_tools.drawing()&&!raw){event->accept();return;}
+        if (m_tools.drawing()==modeling::EntityKind::Spline) {
+            pickSpline(event->position()); event->accept(); return;
+        }
         if (drawingArcOrSlot()) {
             pickArcOrSlot(event->position(), *raw);
             event->accept();return;
@@ -1403,7 +1409,7 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
             if(dragRef && !toggle && !m_sketchModifierPicking && dragRef->role!=modeling::PointRole::Origin &&
                !modeling::sketchProjection(*m_sketch, dragRef->entityId)) {
                 const auto entity=std::find_if(m_sketch->entities.begin(),m_sketch->entities.end(),[&](const auto& e){return e.id==dragRef->entityId;});
-                if(entity!=m_sketch->entities.end() && (entity->kind==modeling::EntityKind::Line || modeling::isCircular(entity->kind) || entity->kind==modeling::EntityKind::Point)) {
+                if(entity!=m_sketch->entities.end() && (entity->kind==modeling::EntityKind::Line || modeling::isCircular(entity->kind) || entity->kind==modeling::EntityKind::Point || entity->kind==modeling::EntityKind::Spline)) {
                     m_pointDrag=PointDrag{*m_sketch,*dragRef,event->position(),false,*m_sketch,{},{}};
                     if(!hit && raw){m_pointDrag->circleBody=true;m_pointDrag->grabOffset={entity->first.x-raw->x,entity->first.y-raw->y};}
                     std::set<std::pair<std::string,int>> excluded;
@@ -1456,6 +1462,9 @@ void CadViewport::mouseMoveEvent(QMouseEvent* event)
             return;
         }
         updateSketchHover(event->position());
+        if (m_tools.drawing()==modeling::EntityKind::Spline) {
+            previewSpline(event->position()); return;
+        }
         if (drawingArcOrSlot()) {
             previewArcOrSlot(event->position());
             return;
@@ -1573,6 +1582,10 @@ void CadViewport::wheelEvent(QWheelEvent* event)
 
 void CadViewport::keyPressEvent(QKeyEvent* event)
 {
+    if(m_sketchEditing && m_tools.drawing()==modeling::EntityKind::Spline &&
+       (event->key()==Qt::Key_Return || event->key()==Qt::Key_Enter)) {
+        finishSpline(); event->accept(); return;
+    }
     if(event->key()==Qt::Key_Escape&&!m_sketchEditing&&!m_selectingPlane&&!m_selection.items().empty()){clearSelection();event->accept();return;}
     if(event->key()==Qt::Key_Escape&&!m_sketchEditing&&!m_selectingPlane&&!m_selectedDatum.empty()){setSelectedDatum({});emit datumSelected({});event->accept();return;}
     if(event->key()==Qt::Key_Escape && !m_sketchEditing && !m_selectingPlane && m_selectedSolidFace){setSelectedSolidFace(0);emit solidFaceSelected(0);event->accept();return;}

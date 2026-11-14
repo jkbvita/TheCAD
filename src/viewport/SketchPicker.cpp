@@ -1,4 +1,5 @@
 #include "viewport/SketchPicker.h"
+#include "modeling/SketchSplines.h"
 #include "viewport/DimensionPresenter.h"
 #include "modeling/SketchSnapping.h"
 #include "modeling/SketchArcs.h"
@@ -117,6 +118,12 @@ SketchPicker::sketchEntityCandidates(const QPointF& position) const
                 distance = std::min(distance, distanceToSegment(first, next));
                 first = next;
             }
+        }
+        else if (entity.kind == modeling::EntityKind::Spline)
+        {
+            const auto samples=modeling::splinePickPolyline(entity,m_unit*0.2);
+            for(std::size_t i=1;i<samples.size();++i)
+                distance=std::min(distance,distanceToSegment(samples[i-1],samples[i]));
         }
         else if (entity.kind == modeling::EntityKind::Circle)
         {
