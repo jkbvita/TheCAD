@@ -592,7 +592,9 @@ void CadViewport::previewShape(const TopoDS_Shape& shape,const modeling::Materia
         }
         presentation->SetColor(color);
         presentation->SetTransparency(0.25);
-        presentation->SetZLayer(Graphic3d_ZLayerId_Topmost);
+        // Keep material highlights overlaid, but share the solid's depth buffer
+        // so nearer body faces occlude them instead of showing an X-ray tool.
+        presentation->SetZLayer(Graphic3d_ZLayerId_Top);
         m_graphics.context()->Display(presentation, AIS_Shaded, -1, false);
         m_materialPreviewPresentations.push_back(presentation);
     };

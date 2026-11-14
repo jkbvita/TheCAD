@@ -5,6 +5,9 @@
 
 #include <BRepAdaptor_Surface.hxx>
 #include <BRep_Tool.hxx>
+#include <BRep_Builder.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
+#include <Image_PixMap.hxx>
 #include <gp_Cone.hxx>
 #include <Graphic3d_Camera.hxx>
 #include <OpenGl_View.hxx>
@@ -12,6 +15,7 @@
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Edge.hxx>
+#include <TopoDS_Compound.hxx>
 #include <QMainWindow>
 #include <QApplication>
 #include <QDir>
@@ -100,6 +104,41 @@ private slots:
         QVERIFY(viewport->setShape(TopoDS_Shape()));
         QVERIFY(viewport->m_shape.IsNull());
         QVERIFY(viewport->setShape(modeling::makeBox(100, 70, 40)));
+    }
+
+    void materialPreviewRespectsBodyDepth()
+    {
+        const auto body=modeling::makeBox(40,40,20);
+        viewport->showReferencePlanes(false);
+        QVERIFY(viewport->setShape(body));
+        const auto view=viewport->m_graphics.view();
+        view->Camera()->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);
+        view->SetAt(20,20,10); view->SetProj(0,0,1); view->SetUp(0,1,0);
+        view->Camera()->SetScale(65);
+        viewport->synchronizeSurface();
+        const int width=qRound(viewport->width()*viewport->devicePixelRatioF());
+        const int height=qRound(viewport->height()*viewport->devicePixelRatioF());
+        const auto pixel=[&](double x) { int px,py; view->Convert(x,20,20,px,py); return QPoint(px,py); };
+        const auto hiddenPixel=pixel(12), visiblePixel=pixel(28);
+        viewport->previewShape(body);
+        Image_PixMap baseline; QVERIFY(view->ToPixMap(baseline,width,height));
+        const auto bodyColor=baseline.PixelColor(hiddenPixel.x(),hiddenPixel.y(),true).GetRGB();
+
+        BRep_Builder builder; TopoDS_Compound material; builder.MakeCompound(material);
+        builder.Add(material,BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(12,20,-15),gp_Dir(0,0,1)),5,8).Shape());
+        builder.Add(material,BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(28,20,25),gp_Dir(0,0,1)),5,8).Shape());
+        modeling::MaterialChanges changes; changes.removed=material;
+        viewport->previewShape(body,changes);
+        view->ZFitAll();
+        Image_PixMap preview; QVERIFY(view->ToPixMap(preview,width,height));
+        const auto hidden=preview.PixelColor(hiddenPixel.x(),hiddenPixel.y(),true).GetRGB();
+        const auto visible=preview.PixelColor(visiblePixel.x(),visiblePixel.y(),true).GetRGB();
+        QVERIFY2(hidden.Distance(bodyColor)<0.02,"Removed material behind an opaque body must not tint its front face.");
+        QVERIFY2(visible.Red()>visible.Blue()+0.1,"Visible removed material must retain its yellow preview.");
+        viewport->clearPreview();
+        QVERIFY(viewport->m_materialPreviewPresentations.empty());
+        QVERIFY(viewport->setShape(modeling::makeBox(100,70,40)));
+        viewport->resetView();
     }
 
     void fullRevolveHidesSeamAndShadesTip()
