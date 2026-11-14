@@ -103,13 +103,14 @@ std::vector<SelectionRef> CadViewport::selection() const {
     result.insert(result.end(),m_selection.items().begin(),m_selection.items().end());
     return result;
 }
-void CadViewport::beginTreeSelection(){if(m_dispatchingSelection)return;m_treeBodySelected=false;m_selection.clear();m_nativeSelections.clear();refreshNativeSelection();previewCandidate({});}
+void CadViewport::beginTreeSelection(){if(m_dispatchingSelection)return;m_treeBodySelected=false;m_treeFeatureFaces.clear();m_selection.clear();m_nativeSelections.clear();refreshNativeSelection();previewCandidate({});}
 void CadViewport::setSelectionFilters(std::uint32_t filters,bool enabled){
     m_selectionPolicy={filters&modeling::FilterAll,enabled};
     previewCandidate({});m_hoveredEntity.clear();m_hoveredDimension.clear();m_hoveredRelation.clear();m_hoveredPoint.reset();m_hoveredDatum.clear();m_hoveredPlane.reset();
     updatePointPresentation();updateConstraintPresentation();updateDatumStyles();updatePlaneStyles();update();
 }
 void CadViewport::invalidateBodySelection(){
+    m_treeFeatureFaces.clear();
     if(isReady())for(auto& item:m_selectionPresentations)m_graphics.context()->Remove(item,Standard_False);m_selectionPresentations.clear();
     ++m_shapeGeneration;m_selection.invalidateTopology(m_shapeGeneration);m_nativeSelections.clear();m_selectedSolidFace=0;
     if(isReady())m_graphics.context()->ClearSelected(Standard_False);
@@ -131,7 +132,7 @@ void CadViewport::prepareBodyPicking(){
     }
 }
 void CadViewport::clearSelection(){
-    m_treeBodySelected=false;m_selection.clear();m_nativeSelections.clear();m_selectedSolidFace=0;m_selectedDatum.clear();m_selectedPlane.reset();
+    m_treeBodySelected=false;m_treeFeatureFaces.clear();m_selection.clear();m_nativeSelections.clear();m_selectedSolidFace=0;m_selectedDatum.clear();m_selectedPlane.reset();
     m_hoveredDatum.clear();m_hoveredPlane.reset();m_hoveredPoint.reset();m_hoveredEntity.clear();m_hoveredDimension.clear();m_hoveredRelation.clear();
     m_selectedPoint.reset();m_selectedEntities.clear();m_selectedDimensions.clear();m_selectedEntity.clear();m_selectedRelation.clear();
     refreshNativeSelection();
@@ -271,16 +272,29 @@ void CadViewport::refreshNativeSelection(){
         m_graphics.context()->Display(item, filled ? AIS_Shaded : AIS_WireFrame, -1, Standard_False);
         m_selectionPresentations.push_back(item);
     };
-    if(m_treeBodySelected)display(m_shape);else for(const auto& item:m_nativeSelections)if(std::find(m_selection.items().begin(),m_selection.items().end(),item.value.reference)!=m_selection.items().end())display(item.shape);
+    if(m_treeBodySelected)display(m_shape);
+    else if(!m_treeFeatureFaces.empty())for(const auto& face:m_treeFeatureFaces)display(face);
+    else for(const auto& item:m_nativeSelections)if(std::find(m_selection.items().begin(),m_selection.items().end(),item.value.reference)!=m_selection.items().end())display(item.shape);
     if(m_selectedSolidFace>0&&m_nativeSelections.empty()){TopTools_IndexedMapOfShape faces;TopExp::MapShapes(m_shape,TopAbs_FACE,faces);if(m_selectedSolidFace<=faces.Extent())display(faces(m_selectedSolidFace));}
     updateDatumStyles();updatePlaneStyles();update();
 }
 void CadViewport::setTreeReferenceSelection(const std::vector<SelectionRef>& refs){if(m_dispatchingSelection)return;m_selection.clear();for(const auto& ref:refs)m_selection.select(ref,true);refreshNativeSelection();}
-void CadViewport::setTreeBodySelected(bool selected){m_treeBodySelected=selected;refreshNativeSelection();}
+void CadViewport::setTreeBodySelected(bool selected){m_treeBodySelected=selected;m_treeFeatureFaces.clear();refreshNativeSelection();}
+void CadViewport::setTreeFeatureFaces(const std::vector<TopoDS_Shape>& faces)
+{
+    m_treeBodySelected=false; m_treeFeatureFaces.clear();
+    TopTools_IndexedMapOfShape current;
+    TopExp::MapShapes(m_shape,TopAbs_FACE,current);
+    for (const auto& face:faces)
+        if (!face.IsNull() && face.ShapeType()==TopAbs_FACE && current.Contains(face))
+            m_treeFeatureFaces.push_back(current(current.FindIndex(face)));
+    refreshNativeSelection();
+}
 void CadViewport::selectCandidate(const PickCandidate& item,bool toggle,bool directClick){
     const QScopedValueRollback<bool> dispatch(m_dispatchingSelection,true);
     const auto& ref=item.value.reference;
     if(modeling::isTopology(ref.kind)&&ref.generation!=m_shapeGeneration)return;
+    m_treeBodySelected=false; m_treeFeatureFaces.clear();
     if (m_measurePicking)
     {
         if (!isMeasurementKind(ref.kind))

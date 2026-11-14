@@ -87,7 +87,8 @@ public:
     std::vector<ReferenceOption> referenceOptions(bool includeCircularAxes = false, bool includeExtrusionFaces = false) const;
     TopoDS_Shape solidBefore(const std::string& featureId) const;
     const TopoDS_Shape& solidResult(const std::string& featureId) const;
-    std::vector<TopoDS_Shape> edgeTreatmentFaces(const std::string& featureId) const;
+    // currentBody follows generated face names through downstream operations.
+    std::vector<TopoDS_Shape> edgeTreatmentFaces(const std::string& featureId, bool currentBody = false) const;
     // Includes curved edges, unlike axis-only referenceOptions(). No index-only
     // fallback is permitted for new edge treatments.
     std::vector<ReferenceOption> edgeOptions(bool sharpOnly = false) const;

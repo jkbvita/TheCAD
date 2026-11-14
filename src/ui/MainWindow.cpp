@@ -924,7 +924,9 @@ void MainWindow::selectionChanged()
             m_viewport->showReferencePlanes(false);
             if (feature && feature->kind == document::FeatureKind::Sketch) m_viewport->setSketch(feature->sketch);
             if(feature&&feature->kind==document::FeatureKind::ReferenceGeometry)m_viewport->setSelectedDatum(feature->id);
-            m_viewport->setTreeBodySelected(feature&&document::isSolidFeature(feature->kind));
+            if (feature && document::isEdgeFeature(feature->kind))
+                m_viewport->setTreeFeatureFaces(m_session.document().edgeTreatmentFaces(feature->id, true));
+            else m_viewport->setTreeBodySelected(feature&&document::isSolidFeature(feature->kind));
         }
     }
     if(m_tree->selectedItems().size()>1){std::vector<modeling::SelectionRef> refs;for(const auto* node:m_tree->selectedItems()){const auto id=node->data(0,Qt::UserRole).toString();using K=modeling::SelectionKind;if(id=="origin:XY"||id=="origin:XZ"||id=="origin:YZ")refs.push_back({K::OriginPlane,{},{},modeling::PointRole::First,id=="origin:XY"?0:id=="origin:XZ"?1:2});else for(const auto& f:m_session.document().features())if(f.id==id.toStdString()&&f.kind==document::FeatureKind::ReferenceGeometry)refs.push_back({f.datum.kind==modeling::DatumKind::Plane?K::ReferencePlane:f.datum.kind==modeling::DatumKind::Axis?K::ReferenceAxis:K::ReferencePoint,f.id});}m_viewport->setTreeReferenceSelection(refs);}

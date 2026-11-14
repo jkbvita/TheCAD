@@ -82,6 +82,62 @@ class SolidFeaturesWorkflowTest final : public QObject
         QCOMPARE(a->ProjectionType(), b->ProjectionType());
     }
 private slots:
+    void treeSelectsTreatmentFaces_data()
+    {
+        QTest::addColumn<bool>("chamfer"); QTest::addColumn<bool>("downstream");
+        QTest::newRow("fillet") << false << false;
+        QTest::newRow("chamfer") << true << false;
+        QTest::newRow("fillet-after-cut") << false << true;
+        QTest::newRow("chamfer-after-cut") << true << true;
+    }
+    void treeSelectsTreatmentFaces()
+    {
+        QFETCH(bool,chamfer); QFETCH(bool,downstream);
+        QTemporaryDir temp; auto part=document::PartDocument::createBox({40,30,20});
+        document::Feature feature; feature.kind=chamfer?document::FeatureKind::Chamfer:document::FeatureKind::Fillet;
+        feature.size=2;
+        for (const auto& option:part.edgeOptions(true)) {
+            const BRepAdaptor_Curve curve(TopoDS::Edge(option.selectionShape));
+            const auto middle=curve.Value((curve.FirstParameter()+curve.LastParameter())/2);
+            if (std::abs(middle.X())<1e-8 && std::abs(middle.Y())<1e-8) {
+                feature.edges={option.reference}; break;
+            }
+        }
+        QVERIFY(!feature.edges.empty()); const auto id=part.addSolidFeature(feature);
+        if (downstream) {
+            modeling::Sketch cut; cut.entities.push_back({modeling::EntityKind::Rectangle,{-5,-5},{8,8},1,"cut"});
+            const auto sketchId=part.addSketch(cut);
+            part.addCut(sketchId,{"cut"},8,false,modeling::Direction::Positive);
+        }
+        const auto path=temp.filePath("selection.thepart"); part.save(path);
+        SolidTestWindow window; window.show(); QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* viewport=window.findChild<CadViewport*>(); QTRY_VERIFY(viewport->isReady());
+        QVERIFY(window.openPartFile(path));
+        const auto expected=window.document().edgeTreatmentFaces(id,true); QVERIFY(!expected.empty());
+        const auto camera=Handle(Graphic3d_Camera)(new Graphic3d_Camera(viewport->m_graphics.view()->Camera()));
+        select(window,id);
+        QVERIFY(!viewport->m_treeBodySelected);
+        QCOMPARE(viewport->m_selectionPresentations.size(),expected.size());
+        for (const auto& highlight:viewport->m_selectionPresentations) {
+            QCOMPARE(highlight->Shape().ShapeType(),TopAbs_FACE);
+            QVERIFY(std::any_of(expected.begin(),expected.end(),[&](const auto& face){return face.IsSame(highlight->Shape());}));
+        }
+        if (downstream) {
+            GProp_GProps original,current;
+            for (const auto& face:window.document().edgeTreatmentFaces(id)) {GProp_GProps properties; BRepGProp::SurfaceProperties(face,properties); original.Add(properties);}
+            for (const auto& face:expected) {GProp_GProps properties; BRepGProp::SurfaceProperties(face,properties); current.Add(properties);}
+            QVERIFY(current.Mass()<original.Mass()); // Current shortened faces, never historical ghost geometry.
+        }
+        sameCamera(camera,viewport->m_graphics.view()->Camera());
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,QPoint(8,8));
+        QVERIFY(viewport->m_selectionPresentations.empty()); QVERIFY(viewport->m_treeFeatureFaces.empty());
+        select(window,id);
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,project(viewport,{20,15,20}));
+        QVERIFY(viewport->m_treeFeatureFaces.empty()); QVERIFY(!viewport->m_selectionPresentations.empty());
+        sameCamera(camera,viewport->m_graphics.view()->Camera());
+        QVERIFY(window.errors.isEmpty());
+    }
+
     void solidCommandLeavesFlatView_data()
     {
         QTest::addColumn<QString>("action");

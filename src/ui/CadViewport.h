@@ -111,6 +111,7 @@ public:
     void resetView();
     void normalTo();
     void setTreeBodySelected(bool selected);
+    void setTreeFeatureFaces(const std::vector<TopoDS_Shape>& faces);
     void setTreeReferenceSelection(const std::vector<modeling::SelectionRef>&);
     void applyTheme();
     void setDatums(const std::vector<DatumVisual>& datums);
@@ -209,6 +210,7 @@ private:
     std::vector<Handle(AIS_Shape)> m_featureReferenceShapes;
     std::vector<Handle(AIS_Shape)> m_selectionPresentations;
     bool m_treeBodySelected=false;
+    std::vector<TopoDS_Shape> m_treeFeatureFaces;
     QPointer<QMenu> m_selectOtherMenu;
     QPointF m_contextPress;
     bool m_contextClick=false;

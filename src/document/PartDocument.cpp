@@ -498,14 +498,17 @@ std::string PartDocument::addSolidFeature(Feature feature)
     return feature.id;
 }
 
-std::vector<TopoDS_Shape> PartDocument::edgeTreatmentFaces(const std::string& featureId) const
+std::vector<TopoDS_Shape> PartDocument::edgeTreatmentFaces(const std::string& featureId, bool currentBody) const
 {
     const auto feature = std::find_if(m_features.begin(), m_features.end(), [&](const auto& item) {
         return item.id == featureId;
     });
     if (feature == m_features.end() || !isEdgeFeature(feature->kind) || feature->dependencies.empty()) return {};
     const auto& support = m_namedBodies.at(feature->dependencies.front());
-    const auto& result = m_namedBodies.at(featureId);
+    const auto lastSolid = std::find_if(m_features.rbegin(), m_features.rend(), [](const auto& item) {
+        return isSolidFeature(item.kind);
+    });
+    const auto& result = m_namedBodies.at(currentBody ? lastSolid->id : featureId);
     TopTools_IndexedMapOfShape seen;
     std::vector<TopoDS_Shape> faces;
     for (const auto& edge : feature->edges) {
