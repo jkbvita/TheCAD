@@ -26,6 +26,27 @@ for supported seeds and references. Circular Pattern accepts an axis, circular
 edge or axial face and supports total-angle or per-instance spacing. See
 [Circular Pattern and modeling interactions](docs/decisions/0037-circular-pattern-modeling-interactions.md).
 
+## Assemblies
+
+Choose **File → New Assembly** from the part window, then **Insert Components**
+to link saved `.thepart` files. The first component is fixed by default. Float
+it or insert another component to move/rotate by dragging or precise placement
+fields. Tree checkboxes control visibility; right-click offers Fix/Float and
+Open Part.
+
+**Mate** opens a docked editor: pick two planar faces/planes or cylindrical
+faces/axes, choose the compatible Coincident, Concentric, Distance or Angle mate,
+inspect its preview and confirm. Component datum planes/axes are available in
+the tree. Double-click a mate to edit it. Status shows remaining degrees of
+freedom. Conflicting mates retain the previous assembly. Component deletion
+lists dependent mates before removing them and preserves external part files.
+
+Save as `.theasmb`; relative component links, placements, mates and visibility
+persist. Rebuild (**Ctrl+B**) reloads changed source parts through their persistent
+geometry names. Keep source parts with the assembly when moving folders. Assembly
+and part documents use separate windows. Ten-action undo/redo covers assembly
+edits. See [verification, manual checks and milestone limits](docs/verification/assembly-foundation.md).
+
 ## Measure
 
 Open **Evaluate → Measure** and select a solid vertex, edge, or face. Select a

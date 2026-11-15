@@ -1,9 +1,11 @@
 #include "ui/MainWindow.h"
+#include "ui/assembly/AssemblyWindow.h"
 #include "exchange/ShapeExporter.h"
 
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QDir>
+#include <QFileInfo>
 #include <QIcon>
 #include <QMessageBox>
 #include <QTimer>
@@ -19,10 +21,10 @@ int main(int argc, char* argv[])
     QCommandLineParser parser;
     parser.setApplicationDescription("TheCAD parametric CAD application");
     parser.addHelpOption();parser.addVersionOption();
-    parser.addPositionalArgument("part","Saved .thepart or legacy .tcpart file to open.","[part]");
+    parser.addPositionalArgument("document","Saved .thepart, .theasmb or legacy .tcpart file to open.","[document]");
     parser.process(application);
     const auto files=parser.positionalArguments();
-    if(files.size()>1){QMessageBox::critical(nullptr,"TheCAD startup error","Open one part at a time. Drop a single saved part onto the TheCAD shortcut.");return 2;}
+    if(files.size()>1){QMessageBox::critical(nullptr,"TheCAD startup error","Open one document at a time. Drop a single saved document onto the TheCAD shortcut.");return 2;}
     // A deployed folder carries OCCT resources next to the executable.
     // Development startup uses the environment helper when this directory is absent.
     const QString shaderDirectory = QCoreApplication::applicationDirPath() + "/resources/Shaders";
@@ -31,6 +33,11 @@ int main(int argc, char* argv[])
     }
     thecad::exchange::configureResources(QCoreApplication::applicationDirPath()+"/resources");
     try {
+        if(!files.isEmpty()&&QFileInfo(files.front()).suffix().compare("theasmb",Qt::CaseInsensitive)==0) {
+            thecad::ui::AssemblyWindow window;window.showMaximized();
+            QTimer::singleShot(0,&window,[&application,&window,path=files.front()]{if(!window.openAssemblyFile(path))application.exit(1);});
+            return application.exec();
+        }
         thecad::ui::MainWindow window;
         window.showMaximized();
         if(!files.isEmpty())QTimer::singleShot(0,&window,[&application,&window,path=files.front()]{if(!window.openPartFile(path))application.exit(1);});

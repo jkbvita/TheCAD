@@ -9,6 +9,7 @@ add_library(thecad_modeling STATIC
     SketchTools.cpp
     SketchArcs.cpp
     SketchSplines.cpp
+    assembly/MateSolver.cpp
     SketchModifiers.cpp
     SketchContourEdits.cpp
     SketchOffset.cpp
@@ -18,4 +19,4 @@ target_sources(thecad_modeling PRIVATE FeaturePreview.cpp Extrusion.cpp SolidFea
 target_sources(thecad_modeling PRIVATE ReferenceGeometry.cpp TopologyNames.cpp)
 target_sources(thecad_modeling PRIVATE Selection.cpp Measurement.cpp)
 target_include_directories(thecad_modeling PUBLIC "${PROJECT_SOURCE_DIR}/src")
-target_link_libraries(thecad_modeling PRIVATE thecad_planegcs PUBLIC thecad_occt TKPrim TKTopAlgo TKBRep TKBO TKBool TKShHealing TKFillet TKOffset)
+target_link_libraries(thecad_modeling PRIVATE thecad_planegcs PUBLIC thecad_occt TKMath TKPrim TKTopAlgo TKBRep TKBO TKBool TKShHealing TKFillet TKOffset)

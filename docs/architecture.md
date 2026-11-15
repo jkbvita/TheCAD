@@ -29,6 +29,10 @@ flowchart TD
 | --- | --- | --- |
 | `modeling` | Sketch data/algorithms, constraints, dimensions, profiles, Booleans, reference math, persistent names, selection policy | Windows, widgets, document sessions |
 | `document::PartDocument` | Ordered features, dependencies and transactional regeneration | Dialogs, GPU objects |
+| `modeling::assembly` | Rigid-body mate equations, simultaneous solve and freedom diagnosis | Part/sketch mutation, file I/O or widgets |
+| `document::AssemblyDocument` | Linked immutable source parts, instance placements and transactional mates/rebuild | Renderer objects or source-file editing |
+| `document::AssemblyFileStore` | Versioned .theasmb JSON, relative source links and atomic writes | Session history or UI |
+| `application::AssemblySession` | Assembly path, revisions and ten-action undo/redo | Widgets and GPU resources |
 | `document::PartFileStore` | Existing JSON serialization, legacy migration and atomic saves | Active UI selection or editing commands |
 | `exchange::ShapeExporter` | Geometry-only copies, STEP/STL translation and atomic target replacement | Widgets, active document/session mutation |
 | `application::DocumentSession` | Document, editing draft, path, revision tracking, ten-action undo/redo | Widgets, renderer objects |
@@ -41,6 +45,9 @@ flowchart TD
 | `ui::FeatureTreePresenter` | Projection into the existing tree, expansion and selected occurrence | Persistent feature data |
 | `ui::CadViewport` | Native QWidget event adapter and presentation coordination | Ownership of the extracted graphics/camera/dimension components' internal state |
 | `ui::MainWindow` | Application composition, menus, dialogs, command wiring and window state | Ownership of session history/storage internals |
+| `ui::AssemblyWindow` | Separate assembly workspace, tree and operation lifecycle | Rigid mate equations or serialization |
+| `ui::AssemblyViewport` | Native event adapter and transformed component presentations, shared graphics/camera policies | Source-part mutation or persistent mate state |
+| `ui::AssemblyMateEditor` | Uncommitted references, validation, previews and confirmation | Active document ownership |
 
 The UI facades keep their existing public interfaces and Qt object names. Existing
 tool-specific event wiring and PropertyManager composition remain in UI adapters;
@@ -53,6 +60,14 @@ algorithms, the document owns typed parameters/named supports and regeneration,
 and `ui::SolidFeaturePanel` owns uncommitted forms and selections. The shell
 connects preview values to rendering and commits candidates through the session.
 See [decision 0031](decisions/0031-basic-revolve-and-edge-features.md).
+
+Assembly is a separate document/session/workspace, introduced by
+[decision 0053](decisions/0053-assembly-foundation.md). Component instances share
+immutable source PartDocuments and apply independent rigid presentation transforms.
+Mates use component-local persistent names; candidate solving cannot change the
+part or PlaneGCS engines. Assembly and part windows share rendering, navigation,
+appearance, theme and CommandManager widgets. The first milestone intentionally
+uses separate top-level document windows and a bounded dense mate solver.
 
 ## Build boundaries
 

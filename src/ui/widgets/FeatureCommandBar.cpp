@@ -64,6 +64,9 @@ void flyout(FeatureButton* button,const QList<QAction*>& actions) {
     });
 }
 }
+QToolButton* commandManagerButton(QAction* action,QWidget* parent) {
+    auto* button=new FeatureButton(parent);button->setDefaultAction(action);button->setAccessibleName(action->text());return button;
+}
 void populateFeatureCommands(QHBoxLayout* layout,const FeatureCommandActions& a)
 {
     auto* scroll=new QScrollArea; scroll->setObjectName("featureCommandsScroll"); scroll->setFrameShape(QFrame::NoFrame);

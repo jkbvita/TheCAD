@@ -1,5 +1,6 @@
 #include <Windows.h> // Before OCCT headers, which restrict the Windows API surface.
 #include "document/PartDocument.h"
+#include "document/AssemblyDocument.h"
 #include <BRepGProp.hxx>
 #include <GProp_GProps.hxx>
 #include <QCoreApplication>
@@ -42,13 +43,20 @@ class StartupLaunchTest final:public QObject {
         OwnedApplication app;app.process.setProgram(executable());app.process.setWorkingDirectory(QFileInfo(path).absolutePath());app.process.setArguments({relative?QFileInfo(path).fileName():QFileInfo(path).absoluteFilePath()});
         if(QFileInfo::exists(QFileInfo(executable()).absolutePath()+"/qt.conf")){auto environment=QProcessEnvironment::systemEnvironment();environment.remove("QT_QPA_PLATFORM_PLUGIN_PATH");environment.remove("QT_PLUGIN_PATH");environment.remove("CSF_ShadersDirectory");const auto system=environment.value("SystemRoot");environment.insert("PATH",system+"/System32;"+system);app.process.setProcessEnvironment(environment);}
         app.process.start();QVERIFY2(app.process.waitForStarted(5000),qPrintable(app.process.errorString()));
-        const auto expected=QFileInfo(path).fileName();const auto loaded=[&]{for(const auto& title:titlesOf(app.process))if(title==expected+" - TheCAD")return true;return false;};
+        const bool assembly=path.endsWith(".theasmb",Qt::CaseInsensitive);
+        const auto expected=QFileInfo(path).fileName()+(assembly?QString::fromUtf8(" — TheCAD Assembly"):QString(" - TheCAD"));const auto loaded=[&]{for(const auto& title:titlesOf(app.process))if(title==expected)return true;return false;};
         QTRY_VERIFY2_WITH_TIMEOUT(loaded(),qPrintable("File was not opened; window titles: "+titlesOf(app.process).join(" | ")),10000);
         app.process.terminate();QVERIFY2(app.process.waitForFinished(5000),"A successfully opened saved model should close without an unsaved-empty-part prompt.");QCOMPARE(app.process.exitStatus(),QProcess::NormalExit);QCOMPARE(app.process.exitCode(),0);QCOMPARE(bytes(path),original);
     }
 private slots:
     void savedModelArgument_data(){QTest::addColumn<bool>("relative");QTest::newRow("absolute-unicode-spaces")<<false;QTest::newRow("relative-unicode-spaces")<<true;}
     void savedModelArgument(){QFETCH(bool,relative);QTemporaryDir directory;QVERIFY(directory.isValid());const auto path=directory.filePath(QString::fromUtf8("saved model díl.THEPART"));const auto part=fixture();part.save(path);const auto loaded=thecad::document::PartDocument::load(path);QCOMPARE(loaded.features().size(),part.features().size());GProp_GProps mass;BRepGProp::VolumeProperties(loaded.shape(),mass);QVERIFY(mass.Mass()>1000);launch(path,relative);}
+    void savedAssemblyArgument_data(){savedModelArgument_data();}
+    void savedAssemblyArgument(){
+        QFETCH(bool,relative);QTemporaryDir directory;QVERIFY(directory.isValid());const auto source=directory.filePath(QString::fromUtf8("linked díl.thepart"));fixture().save(source);const auto original=bytes(source);
+        thecad::document::AssemblyDocument assembly;assembly.insertComponent(source);gp_Trsf pose;pose.SetTranslationPart({80,0,0});assembly.insertComponent(source,pose);
+        const auto path=directory.filePath(QString::fromUtf8("saved assembly sestava.THEASMB"));assembly.save(path);launch(path,relative);QCOMPARE(bytes(source),original);
+    }
     void userSavedModelWhenProvided(){const auto path=qEnvironmentVariable("THECAD_TEST_SAVED_PART");if(path.isEmpty())QSKIP("Optional read-only test of the owner's saved model.");try{const auto part=thecad::document::PartDocument::load(path);QVERIFY(!part.shape().IsNull());QVERIFY(!part.features().empty());}catch(const std::exception& error){QFAIL(error.what());}launch(path,false);}
 };
 QTEST_GUILESS_MAIN(StartupLaunchTest)

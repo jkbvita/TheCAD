@@ -124,6 +124,21 @@ DatumDefinition readDatumDefinition(const QJsonObject& o,int version)
     return d;
 }
 DatumGeometry PartDocument::resolveReference(const GeometryReference& ref) const{std::map<std::string,DatumGeometry> datums;std::map<std::string,Sketch> sketches;for(const auto& feature:m_features){if(feature.kind==FeatureKind::ReferenceGeometry)datums.emplace(feature.id,feature.datum);if(feature.kind==FeatureKind::Sketch)sketches.emplace(feature.id,feature.sketch);}return resolveGeometryReference(ref,datums,sketches,m_bodies,m_namedBodies);}
+modeling::DatumGeometry PartDocument::resolveCurrentReference(GeometryReference reference) const {
+    if(int(reference.source)>=6) {
+        require(!reference.topologyName.empty(),"Assembly supports require a persistent topology name.");
+        const auto last=std::find_if(m_features.rbegin(),m_features.rend(),[](const auto& f){return isSolidFeature(f.kind);});
+        require(last!=m_features.rend(),"The source part has no current solid."); reference.featureId=last->id;
+    }
+    return resolveReference(reference);
+}
+TopoDS_Shape PartDocument::currentReferenceShape(GeometryReference reference) const {
+    if(int(reference.source)<6)return datumDisplayShape(resolveReference(reference),25);
+    require(!reference.topologyName.empty(),"Assembly supports require a persistent topology name.");
+    const auto last=std::find_if(m_features.rbegin(),m_features.rend(),[](const auto& f){return isSolidFeature(f.kind);});
+    require(last!=m_features.rend(),"The source part has no current solid.");
+    return m_namedBodies.at(last->id).resolve(reference.topologyName,referenceTopology(reference.source));
+}
 std::string PartDocument::addReferenceGeometry(const DatumDefinition& definition){Feature feature;feature.kind=FeatureKind::ReferenceGeometry;feature.id=nextId(feature.kind);feature.reference=definition;const auto kind=datumKind(definition.method);const auto count=std::count_if(m_features.begin(),m_features.end(),[&](const auto& f){return f.kind==FeatureKind::ReferenceGeometry&&f.datum.kind==kind;});feature.name=std::string(kind==DatumKind::Point?"Point":kind==DatumKind::Axis?"Axis":"Plane")+std::to_string(count+1);auto features=m_features;features.push_back(feature);apply(std::move(features));return feature.id;}
 Sketch PartDocument::sketchOnReferencePlane(const std::string& id) const{GeometryReference ref;ref.source=ReferenceSource::Datum;ref.featureId=id;const auto datum=resolveReference(ref);require(datum.kind==DatumKind::Plane,"Sketch support must be a reference plane.");Sketch sketch;sketch.referencePlaneId=id;sketch.referencePlaneFrame=datum.frame;return sketch;}
 PartDocument PartDocument::beforeFeature(const std::string& id) const

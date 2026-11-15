@@ -84,6 +84,8 @@ public:
     modeling::Sketch sketchOnReferencePlane(const std::string& id) const;
     std::string addReferenceGeometry(const modeling::DatumDefinition& definition);
     modeling::DatumGeometry resolveReference(const modeling::GeometryReference& reference) const;
+    modeling::DatumGeometry resolveCurrentReference(modeling::GeometryReference reference) const;
+    TopoDS_Shape currentReferenceShape(modeling::GeometryReference reference) const;
     std::vector<ReferenceOption> referenceOptions(bool includeCircularAxes = false, bool includeExtrusionFaces = false) const;
     TopoDS_Shape solidBefore(const std::string& featureId) const;
     const TopoDS_Shape& solidResult(const std::string& featureId) const;

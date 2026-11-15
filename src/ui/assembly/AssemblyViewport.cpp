@@ -1,0 +1,454 @@
+#include "ui/assembly/AssemblyViewport.h"
+#include "ui/Theme.h"
+#include "presentation/SolidPresentation.h"
+#include "presentation/SelectionAppearance.h"
+#include <AIS_Shape.hxx>
+#include <Graphic3d_Camera.hxx>
+#include <SelectMgr_ViewerSelector.hxx>
+#include <StdSelect_BRepOwner.hxx>
+#include <Standard_Failure.hxx>
+#include <TopExp.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
+#include <TopLoc_Location.hxx>
+#include <gp_Quaternion.hxx>
+#include <QApplication>
+#include <QKeyEvent>
+#include <QMouseEvent>
+#include <QWheelEvent>
+#include <algorithm>
+#include <cmath>
+
+namespace thecad::ui
+{
+AssemblyViewport::AssemblyViewport(QWidget* parent) : QWidget(parent)
+{
+    setObjectName("assemblyViewport");
+    setAttribute(Qt::WA_NativeWindow);
+    setAttribute(Qt::WA_PaintOnScreen);
+    setAttribute(Qt::WA_NoSystemBackground);
+    setAutoFillBackground(false);
+    setMouseTracking(true);
+    setFocusPolicy(Qt::StrongFocus);
+    setMinimumSize(320, 240);
+    connect(&ThemeManager::instance(), &ThemeManager::changed, this, &AssemblyViewport::applyTheme);
+}
+QPoint AssemblyViewport::native(const QPointF& point) const
+{
+    return {qRound(point.x() * devicePixelRatioF()), qRound(point.y() * devicePixelRatioF())};
+}
+Handle(Graphic3d_Camera) AssemblyViewport::camera() const
+{
+    return isReady() ? m_graphics.view()->Camera() : Handle(Graphic3d_Camera){};
+}
+void AssemblyViewport::initialize()
+{
+    m_attempted = true;
+    try
+    {
+        m_graphics.initialize(reinterpret_cast<Aspect_Handle>(winId()));
+        applyTheme();
+        m_graphics.view()->TriedronDisplay(Aspect_TOTP_LEFT_LOWER, Quantity_NOC_GRAY60, 0.08,
+                                           V3d_ZBUFFER);
+        standardView(6);
+        const auto visuals = m_visuals;
+        m_visuals.clear();
+        setComponents(visuals);
+        if (m_fitPending)
+            fitAll();
+    }
+    catch (const Standard_Failure& error)
+    {
+        m_error = QString::fromUtf8(error.GetMessageString());
+        emit initializationFailed(m_error);
+    }
+    catch (const std::exception& error)
+    {
+        m_error = QString::fromUtf8(error.what());
+        emit initializationFailed(m_error);
+    }
+}
+void AssemblyViewport::showEvent(QShowEvent*)
+{
+    if (!m_attempted)
+        initialize();
+}
+void AssemblyViewport::paintEvent(QPaintEvent*)
+{
+    if (!m_attempted)
+        initialize();
+    if (isReady())
+    {
+        m_graphics.synchronizeSurface();
+        m_graphics.view()->Redraw();
+    }
+}
+void AssemblyViewport::resizeEvent(QResizeEvent*)
+{
+    if (isReady())
+        m_graphics.invalidateSize();
+    update();
+}
+void AssemblyViewport::applyTheme()
+{
+    if (!isReady())
+        return;
+    const bool dark = ThemeManager::instance().isDark();
+    m_graphics.view()->SetBgGradientColors(dark
+                                               ? Quantity_Color(0.13, 0.16, 0.20, Quantity_TOC_RGB)
+                                               : Quantity_Color(0.87, 0.90, 0.94, Quantity_TOC_RGB),
+                                           dark ? Quantity_Color(0.19, 0.24, 0.29, Quantity_TOC_RGB)
+                                                : Quantity_Color(0.98, 0.99, 1, Quantity_TOC_RGB),
+                                           Aspect_GFM_VER, Standard_False);
+    update();
+}
+void AssemblyViewport::setComponents(const std::vector<AssemblyVisual>& visuals)
+{
+    m_visuals = visuals;
+    if (!isReady())
+        return;
+    const auto context = m_graphics.context();
+    if (!m_hover.IsNull())
+        context->Remove(m_hover, false);
+    m_hover.Nullify();
+    m_hovered.clear();
+    m_hoveredFace = 0;
+    for (auto it = m_presentations.begin(); it != m_presentations.end();)
+    {
+        if (std::none_of(visuals.begin(), visuals.end(),
+                         [&](const auto& v) { return v.id == it->first; }))
+        {
+            context->Remove(it->second, false);
+            it = m_presentations.erase(it);
+        }
+        else
+            ++it;
+    }
+    for (const auto& visual : visuals)
+    {
+        auto& item = m_presentations[visual.id];
+        const bool replaced = item.IsNull() || !item->Shape().IsSame(visual.shape);
+        if (replaced)
+        {
+            if (!item.IsNull())
+                context->Remove(item, false);
+            // Selection is activated before the first paint. The shared solid
+            // presentation deliberately disables automatic meshing.
+            presentation::prepareSolidTriangulation(visual.shape);
+            item = presentation::makeSolidPresentation(visual.shape);
+        }
+        bool moved = false;
+        for (int r = 1; r <= 3; ++r)
+            for (int c = 1; c <= 4; ++c)
+                moved |= std::abs(item->LocalTransformation().Value(r, c) -
+                                  visual.placement.Value(r, c)) > 1e-12;
+        if (moved)
+        {
+            if (replaced)
+                item->SetLocalTransformation(visual.placement);
+            else
+                context->SetLocation(item, TopLoc_Location(visual.placement));
+        }
+        if (std::abs(item->Transparency() - (visual.preview ? 0.3 : 0)) > 1e-9)
+            item->SetTransparency(visual.preview ? 0.3 : 0);
+        if (visual.visible && (replaced || !context->IsDisplayed(item)))
+            context->Display(item, AIS_Shaded, AIS_Shape::SelectionMode(TopAbs_FACE), false);
+        else if (!visual.visible && context->IsDisplayed(item))
+            context->Erase(item, false);
+    }
+    refreshSelection();
+    m_graphics.view()->ZFitAll();
+    update();
+}
+TopoDS_Shape AssemblyViewport::selectedShape(const std::string& id, int face) const
+{
+    const auto visual = std::find_if(m_visuals.begin(), m_visuals.end(),
+                                     [&](const auto& v) { return v.id == id && v.visible; });
+    if (visual == m_visuals.end())
+        return {};
+    if (!face)
+        return visual->shape;
+    TopTools_IndexedMapOfShape faces;
+    TopExp::MapShapes(visual->shape, TopAbs_FACE, faces);
+    return face > 0 && face <= faces.Extent() ? faces(face) : TopoDS_Shape{};
+}
+void AssemblyViewport::setSelected(const std::string& id, int face)
+{
+    m_selected = id;
+    m_selectedFace = face;
+    refreshSelection();
+    update();
+}
+void AssemblyViewport::refreshSelection()
+{
+    if (!isReady())
+        return;
+    if (!m_highlight.IsNull())
+        m_graphics.context()->Remove(m_highlight, false);
+    m_highlight.Nullify();
+    const auto shape = selectedShape(m_selected, m_selectedFace);
+    if (shape.IsNull())
+        return;
+    m_highlight = presentation::makeSolidPresentation(shape);
+    presentation::styleSelectedShape(m_highlight, devicePixelRatioF());
+    const auto found = std::find_if(m_visuals.begin(), m_visuals.end(),
+                                    [&](const auto& v) { return v.id == m_selected; });
+    m_highlight->SetLocalTransformation(found->placement);
+    m_graphics.context()->Display(m_highlight, AIS_Shaded, -1, false);
+}
+void AssemblyViewport::setReferenceHighlights(const std::vector<AssemblyVisual>& references)
+{
+    if (!isReady())
+        return;
+    for (const auto& item : m_references)
+        m_graphics.context()->Remove(item, false);
+    m_references.clear();
+    for (const auto& ref : references)
+        if (!ref.shape.IsNull())
+        {
+            Handle(AIS_Shape) item = new AIS_Shape(presentation::selectionOutline(ref.shape));
+            item->SetLocalTransformation(ref.placement);
+            item->SetColor(presentation::selectionBlue());
+            item->SetWidth(2 * devicePixelRatioF());
+            m_graphics.context()->Display(item, AIS_WireFrame, -1, false);
+            m_references.push_back(item);
+        }
+    update();
+}
+std::pair<std::string, int> AssemblyViewport::hit(const QPointF& point)
+{
+    if (!isReady())
+        return {};
+    m_graphics.synchronizeSurface();
+    const auto pixel = native(point);
+    const auto selector = m_graphics.context()->MainSelector();
+    const int tolerance = qMax(1, qRound(16 * devicePixelRatioF()));
+    if (selector->CustomPixelTolerance() != tolerance)
+    {
+        selector->SetPixelTolerance(tolerance + 1);
+        selector->SetPixelTolerance(tolerance);
+    }
+    selector->Pick(pixel.x(), pixel.y(), m_graphics.view());
+    for (int index = 1; index <= selector->NbPicked(); ++index)
+    {
+        const auto owner = Handle(StdSelect_BRepOwner)::DownCast(selector->Picked(index));
+        if (owner.IsNull())
+            continue;
+        for (const auto& [id, item] : m_presentations)
+            if (owner->Selectable() == item && m_graphics.context()->IsDisplayed(item))
+            {
+                TopTools_IndexedMapOfShape faces;
+                TopExp::MapShapes(item->Shape(), TopAbs_FACE, faces);
+                return {id, faces.FindIndex(owner->Shape())};
+            }
+    }
+    return {};
+}
+void AssemblyViewport::hover(const QPointF& point)
+{
+    const auto selected = hit(point);
+    if (selected.first == m_hovered && selected.second == m_hoveredFace)
+        return;
+    m_hovered = selected.first;
+    m_hoveredFace = selected.second;
+    if (!m_hover.IsNull())
+        m_graphics.context()->Remove(m_hover, false);
+    m_hover.Nullify();
+    const auto shape = selectedShape(m_hovered, m_hoveredFace);
+    if (shape.IsNull())
+    {
+        update();
+        return;
+    }
+    m_hover = new AIS_Shape(presentation::selectionOutline(shape));
+    m_hover->SetColor(presentation::hoverOrange());
+    m_hover->SetWidth(2 * devicePixelRatioF());
+    const auto visual = std::find_if(m_visuals.begin(), m_visuals.end(),
+                                     [&](const auto& v) { return v.id == m_hovered; });
+    m_hover->SetLocalTransformation(visual->placement);
+    m_graphics.context()->Display(m_hover, AIS_WireFrame, -1, false);
+    update();
+}
+gp_Pnt AssemblyViewport::cursorPoint(const QPointF& point) const
+{
+    if (!isReady())
+        return {};
+    const auto pixel = native(point);
+    double x, y, z;
+    m_graphics.view()->Convert(pixel.x(), pixel.y(), x, y, z);
+    return {x, y, z};
+}
+QPoint AssemblyViewport::project(const gp_Pnt& point) const
+{
+    if (!isReady())
+        return {};
+    int x, y;
+    m_graphics.view()->Convert(point.X(), point.Y(), point.Z(), x, y);
+    return {qRound(x / devicePixelRatioF()), qRound(y / devicePixelRatioF())};
+}
+void AssemblyViewport::fitAll()
+{
+    if (!isReady())
+    {
+        m_fitPending = true;
+        return;
+    }
+    m_fitPending = false;
+    m_navigation.resetAnchor();
+    m_graphics.view()->FitAll(0.05, false);
+    m_graphics.view()->ZFitAll();
+    update();
+}
+void AssemblyViewport::standardView(int index)
+{
+    if (!isReady())
+        return;
+    const gp_Dir normals[]{gp_Dir(0, 0, 1), gp_Dir(0, 0, -1), gp_Dir(-1, 0, 0), gp_Dir(1, 0, 0),
+                           gp_Dir(0, 1, 0), gp_Dir(0, -1, 0), gp_Dir(1, 1, 1)};
+    if (index < 0 || index > 6)
+        return;
+    auto view = camera();
+    view->SetDirection(normals[index].Reversed());
+    view->SetUp(index == 4 ? gp_Dir(0, 0, -1) : index == 5 ? gp_Dir(0, 0, 1) : gp_Dir(0, 1, 0));
+    view->OrthogonalizeUp();
+    m_navigation.resetAnchor();
+    m_graphics.view()->ZFitAll();
+    update();
+}
+void AssemblyViewport::mousePressEvent(QMouseEvent* event)
+{
+    if (!isReady())
+        return;
+    setFocus(Qt::MouseFocusReason);
+    if (event->button() == Qt::MiddleButton)
+    {
+        auto pivot = camera()->Center();
+        (void)hit(event->position());
+        const auto selector = m_graphics.context()->MainSelector();
+        if (selector->NbPicked())
+            pivot = selector->PickedPoint(1);
+        m_navigation.begin(event->modifiers(), event->position(), native(event->position()), pivot,
+                           pivot);
+        grabMouse();
+        event->accept();
+        return;
+    }
+    if (event->button() != Qt::LeftButton)
+        return;
+    if (m_inserting)
+    {
+        emit insertionConfirmed();
+        return;
+    }
+    const auto pickedValue = hit(event->position());
+    auto visual = std::find_if(m_visuals.begin(), m_visuals.end(),
+                               [&](const auto& v) { return v.id == pickedValue.first; });
+    const auto value = visual == m_visuals.end() ? AssemblyVisual{} : *visual;
+    emit picked(QString::fromStdString(pickedValue.first), pickedValue.second);
+    if (!m_matePicking && !value.id.empty() && !value.fixed)
+    {
+        m_dragId = value.id;
+        m_press = event->position();
+        m_dragPoint = cursorPoint(m_press);
+        m_dragPose = value.placement;
+        m_dragMoved = false;
+    }
+}
+void AssemblyViewport::mouseMoveEvent(QMouseEvent* event)
+{
+    if (!isReady())
+        return;
+    if (m_navigation.mode() != viewport::CameraNavigation::Mode::None)
+    {
+        m_navigation.move(m_graphics.view(), event->position(), native(event->position()), size(),
+                          {});
+        update();
+        return;
+    }
+    if (m_inserting)
+    {
+        emit insertionMoved(cursorPoint(event->position()));
+        return;
+    }
+    if (!m_dragId.empty() && event->buttons().testFlag(Qt::LeftButton))
+    {
+        if (!m_dragMoved &&
+            (event->position() - m_press).manhattanLength() < QApplication::startDragDistance())
+            return;
+        if (!m_dragMoved)
+        {
+            m_dragMoved = true;
+            emit dragStarted();
+            grabMouse();
+        }
+        auto placement = m_dragPose;
+        if (m_rotate)
+        {
+            const gp_Vec up(camera()->Up()), right = gp_Vec(camera()->Direction()).Crossed(up);
+            const auto delta = event->position() - m_press;
+            const auto rotation = gp_Quaternion(up, -delta.x() * 0.01) *
+                                  gp_Quaternion(right, -delta.y() * 0.01) *
+                                  m_dragPose.GetRotation();
+            placement.SetRotation(rotation);
+            placement.SetTranslationPart(m_dragPose.TranslationPart());
+        }
+        else
+            placement.SetTranslationPart(m_dragPose.TranslationPart() +
+                                         gp_Vec(m_dragPoint, cursorPoint(event->position())).XYZ());
+        emit dragPlacement(QString::fromStdString(m_dragId), placement);
+        return;
+    }
+    hover(event->position());
+}
+void AssemblyViewport::mouseReleaseEvent(QMouseEvent* event)
+{
+    if (event->button() == Qt::MiddleButton)
+    {
+        m_navigation.stop();
+        if (QWidget::mouseGrabber() == this)
+            releaseMouse();
+        return;
+    }
+    if (event->button() == Qt::LeftButton && !m_dragId.empty())
+    {
+        const bool moved = m_dragMoved;
+        m_dragId.clear();
+        m_dragMoved = false;
+        if (QWidget::mouseGrabber() == this)
+            releaseMouse();
+        if (moved)
+            emit dragFinished(true);
+    }
+}
+void AssemblyViewport::wheelEvent(QWheelEvent* event)
+{
+    if (!isReady() || !event->angleDelta().y())
+        return;
+    const double factor = std::pow(1.15, -event->angleDelta().y() / 120.0);
+    if (factor > 1)
+        viewport::CameraNavigation::zoom(m_graphics.view(), native(event->position()), factor,
+                                         cursorPoint(event->position()));
+    else
+        viewport::CameraNavigation::zoomCentered(m_graphics.view(), factor);
+    update();
+    event->accept();
+}
+void AssemblyViewport::keyPressEvent(QKeyEvent* event)
+{
+    if (event->key() == Qt::Key_Escape)
+    {
+        if (!m_dragId.empty())
+        {
+            m_dragId.clear();
+            m_dragMoved = false;
+            if (QWidget::mouseGrabber() == this)
+                releaseMouse();
+            emit dragFinished(false);
+        }
+        else
+            emit canceled();
+        event->accept();
+        return;
+    }
+    QWidget::keyPressEvent(event);
+}
+} // namespace thecad::ui

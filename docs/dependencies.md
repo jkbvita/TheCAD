@@ -35,6 +35,11 @@ The approved revolve/edge-feature batch also links OCCT TKFillet from this same
 license; no new package/version is introduced. The package script discovers the
 additional runtime DLL and retains its notices.
 
+The assembly foundation uses the existing OCCT TKMath `math_SVD` implementation
+for rigid-body mate steps and freedom diagnosis. This adds no package or version;
+the same OCCT license and runtime packaging apply. PlaneGCS remains the sketch
+solver and is not used for component placements.
+
 ## Standalone sketch solver
 
 PlaneGCS is a provisional owner-approved dependency, independently extracted from

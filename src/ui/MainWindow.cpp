@@ -15,6 +15,7 @@
 #include "ui/features/SplineParametersDialog.h"
 #include "ui/widgets/PropertyManagerControls.h"
 #include "ui/widgets/FeatureCommandBar.h"
+#include "ui/assembly/AssemblyWindow.h"
 #include "ui/ReferenceGeometryUi.h"
 #include "ui/features/SolidFeaturePanel.h"
 #include "modeling/Sketch.h"
@@ -170,6 +171,7 @@ MainWindow::MainWindow(QWidget* parent)
         return action;
     };
     addCommand("&New", "actionNew", QKeySequence::New, [this] { newDocument(); });
+    addCommand("New &Assembly...", "actionNewAssembly", {}, [] { showAssemblyWindow(); });
     addCommand("&Open...", "actionOpen", QKeySequence::Open, [this] { openDocument(); });
     fileMenu->addSeparator();
     addCommand("&Save", "actionSave", QKeySequence::Save, [this] { saveDocument(); });
@@ -624,8 +626,8 @@ QString MainWindow::currentPath() const { return m_session.path(); }
 
 QString MainWindow::chooseOpenPath()
 {
-    return QFileDialog::getOpenFileName(this, "Open TheCAD part", m_session.path(),
-        "TheCAD Part (*.thepart *.tcpart);;TheCAD Part (*.thepart);;Legacy TheCAD Part (*.tcpart)");
+    return QFileDialog::getOpenFileName(this, "Open TheCAD document", m_session.path(),
+        "TheCAD Documents (*.thepart *.theasmb *.tcpart);;TheCAD Part (*.thepart);;TheCAD Assembly (*.theasmb);;Legacy TheCAD Part (*.tcpart)");
 }
 
 QString MainWindow::chooseSavePath(bool allowExport)
@@ -737,6 +739,7 @@ void MainWindow::openDocument()
 {
     const QString path = chooseOpenPath();
     if (path.isEmpty()) return;
+    if(path.endsWith(".theasmb",Qt::CaseInsensitive)){showAssemblyWindow(path);return;}
     (void)openPartFileImpl(path,true);
 }
 

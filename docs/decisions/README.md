@@ -90,6 +90,7 @@ approved scope do not need repeated approval.
 - [0050. Reveal feature depth when starting a solid command](0050-feature-preview-camera.md)
 - [0051. Planar fit-point Spline](0051-planar-fit-point-spline.md)
 - [0052. Features CommandManager layout](0052-features-commandmanager.md)
+- [0053. Linked components and basic rigid-body mates](0053-assembly-foundation.md)
 
 ## Pending owner decisions
 

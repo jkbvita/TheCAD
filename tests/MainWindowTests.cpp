@@ -1,4 +1,5 @@
 #include "ui/MainWindow.h"
+#include "ui/assembly/AssemblyWindow.h"
 #include "ui/files/NativeFileDialogs.h"
 #include <QFileDialog>
 #include <QStackedWidget>
@@ -526,7 +527,7 @@ private slots:
         QCOMPARE(window.currentPath(), window.savePath + ".thepart");
         QVERIFY(!window.isWindowModified());
         const QString previousPath = window.currentPath();
-        window.savePath = directory.filePath("unsupported.theasmb");
+        window.savePath = directory.filePath("unsupported.thedrw");
         window.trigger("actionSaveAs");
         QCOMPARE(window.errors.size(), 1);
         QCOMPARE(window.currentPath(), previousPath);
@@ -535,6 +536,30 @@ private slots:
         window.trigger("actionOpen");
         QCOMPARE(window.errors.size(), 2);
         QCOMPARE(window.currentPath(), previousPath);
+    }
+
+    void assemblyEntryPointsPreservePartDocument()
+    {
+        QTemporaryDir directory;
+        const auto source=directory.filePath("linked.thepart");
+        document::PartDocument::createBox({7,8,9}).save(source);
+        TestWindow part;QVERIFY(part.openPartFile(source));part.setWindowModified(true);
+        const auto shape=part.document().shape();
+        const auto assemblyWindow=[]() -> AssemblyWindow* {
+            for(auto* widget:QApplication::topLevelWidgets())
+                if(auto* assembly=qobject_cast<AssemblyWindow*>(widget))return assembly;
+            return nullptr;
+        };
+        part.trigger("actionNewAssembly");auto* assembly=assemblyWindow();QVERIFY(assembly);
+        QVERIFY(assembly->document().components().empty());QVERIFY(assembly->close());
+        QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
+        document::AssemblyDocument saved;saved.insertComponent(source);
+        part.openPath=directory.filePath("assembly.theasmb");saved.save(part.openPath);
+        part.trigger("actionOpen");assembly=assemblyWindow();QVERIFY(assembly);
+        QCOMPARE(assembly->document().components().size(),std::size_t(1));QVERIFY(assembly->close());
+        QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
+        QVERIFY(part.document().shape().IsSame(shape));QVERIFY(part.isWindowModified());
+        QCOMPARE(part.currentPath(),source);QCOMPARE(part.promptCount,0);QVERIFY(part.errors.isEmpty());
     }
 
     void emptyPartAndContextualModelingCommands()

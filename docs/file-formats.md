@@ -1,25 +1,67 @@
 # Native TheCAD documents
 
 Permanent owner-approved extensions are .thepart (Part), .theasmb (Assembly), and
-.thedrw (Drawing). Only Part is implemented. Older .tcpart documents are read-only
+.thedrw (Drawing). Part and Assembly are implemented. Older .tcpart documents are read-only
 inputs: conversion saves to a separate .thepart path, retaining the original file.
-No assembly/drawing reader or placeholder is implemented. Internal serialization
+Drawing documents are not implemented. Internal serialization
 is provisional and versioned; filename conventions are permanent.
 
-## Current part structure (versions 16–23)
+## Assembly structure (version 1)
 
-The UTF-8 JSON root contains exactly format: "TheCAD.Part", version: 16 through 23, units:
+The UTF-8 JSON root contains exactly `format: "TheCAD.Assembly"`, `version: 1`,
+`units: "mm"`, `components` and `mates`. Sources are linked files, not embedded
+or fused bodies. Saving an assembly never writes its source part files.
+
+Each component contains `id`, `name`, `source`, `sourceDigest`, `placement`,
+`fixed` and `visible`. `source` is relative to the assembly directory where
+possible; cross-volume Windows links may remain absolute. `sourceDigest` is the
+SHA-256 of the loaded source file. `placement` is a twelve-number, row-major 3×4
+rigid rotation/translation matrix, in mm. Reflections, scaling, non-orthogonal
+matrices, duplicate IDs and missing/non-solid source parts reject loading.
+Repeated instances share immutable loaded source geometry but retain independent
+IDs and placements.
+
+Each mate contains `id`, `name`, `kind`, `first`, `second`, `value` and
+`alignment`. Kind is 0 Coincident, 1 Concentric, 2 Distance or 3 Angle. Each
+reference contains `component` (the instance ID, empty for the assembly frame)
+and `geometry` (the existing part GeometryReference record). Body supports require
+persistent topology names and resolve against the source part's current result;
+datum and sketch references use stable local feature/entity IDs. Missing or
+ambiguous names reject regeneration instead of substituting a nearby face.
+
+Coincident/Distance require two planes; Concentric requires two axes, including
+cylindrical-face axes; Angle requires two planes or two axes. Distance is signed
+mm along the first plane's normal, Angle is 0–180 degrees, and alignment is ±1.
+All mates solve together. A changed source digest triggers a rebuild on open and
+marks the document modified. Failed open/rebuild leaves the previous document
+intact. Undo restores loaded source snapshots; explicit Rebuild reloads files.
+
+Writes use QSaveFile with direct fallback disabled. Limits: 4 MiB, 64 components,
+256 mates and finite coordinates within ±1e9 mm. Ten-action session history,
+selection, preview and camera state are not serialized. Missing source files
+currently require restoring the linked path; interactive link repair is deferred.
+
+## Current part structure (versions 16–27)
+
+The UTF-8 JSON root contains exactly format: "TheCAD.Part", version: 16 through 27, units:
 "mm", features (ordered array) and resultFeature (last solid feature ID, or empty
 for empty/sketch/reference-only documents). Writers use the highest version
-required by the part. Sketch arcs require 23, Solid Circular Pattern requires 22, linked sketch offsets
+required by the part. Planar fit-point splines require 27, preserved draft-junction
+fillets require 26, trimmed fillet termination requires 25, configured extrusion
+start/end conditions, draft, thin walls and feature scope require 24. Sketch arcs
+require 23, Solid Circular Pattern requires 22, linked sketch offsets
 require 21, linked sketch projections
 and copies require 20, sweeps require 19, solid Linear Pattern and Mirror require
-18, revolve/fillet/chamfer require 17, and earlier feature sets use 16. Readers accept versions 1–23 and
+18, revolve/fillet/chamfer require 17, and earlier feature sets use 16. Readers accept versions 1–27 and
 reject unknown versions, fields, units and unsupported features.
 
 Arcs store the start, end, center, radius, and a clockwise flag in local sketch
 coordinates. A straight slot stores two arc and two line entities with regular
 sketch relations. It has no separate entity or file format.
+
+Splines store ordered local `fitPoints` (2–128 including a closing point), with
+stable interior-point roles introduced in schema 27. The interpolating OCCT curve
+is regenerated from those coordinates; transient tessellation is not serialized.
 
 Every feature has stable id, printable name, type and explicit dependencies.
 Types and additional fields:
@@ -236,7 +278,8 @@ permanent topology naming. See decision 0008.
 Version 1 is exactly one legacy box with no feature name. Version 2 adds named
 parametric history/entities but no relations. Version 3 adds Coincident/H/V;
 version 4 adds face attachments. These are read without inventing constraints or
-features. Saving intentionally writes version 13 .thepart to the selected path.
+features. Saving writes the lowest current schema required by the part (16–27)
+to the selected .thepart path.
 Version 5 adds dimensions and multiple region selections. Version 7 adds relative
 annotation placement; version 8 adds points, construction flags, on-geometry
 relations and regular polygon groups. Version 9 adds contextual relation types and
@@ -257,4 +300,4 @@ and 4000 dimensions per sketch; finite coordinates/values within 1e9 mm. Interse
 analysis allows at most 12,000 fragments, 1,000 regions and 1,000 references per region.
 Session undo/redo retains ten completed edits and is not serialized in this file.
 There is no suppression, history reordering, spatial sketching,
-assembly/drawing implementation, straight/reflex angular sectors, trimming or automatic repair.
+subassembly/drawing implementation, straight/reflex angular sectors or automatic repair.
