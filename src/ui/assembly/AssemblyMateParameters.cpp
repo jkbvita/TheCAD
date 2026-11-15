@@ -4,6 +4,9 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QSignalBlocker>
+#include <QStandardItemModel>
+#include <cmath>
+#include <algorithm>
 namespace thecad::ui
 {
 using namespace modeling::assembly;
@@ -30,7 +33,19 @@ AssemblyMateParameters::AssemblyMateParameters(QWidget* parent) : QWidget(parent
         m_fields[id] = w;
         w->setObjectName(QString("mateOption_%1").arg(id));
         m_form->addRow(label, w);
-        connect(w, &QDoubleSpinBox::valueChanged, this, &AssemblyMateParameters::changed);
+        connect(w, &QDoubleSpinBox::valueChanged, this,
+                [this, id]
+                {
+                    if (m_setting)
+                        return;
+                    if ((std::string(id) == "firstRatio" || std::string(id) == "secondRatio") &&
+                        m_fields.count("geometryRatio"))
+                    {
+                        const QSignalBlocker block(m_fields.at("geometryRatio"));
+                        static_cast<QCheckBox*>(m_fields.at("geometryRatio"))->setChecked(false);
+                    }
+                    emit changed();
+                });
     };
     const auto choice = [&](const char* id, const char* label, QStringList choices)
     {
@@ -62,6 +77,7 @@ AssemblyMateParameters::AssemblyMateParameters(QWidget* parent) : QWidget(parent
     number("firstRatio", "First ratio", 1, "", 0.000001);
     number("secondRatio", "Second ratio", 1, "", 0.000001);
     number("pitch", "Travel per revolution", 1, " mm", 0.000001);
+    check("geometryRatio", "Use selected geometry ratio");
     check("reverse", "Reverse motion");
     check("hingeLimits", "Specify angle limits");
     configure(MateKind::Coincident);
@@ -72,6 +88,9 @@ void AssemblyMateParameters::visible(const char* id, bool value)
 }
 void AssemblyMateParameters::configure(MateKind k)
 {
+    if (k != MateKind::Gear)
+        for (auto id : {"firstRatio", "secondRatio"})
+            m_fields.at(id)->setEnabled(true);
     for (const auto& [id, w] : m_fields)
         m_form->setRowVisible(w, false);
     const auto show = [&](std::initializer_list<const char*> names)
@@ -108,6 +127,8 @@ void AssemblyMateParameters::configure(MateKind k)
         show({"followAxis", "upAxis", "flipTangent", "flipUp"});
     if (k == MateKind::LinearCoupler || k == MateKind::Gear)
         show({"firstRatio", "secondRatio", "reverse"});
+    if (k == MateKind::Gear)
+        show({"geometryRatio"});
     if (k == MateKind::RackPinion || k == MateKind::Screw)
         show({"pitch", "reverse"});
     if (k == MateKind::UniversalJoint || k == MateKind::Belt)
@@ -131,12 +152,14 @@ MateParameters AssemblyMateParameters::parameters() const
     p.profile = {n("offset"), n("rotation"), b("clockwise")};
     p.path = {i("followAxis") - 1, i("upAxis") - 1, b("flipTangent"), b("flipUp")};
     p.coupler = {n("firstRatio"), n("secondRatio"), n("pitch"), b("reverse")};
+    p.coupler.useGeometryRatio = b("geometryRatio");
     p.hinge.limits = b("hingeLimits");
     return p;
 }
 void AssemblyMateParameters::setParameters(const MateParameters& p)
 {
     const QSignalBlocker block(this);
+    m_setting = true;
     const auto b = [&](const char* id, bool value)
     { static_cast<QCheckBox*>(m_fields.at(id))->setChecked(value); };
     const auto n = [&](const char* id, double value)
@@ -166,5 +189,90 @@ void AssemblyMateParameters::setParameters(const MateParameters& p)
     n("pitch", p.coupler.pitch);
     b("reverse", p.coupler.reverse);
     b("hingeLimits", p.hinge.limits);
+    b("geometryRatio", p.coupler.useGeometryRatio);
+    m_setting = false;
+}
+void AssemblyMateParameters::geometryRatio(double first, double second)
+{
+    const QSignalBlocker block(this);
+    m_setting = true;
+    auto* geometry = static_cast<QCheckBox*>(m_fields.at("geometryRatio"));
+    const bool available = first > 1e-6 && second > 1e-6;
+    geometry->setEnabled(available);
+    if (!available)
+        geometry->setChecked(false);
+    for (auto id : {"firstRatio", "secondRatio"})
+        static_cast<QDoubleSpinBox*>(m_fields.at(id))->setEnabled(!geometry->isChecked());
+    if (geometry->isChecked())
+    {
+        static_cast<QDoubleSpinBox*>(m_fields.at("firstRatio"))->setValue(2 * first);
+        static_cast<QDoubleSpinBox*>(m_fields.at("secondRatio"))->setValue(2 * second);
+    }
+    m_setting = false;
+}
+void AssemblyMateParameters::coordinateFrames(bool available)
+{
+    const QSignalBlocker block(this);
+    auto* axes = static_cast<QCheckBox*>(m_fields.at("alignAxes"));
+    axes->setEnabled(available);
+    if (!available)
+        axes->setChecked(false);
+}
+void AssemblyMateParameters::selectionGeometry(
+    MateKind kind, const std::vector<std::pair<std::string, MateGeometry>>& geometry)
+{
+    const QSignalBlocker block(this);
+    bool angular = false, centeredOnly = false, slotPair = false;
+    if (kind == MateKind::Width)
+    {
+        std::vector<MateGeometry> width, tab;
+        for (const auto& [role, g] : geometry)
+            (role == "width" ? width : tab).push_back(g);
+        const auto wedge = [](const auto& set)
+        {
+            return set.size() == 2 &&
+                   !set[0].frame.Direction().IsParallel(set[1].frame.Direction(), 1e-6);
+        };
+        angular = wedge(width) || wedge(tab);
+        if (!width.empty() && !tab.empty())
+        {
+            centeredOnly = (width.size() == 1 && tab.size() == 1) ||
+                           (angular && (width.size() == 1 || tab.size() == 1));
+            if (!angular)
+            {
+                const auto extent = [](const auto& set)
+                {
+                    return set.size() == 1
+                               ? 2 * set[0].radius
+                               : std::abs(gp_Vec(set[0].frame.Location(), set[1].frame.Location())
+                                              .Dot(gp_Vec(set[0].frame.Direction())));
+                };
+                centeredOnly |= std::abs(extent(width) - extent(tab)) < 1e-6;
+            }
+        }
+    }
+    if (kind == MateKind::Slot)
+        slotPair = std::any_of(
+            geometry.begin(), geometry.end(), [](const auto& entry)
+            { return entry.first == "follower" && entry.second.profile == MateProfileKind::Slot; });
+    auto* position = static_cast<QComboBox*>(m_fields.at("position"));
+    auto* model = qobject_cast<QStandardItemModel*>(position->model());
+    for (int i = 0; i < position->count(); ++i)
+        model->item(i)->setEnabled((!centeredOnly || i == int(PositionMode::Centered)) &&
+                                   (!slotPair || i <= int(PositionMode::Centered)));
+    if (!model->item(position->currentIndex())->isEnabled())
+        position->setCurrentIndex(int(PositionMode::Centered));
+    static_cast<QDoubleSpinBox*>(m_fields.at("distance"))->setSuffix(angular ? "°" : " mm");
+    if (kind == MateKind::ProfileCenter)
+    {
+        const bool circular =
+            std::any_of(geometry.begin(), geometry.end(), [](const auto& entry)
+                        { return entry.second.profile == MateProfileKind::Circle; });
+        m_fields.at("lockRotation")->setEnabled(circular);
+        if (!circular)
+            static_cast<QCheckBox*>(m_fields.at("lockRotation"))->setChecked(false);
+    }
+    else
+        m_fields.at("lockRotation")->setEnabled(true);
 }
 } // namespace thecad::ui

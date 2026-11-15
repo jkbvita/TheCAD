@@ -259,7 +259,8 @@ void AssemblyViewport::setReferenceHighlights(const std::vector<AssemblyVisual>&
         const auto& ref = valid[i];
         const bool replace = i >= m_references.size() ||
                              !m_referenceVisuals[i].shape.IsSame(ref.shape) ||
-                             m_referenceVisuals[i].filled != ref.filled;
+                             m_referenceVisuals[i].filled != ref.filled ||
+                             m_referenceVisuals[i].preview != ref.preview;
         if (replace)
         {
             if (i < m_references.size())
@@ -275,7 +276,8 @@ void AssemblyViewport::setReferenceHighlights(const std::vector<AssemblyVisual>&
             else
             {
                 item = new AIS_Shape(presentation::selectionOutline(ref.shape));
-                item->SetColor(presentation::selectionBlue());
+                item->SetColor(ref.preview ? Quantity_Color(Quantity_NOC_YELLOW)
+                                           : presentation::selectionBlue());
                 item->SetWidth(2 * devicePixelRatioF());
             }
             item->SetLocalTransformation(ref.placement);

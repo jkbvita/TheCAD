@@ -278,6 +278,76 @@ std::shared_ptr<const MatePath> matePath(const std::vector<MateGeometry>& chain)
     path->closed = !path->segments.empty() && last.Distance(start) < 1e-6;
     return path;
 }
+std::vector<std::size_t> camFaceChain(const std::vector<MateGeometry>& faces, std::size_t seed)
+{
+    if (seed >= faces.size())
+        throw std::runtime_error("The selected cam face is missing.");
+    const auto& selected = faces[seed];
+    if (selected.kind != MateGeometryKind::Plane && selected.kind != MateGeometryKind::Cylinder)
+        throw std::runtime_error("Select an extruded planar or cylindrical cam face.");
+    const auto normal = [](const MateGeometry& g, const gp_Pnt& p)
+    {
+        if (g.kind == MateGeometryKind::Plane)
+            return gp_Vec(g.frame.Direction());
+        gp_Vec radial(g.frame.Location(), p);
+        const gp_Vec axis(g.frame.Direction());
+        radial -= axis * radial.Dot(axis);
+        return radial.Normalized();
+    };
+    const auto tangentJoin = [&](const MateGeometry& a, const MateGeometry& b)
+    {
+        if (a.shape.IsNull() || b.shape.IsNull())
+            return false;
+        for (TopExp_Explorer first(a.shape, TopAbs_EDGE); first.More(); first.Next())
+            for (TopExp_Explorer second(b.shape, TopAbs_EDGE); second.More(); second.Next())
+                if (first.Current().IsSame(second.Current()))
+                {
+                    const BRepAdaptor_Curve curve(TopoDS::Edge(first.Current()));
+                    const auto p =
+                        curve.Value((curve.FirstParameter() + curve.LastParameter()) / 2);
+                    return std::abs(normal(a, p).Dot(normal(b, p))) > 1 - 1e-6;
+                }
+        return false;
+    };
+    for (const auto& axis : faces)
+    {
+        if (axis.kind != MateGeometryKind::Cylinder)
+            continue;
+        const auto direction = axis.frame.Direction();
+        const auto eligible = [&](const MateGeometry& g)
+        {
+            return !g.shape.IsNull() && g.shape.ShapeType() == TopAbs_FACE &&
+                   ((g.kind == MateGeometryKind::Cylinder &&
+                     g.frame.Direction().IsParallel(direction, 1e-6)) ||
+                    (g.kind == MateGeometryKind::Plane &&
+                     std::abs(g.frame.Direction().Dot(direction)) < 1e-6));
+        };
+        if (!eligible(selected))
+            continue;
+        std::vector<std::size_t> chain{seed};
+        for (std::size_t at = 0; at < chain.size(); ++at)
+            for (std::size_t i = 0; i < faces.size(); ++i)
+                if (eligible(faces[i]) && std::find(chain.begin(), chain.end(), i) == chain.end() &&
+                    tangentJoin(faces[chain[at]], faces[i]))
+                    chain.push_back(i);
+        if (chain.size() > 128)
+            throw std::runtime_error("The cam chain exceeds 128 faces.");
+        std::vector<MateGeometry> geometry;
+        for (auto i : chain)
+            geometry.push_back(faces[i]);
+        try
+        {
+            auto extrusion = direction;
+            (void)camPath(geometry, extrusion);
+            return chain;
+        }
+        catch (const std::exception&)
+        { /* Try another extrusion direction, without selecting unrelated faces. */
+        }
+    }
+    throw std::runtime_error("No closed tangent extruded cam chain contains the selected face. "
+                             "Select its side faces explicitly.");
+}
 std::shared_ptr<const MatePath> camPath(const std::vector<MateGeometry>& faces, gp_Dir& direction)
 {
     bool found = false;
@@ -388,6 +458,24 @@ std::shared_ptr<const MatePath> camPath(const std::vector<MateGeometry>& faces, 
             tb.Reverse();
         if (gp_Dir(ta).Dot(gp_Dir(tb)) < 1 - 1e-6)
             throw std::runtime_error("Cam faces must be tangent along the entire closed chain.");
+    }
+    // Surface-edge traversal can start on either side of the same face. Normalize
+    // winding so the external roller offset is independent of the picked seed.
+    double area = 0;
+    const auto origin = path->point(0);
+    for (int i = 0; i < 128; ++i)
+        area += gp_Vec(origin, path->point(i / 128.0))
+                    .Crossed(gp_Vec(origin, path->point((i + 1) / 128.0)))
+                    .Dot(gp_Vec(direction));
+    if (std::abs(area) < 1e-12)
+        throw std::runtime_error("The cam cross-section has no unambiguous interior.");
+    if (area < 0)
+    {
+        auto oriented = std::make_shared<MatePath>(*path);
+        std::reverse(oriented->segments.begin(), oriented->segments.end());
+        for (auto& segment : oriented->segments)
+            segment.reversed = !segment.reversed;
+        return oriented;
     }
     return path;
 }

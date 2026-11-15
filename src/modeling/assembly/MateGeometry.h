@@ -63,6 +63,8 @@ MateGeometry mateGeometry(const DatumGeometry&, bool coordinateFrame = false);
 std::shared_ptr<const MatePath> matePath(const std::vector<MateGeometry>& chain);
 std::shared_ptr<const MatePath> camPath(const std::vector<MateGeometry>& faces,
                                         gp_Dir& extrusionDirection);
+// Return indices of a closed tangent side-face chain containing the selected face.
+std::vector<std::size_t> camFaceChain(const std::vector<MateGeometry>& faces, std::size_t seed);
 bool mateGeometryDirection(const MateGeometry&);
 const char* mateGeometryName(MateGeometryKind);
 } // namespace thecad::modeling::assembly

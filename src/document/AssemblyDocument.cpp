@@ -2,6 +2,8 @@
 #include "document/ReferenceGeometryData.h"
 #include "document/storage/AssemblyFileStore.h"
 #include "document/storage/AssemblyMateData.h"
+#include "document/storage/PartFileStore.h"
+#include "document/storage/AssemblyWorkflowStore.h"
 #include <BRepBndLib.hxx>
 #include <Bnd_Box.hxx>
 #include <QCryptographicHash>
@@ -89,8 +91,34 @@ AssemblyComponent AssemblyDocument::loadSource(const QString& source)
             "The component source changed while loading. Retry the insertion or rebuild.");
     component.digest =
         QString::fromLatin1(QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex());
+    prepareSource(component);
+    return component;
+}
+AssemblyComponent AssemblyDocument::ownedSource(const QByteArray& data)
+{
+    AssemblyComponent component;
+    component.embeddedPart = data;
+    component.part = std::make_shared<PartDocument>(PartFileStore::decode(data));
+    component.digest =
+        QString::fromLatin1(QCryptographicHash::hash(data, QCryptographicHash::Sha256).toHex());
+    prepareSource(component);
+    return component;
+}
+void AssemblyDocument::prepareSource(AssemblyComponent& component)
+{
+    if (component.part->shape().IsNull())
+    {
+        require(!component.embeddedPart.isEmpty(), "Linked assembly parts require a solid body.");
+        const auto last =
+            std::find_if(component.part->features().rbegin(), component.part->features().rend(),
+                         [](const auto& f) { return f.kind == FeatureKind::Sketch; });
+        require(last != component.part->features().rend(),
+                "An owned component requires a solid or a generated sketch.");
+        component.displayShape = modeling::sketchShape(last->sketch);
+    }
+    require(!component.shape().IsNull(), "The component has no displayable geometry.");
     Bnd_Box box;
-    BRepBndLib::Add(component.part->shape(), box);
+    BRepBndLib::Add(component.shape(), box);
     double x0, y0, z0, x1, y1, z1;
     box.Get(x0, y0, z0, x1, y1, z1);
     component.size = std::max(
@@ -146,7 +174,6 @@ AssemblyComponent AssemblyDocument::loadSource(const QString& source)
         {
         }
     component.references = std::move(references);
-    return component;
 }
 const AssemblyComponent& AssemblyDocument::component(const std::string& id) const
 {
@@ -180,6 +207,14 @@ std::string AssemblyDocument::insertComponent(const QString& path, const gp_Trsf
     } while (std::any_of(m_components.begin(), m_components.end(),
                          [&](const auto& c) { return c.name == added.name; }));
     candidate.m_components.push_back(added);
+    for (const auto& asset : m_assets)
+        if (component(asset.componentId).path.compare(added.path, Qt::CaseInsensitive) == 0)
+        {
+            auto published = asset;
+            published.componentId = added.id;
+            candidate.m_assets.push_back(std::move(published));
+            break;
+        }
     candidate.solve();
     *this = std::move(candidate);
     return added.id;
@@ -187,7 +222,29 @@ std::string AssemblyDocument::insertComponent(const QString& path, const gp_Trsf
 void AssemblyDocument::setPlacement(const std::string& id, const gp_Trsf& placement)
 {
     require(!component(id).fixed, "Float the component before moving it.");
+    modeling::assembly::validateRigidPlacement(placement);
+    bool moved = false;
+    for (int r = 1; r <= 3; ++r)
+        for (int c = 1; c <= 4; ++c)
+            moved |= std::abs(component(id).placement.Value(r, c) - placement.Value(r, c)) > 1e-10;
+    if (!moved)
+        return;
     auto candidate = *this;
+    for (auto& mate : candidate.m_mates)
+        if (mate.kind == AssemblyMateKind::Magnetic &&
+            mate.status == modeling::assembly::MateStatus::Active && mate.definition &&
+            !mate.definition->parameters.magnetic.locked)
+        {
+            bool involves = false;
+            for (const auto& ref : mateReferences(mate))
+                involves |= ref.componentId == id;
+            if (involves)
+            {
+                mate.status = modeling::assembly::MateStatus::Suppressed;
+                mate.diagnostic =
+                    "Disconnected unlocked magnetic connection while moving the component.";
+            }
+        }
     for (auto& c : candidate.m_components)
         if (c.id == id)
             c.placement = placement;
@@ -197,7 +254,9 @@ void AssemblyDocument::setPlacement(const std::string& id, const gp_Trsf& placem
         return kind == K::Gear || kind == K::RackPinion || kind == K::Screw ||
                kind == K::LinearCoupler || kind == K::UniversalJoint || kind == K::Belt;
     };
-    const bool drive = std::any_of(m_mates.begin(), m_mates.end(),
+    const bool drive = std::any_of(m_inPlaces.begin(), m_inPlaces.end(), [&](const auto& part)
+                                   { return part.support.componentId == id; }) ||
+                       std::any_of(m_mates.begin(), m_mates.end(),
                                    [&](const auto& mate)
                                    {
                                        if (!mechanical(mate.kind) ||
@@ -266,6 +325,7 @@ std::string AssemblyDocument::setMate(AssemblyMate mate)
             found->kind != mate.kind || before.size() != after.size() || !found->definition;
         for (std::size_t i = 0; !changed && i < before.size(); ++i)
             changed = before[i].componentId != after[i].componentId ||
+                      before[i].connectorId != after[i].connectorId ||
                       !sameReference(before[i].geometry, after[i].geometry);
         if (!changed && mate.definition->parameters.standard.lockRotation &&
             !found->definition->parameters.standard.lockRotation)
@@ -289,6 +349,28 @@ void AssemblyDocument::deleteMates(const std::vector<std::string>& ids)
         require(
             std::any_of(m_mates.begin(), m_mates.end(), [&](const auto& m) { return m.id == id; }),
             "Mate is unavailable: " + id);
+    for (const auto& id : ids)
+    {
+        for (auto& belt : candidate.m_belts)
+        {
+            if (id == "mate-rotation-" + belt.id)
+                belt.engaged = false;
+            if (id == "mate-length-" + belt.id)
+                belt.driving = false;
+            if (id == "mate-lock-" + belt.id)
+                belt.lockPart = false;
+        }
+        for (auto& part : candidate.m_inPlaces)
+            if (id == "mate-inplace-" + part.id)
+            {
+                part.linked = false;
+                part.support = {};
+                part.offset = candidate.component(part.componentId).placement;
+            }
+        for (auto& asset : candidate.m_assets)
+            if (id == "mate-ground-" + asset.componentId)
+                asset.grounded = false;
+    }
     candidate.m_mates.erase(std::remove_if(candidate.m_mates.begin(), candidate.m_mates.end(),
                                            [&](const auto& m) { return member(ids, m.id); }),
                             candidate.m_mates.end());
@@ -343,6 +425,10 @@ void AssemblyDocument::setMateStatus(const std::vector<std::string>& ids,
         const auto found = std::find_if(candidate.m_mates.begin(), candidate.m_mates.end(),
                                         [&](const auto& m) { return m.id == id; });
         require(found != candidate.m_mates.end(), "Mate is unavailable.");
+        if (found->kind == AssemblyMateKind::Belt &&
+            status == modeling::assembly::MateStatus::Active && found->status != status &&
+            found->definition)
+            found->definition->motion = {};
         found->status = status;
         if (status != modeling::assembly::MateStatus::Unsolved)
             found->diagnostic.clear();
@@ -366,25 +452,76 @@ AssemblyDocument::componentDependents(const std::vector<std::string>& ids) const
             result.push_back(m);
     return result;
 }
-void AssemblyDocument::deleteComponents(const std::vector<std::string>& ids,
-                                        bool deleteDependentMates)
+void AssemblyDocument::deleteComponents(const std::vector<std::string>& ids, bool includeDependents)
 {
     require(!ids.empty(), "Select a component to delete.");
     for (const auto& id : ids)
         (void)component(id);
-    const auto dependents = componentDependents(ids);
-    require(deleteDependentMates || dependents.empty(),
-            "The selected components have dependent mates. Confirm their removal explicitly.");
+    require(includeDependents || componentDependencyNames(ids).empty(),
+            "The selected components have dependent mates or generated features. Confirm their "
+            "removal explicitly.");
     auto candidate = *this;
+    std::set<std::string> selected(ids.begin(), ids.end());
+    bool expanded = true;
+    while (expanded)
+    {
+        expanded = false;
+        for (const auto& belt : candidate.m_belts)
+        {
+            bool used = belt.location && selected.count(belt.location->componentId);
+            for (const auto& ref : belt.pulleys)
+                used |= selected.count(ref.componentId) > 0;
+            if (used && !belt.componentId.empty())
+                expanded |= selected.insert(belt.componentId).second;
+        }
+        for (const auto& part : candidate.m_inPlaces)
+            if (part.linked && selected.count(part.support.componentId))
+                expanded |= selected.insert(part.componentId).second;
+    }
+    candidate.m_belts.erase(
+        std::remove_if(candidate.m_belts.begin(), candidate.m_belts.end(),
+                       [&](auto& belt)
+                       {
+                           bool used = belt.location && selected.count(belt.location->componentId);
+                           for (const auto& ref : belt.pulleys)
+                               used |= selected.count(ref.componentId) > 0;
+                           if (used)
+                           {
+                               candidate.m_beltLayoutKeys.erase(belt.id);
+                               return true;
+                           }
+                           if (selected.count(belt.componentId))
+                           {
+                               belt.createPart = false;
+                               belt.componentId.clear();
+                               candidate.m_beltLayoutKeys.erase(belt.id);
+                           }
+                           return false;
+                       }),
+        candidate.m_belts.end());
+    candidate.m_inPlaces.erase(
+        std::remove_if(candidate.m_inPlaces.begin(), candidate.m_inPlaces.end(),
+                       [&](const auto& part)
+                       {
+                           return selected.count(part.componentId) ||
+                                  (part.linked && selected.count(part.support.componentId));
+                       }),
+        candidate.m_inPlaces.end());
+    candidate.m_assets.erase(std::remove_if(candidate.m_assets.begin(), candidate.m_assets.end(),
+                                            [&](const auto& asset)
+                                            { return selected.count(asset.componentId); }),
+                             candidate.m_assets.end());
+    if (candidate.m_groundPlane && selected.count(candidate.m_groundPlane->componentId))
+        candidate.m_groundPlane.reset();
     candidate.m_components.erase(std::remove_if(candidate.m_components.begin(),
-                                                candidate.m_components.end(),
-                                                [&](const auto& c) { return member(ids, c.id); }),
+                                                candidate.m_components.end(), [&](const auto& c)
+                                                { return selected.count(c.id); }),
                                  candidate.m_components.end());
     candidate.m_mates.erase(std::remove_if(candidate.m_mates.begin(), candidate.m_mates.end(),
-                                           [&](const auto& m)
+                                           [&](const auto& mate)
                                            {
-                                               for (const auto& ref : mateReferences(m))
-                                                   if (member(ids, ref.componentId))
+                                               for (const auto& ref : mateReferences(mate))
+                                                   if (selected.count(ref.componentId))
                                                        return true;
                                                return false;
                                            }),
@@ -398,6 +535,8 @@ void AssemblyDocument::reloadSources()
     std::map<QString, AssemblyComponent> cache;
     for (auto& c : candidate.m_components)
     {
+        if (!c.embeddedPart.isEmpty())
+            continue;
         auto found = cache.find(c.path.toCaseFolded());
         if (found == cache.end())
             found = cache.emplace(c.path.toCaseFolded(), loadSource(c.path)).first;
@@ -452,10 +591,25 @@ std::vector<AssemblyReferenceOption> AssemblyDocument::referenceOptions(const st
                           option.selectionShape,
                           option.mateGeometry});
     }
+    for (const auto& asset : m_assets)
+        if (asset.componentId == id)
+            for (const auto& connector : asset.connectors)
+            {
+                AssemblyReference ref{id, {}, connector.id};
+                const auto geometry = connectorGeometry(ref);
+                result.push_back(
+                    {prefix + "Published references / " + QString::fromStdString(connector.name),
+                     ref,
+                     {modeling::DatumKind::Point, geometry.frame},
+                     modeling::datumDisplayShape({modeling::DatumKind::Axis, geometry.frame}, 5),
+                     geometry});
+            }
     return result;
 }
 modeling::assembly::MateGeometry AssemblyDocument::mateGeometry(const AssemblyReference& ref) const
 {
+    if (!ref.connectorId.empty())
+        return connectorGeometry(ref);
     if (int(ref.geometry.source) >= 6)
     {
         require(!ref.geometry.topologyName.empty() &&
@@ -464,14 +618,24 @@ modeling::assembly::MateGeometry AssemblyDocument::mateGeometry(const AssemblyRe
                 "Body mate references require valid persistent topology names.");
         (void)component(ref.componentId).part->currentReferenceShape(ref.geometry);
     }
-    for (const auto& option : referenceOptions(ref.componentId))
-        if (sameReference(option.reference.geometry, ref.geometry))
-            return option.mateGeometry;
+    if (ref.componentId.empty())
+    {
+        for (const auto& option : referenceOptions({}))
+            if (sameReference(option.reference.geometry, ref.geometry))
+                return option.mateGeometry;
+    }
+    else
+        for (const auto& option : *component(ref.componentId).references)
+            if (sameReference(option.reference, ref.geometry))
+                return option.mateGeometry;
     throw std::runtime_error("The mate reference is missing or its geometry is unsupported. "
                              "Replace the reference explicitly.");
 }
-void AssemblyDocument::solve(const std::string& driven)
+void AssemblyDocument::solve(const std::string& driven, int generatedPass)
 {
+    require(generatedPass < 8,
+            "Generated assembly geometry did not converge. The previous document is retained.");
+    (void)updateGeneratedParts();
     require(m_components.size() <= 64 && m_mates.size() <= 256,
             "This assembly milestone supports 64 components and 256 mates.");
     std::set<std::string> ids;
@@ -480,7 +644,7 @@ void AssemblyDocument::solve(const std::string& driven)
     {
         require(!c.id.empty() && c.id.size() <= 128 && ids.insert(c.id).second,
                 "Invalid or duplicate component ID.");
-        require(!c.name.empty() && c.name.size() <= 256 && c.part && !c.part->shape().IsNull(),
+        require(!c.name.empty() && c.name.size() <= 256 && c.part && !c.shape().IsNull(),
                 "Invalid component source or name.");
         bodies.push_back({c.id, c.placement, c.fixed || c.id == driven, c.size});
     }
@@ -554,11 +718,17 @@ void AssemblyDocument::solve(const std::string& driven)
             m_mates[activeMates[i]].definition->motion = m_solution.motion[i];
     for (std::size_t i = 0; i < m_components.size(); ++i)
         m_components[i].placement = m_solution.placements[i];
+    for (auto& part : m_inPlaces)
+        if (!part.linked)
+            part.offset = component(part.componentId).placement;
+    if (updateGeneratedParts())
+        solve(driven, generatedPass + 1);
 }
 QByteArray AssemblyDocument::stateKey() const
 {
     QByteArray key;
     QDataStream out(&key, QIODevice::WriteOnly);
+    out << QJsonDocument(AssemblyWorkflowStore::write(*this)).toJson(QJsonDocument::Compact);
     out << quint64(m_components.size()) << quint64(m_mates.size());
     for (const auto& c : m_components)
     {

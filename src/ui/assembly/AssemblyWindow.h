@@ -9,10 +9,12 @@ class QStackedWidget;
 class QSplitter;
 class QCheckBox;
 class QDoubleSpinBox;
+class QMenu;
 namespace thecad::ui
 {
 class AssemblyViewport;
 class AssemblyMateEditor;
+class AssemblyPropertyEditor;
 class ComponentPlacementEditor;
 class PropertyManagerPage;
 class AssemblyWindow : public QMainWindow
@@ -46,6 +48,21 @@ private:
     void selectComponent(const std::string& id, int face = 0, TopAbs_ShapeEnum kind = TopAbs_FACE);
     void startMate(const std::optional<document::AssemblyMate>& editing = {});
     void quickMates();
+    enum class Workflow
+    {
+        Belt,
+        Asset,
+        Ground,
+        InPlace
+    };
+    void startWorkflow(Workflow, const std::string& editingId = {});
+    void showWorkflow(AssemblyPropertyEditor*);
+    void finishWorkflow(bool accepted);
+    void updateWorkflowPreview();
+    void editMate(const document::AssemblyMate&);
+    void addWorkflowTree(QTreeWidgetItem* root);
+    void workflowContextMenu(QMenu&, QTreeWidgetItem*);
+    void cycleMagnetic(bool moving);
     void finishMate(bool accepted);
     void updateMatePreview();
     void finishInsertion(bool accepted);
@@ -67,15 +84,20 @@ private:
     QSplitter* m_left;
     ComponentPlacementEditor* m_placement;
     AssemblyMateEditor* m_mate = nullptr;
+    AssemblyPropertyEditor* m_workflow = nullptr;
     PropertyManagerPage* m_insertPage = nullptr;
     std::optional<document::AssemblyDocument> m_insertCandidate, m_dragCandidate;
-    std::string m_insertId, m_selected;
+    std::string m_insertId, m_selected, m_selectedBelt, m_magneticMovingId;
+    gp_Trsf m_magneticRawPose;
+    int m_magneticMovingConnector = -1, m_magneticStationaryConnector = -1;
+    double m_magneticDistance = 10;
     QCheckBox* m_insertFixed = nullptr;
     QDoubleSpinBox* m_insertCoordinates[3]{};
     std::vector<document::AssemblyReferenceOption> m_treeReferences;
     std::vector<document::AssemblyReferenceOption> m_preselection;
     QAction *m_insertAction, *m_mateAction, *m_moveAction, *m_rotateAction, *m_undo, *m_redo,
         *m_delete, *m_fix, *m_hide, *m_save, *m_saveAs, *m_open, *m_new, *m_rebuild;
+    QAction *m_beltAction, *m_assetAction, *m_groundAction, *m_contextAction, *m_magneticAction;
 };
 void showAssemblyWindow(const QString& path = {});
 } // namespace thecad::ui

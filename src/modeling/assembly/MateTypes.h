@@ -90,10 +90,22 @@ struct CouplerMateOptions
 {
     double firstRatio = 1, secondRatio = 1, pitch = 1;
     bool reverse = false;
+    bool useGeometryRatio = false;
 };
 struct HingeMateOptions
 {
     bool limits = false;
+};
+struct BeltMateOptions
+{
+    bool engaged = true, driving = false;
+    double length = 100, thickness = 0;
+    std::vector<double> diameters;
+    std::vector<int> sides;
+};
+struct MagneticMateOptions
+{
+    bool locked = false;
 };
 struct MateParameters
 {
@@ -104,6 +116,8 @@ struct MateParameters
     PathMateOptions path;
     CouplerMateOptions coupler;
     HingeMateOptions hinge;
+    BeltMateOptions belt;
+    MagneticMateOptions magnetic;
 };
 // Anchors and continuous coordinates are document state, not tessellation or IDs.
 struct MateMotionState

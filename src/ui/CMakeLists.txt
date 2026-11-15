@@ -19,6 +19,13 @@ add_library(thecad_ui STATIC
     assembly/AssemblyWindow.cpp assembly/AssemblyWindow.h assembly/AssemblyMateEditor.cpp assembly/AssemblyMateEditor.h
     assembly/AssemblyMateParameters.cpp assembly/AssemblyMateParameters.h
     assembly/AssemblyQuickMates.cpp
+    assembly/AssemblyPropertyEditor.cpp assembly/AssemblyPropertyEditor.h
+    assembly/AssemblyBeltEditor.cpp assembly/AssemblyBeltEditor.h
+    assembly/AssemblyAssetEditor.cpp assembly/AssemblyAssetEditor.h
+    assembly/AssemblyReferenceWorkflowEditors.cpp assembly/AssemblyReferenceWorkflowEditors.h
+    assembly/AssemblyMagneticEditor.cpp assembly/AssemblyMagneticEditor.h
+    assembly/AssemblyWorkflowUi.cpp
+    assembly/AssemblyWorkflowTree.cpp
     assembly/ComponentPlacementEditor.cpp assembly/ComponentPlacementEditor.h)
 target_include_directories(thecad_ui PUBLIC "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(thecad_ui PUBLIC thecad_viewport_widget thecad_widgets thecad_application thecad_exchange)

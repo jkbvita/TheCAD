@@ -200,20 +200,47 @@ static MateSolution solveMateBlock(const std::vector<RigidBody>& bodies,
             variables.push_back({-1, int(q), int(m)});
     auto current = evaluate(state, mates, scale);
     double damping = 1e-6;
-    // Escape symmetric zero gradients (coincident points with nonzero distance,
-    // parallel axes with a nonzero angle). Subsequent steps solve all equations.
-    if (!satisfied(current))
-        for (std::size_t i = 0; i < variables.size(); ++i)
-            if (variables[i].body >= 0)
-                step(state, variables[i],
-                     variables[i].coordinate < 3 ? 1e-4 : 0.025 * (variables[i].coordinate - 2),
-                     scale);
-    current = evaluate(state, mates, scale);
     const int columns = int(variables.size());
     for (int iteration = 0; !satisfied(current) && iteration < 180 && columns > 0; ++iteration)
     {
         const auto j = jacobian(state, mates, variables, scale);
         const int rows = int(current.values.size());
+        // Escape a singular equation only when its first derivative vanishes.
+        // Probe one coordinate, rather than disturbing every free component.
+        bool escaped = false;
+        for (int row = 0; row < rows && !escaped; ++row)
+        {
+            if (std::abs(current.values[std::size_t(row)]) <= current.tolerances[std::size_t(row)])
+                continue;
+            double gradient = 0;
+            for (int c = 1; c <= columns; ++c)
+                gradient += j(row + 1, c) * j(row + 1, c);
+            if (gradient > 1e-16)
+                continue;
+            double response = 0;
+            int coordinate = -1;
+            for (int c = 0; c < columns; ++c)
+            {
+                auto trial = state;
+                step(trial, variables[std::size_t(c)], 1e-3, scale);
+                const auto probe = evaluate(trial, mates, scale);
+                const double change =
+                    std::abs(probe.values[std::size_t(row)] - current.values[std::size_t(row)]);
+                if (change > response)
+                {
+                    response = change;
+                    coordinate = c;
+                }
+            }
+            if (coordinate >= 0 && response > 1e-10)
+            {
+                step(state, variables[std::size_t(coordinate)], 1e-3, scale);
+                current = evaluate(state, mates, scale);
+                escaped = true;
+            }
+        }
+        if (escaped)
+            continue;
         math_Matrix augmented(1, rows + columns, 1, columns, 0.0);
         math_Vector right(1, rows + columns, 0.0), delta(1, columns, 0.0);
         for (int r = 1; r <= rows; ++r)

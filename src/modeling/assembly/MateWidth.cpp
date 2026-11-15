@@ -123,6 +123,8 @@ MateResidual widthResidual(const ResolvedMate& mate, const std::vector<gp_Trsf>&
         }
         if (available < -1e-6)
             throw std::runtime_error("The cylindrical tab is wider than the groove.");
+        if (std::abs(available) < 1e-6 && p.mode != PositionMode::Centered)
+            throw std::runtime_error("Equal widths support Centered only.");
         if (p.mode == PositionMode::Centered)
             scalar(offset, true);
         else if (p.mode == PositionMode::Free)
@@ -163,6 +165,8 @@ MateResidual widthResidual(const ResolvedMate& mate, const std::vector<gp_Trsf>&
     const double available = width.width - tab.width;
     if (available < -1e-6)
         throw std::runtime_error("The tab is wider than the available groove.");
+    if (std::abs(available) < 1e-6 && p.mode != PositionMode::Centered)
+        throw std::runtime_error("Equal widths support Centered only.");
     const double offset = gp_Vec(width.center, tab.center).Dot(width.normal) * (p.flip ? -1 : 1);
     if (p.mode == PositionMode::Free)
         bound(offset, available, true);

@@ -7,6 +7,9 @@ Some detailed pages were retrievable only in earlier official editions; those
 links retain their actual edition. Such details need a 2026 UI/document check
 before an exact-parity claim. This report is research, not an implementation.
 
+Implementation update: the tables below preserve the **pre-implementation baseline at 10cb319**.
+See [current implementation and limitations](assembly-mates-implementation.md).
+
 ## What "all mates" includes
 
 The ordinary Mate PropertyManager has eight Standard types, seven Advanced
@@ -52,7 +55,7 @@ Tangency has its own eligibility restrictions; a non-analytic surface and an
 undrafted extruded face are not interchangeable abstractions.
 [Tangent Mate](https://help.solidworks.com/2026/english/SolidWorks/sldworks/r_Tangent_Mate_SWassy.htm).
 
-## Advanced types — all currently missing
+## Advanced types — missing at research baseline
 
 | Type | Selection/behavior requirements |
 | --- | --- |
@@ -97,7 +100,7 @@ Limits are intervals, not equalities at the initial value. Dragging inside a
 valid interval must remain possible and outward movement at a bound must stop.
 [Limit Mates, official 2020 edition](https://help.solidworks.com/2020/english/solidworks/sldworks/t_Limit_Mates_SWassy.htm).
 
-## Mechanical types — all currently missing
+## Mechanical types — missing at research baseline
 
 | Type | Expected behavior and controls |
 | --- | --- |
@@ -138,7 +141,7 @@ Universal Joint drives output rotation from input rotation; the retrieved short
 topic does not specify enough detail to claim its complete selector/phase UI was
 verified. [Universal Joint, official 2025 edition](https://help.solidworks.com/2025/English/SolidWorks/sldworks/t_Universal_Joint_Mate_SWassy.htm).
 
-## Related mating workflows — all currently missing
+## Related mating workflows — missing at research baseline
 
 | Workflow | Dependency/behavior |
 | --- | --- |
@@ -188,7 +191,7 @@ parameters, belong to an additional analysis workflow. Kinematic mate coverage
 does not by itself provide a force, collision or deformable-body simulator.
 [Mate Analysis tab](https://help.solidworks.com/2026/english/SolidWorks/sldworks/HIDD_DVE_MATEANALYSIS.htm?id=7.7.3.6).
 
-## Current architecture gaps
+## Architecture gaps at the research baseline
 
 Inspection of the latest local implementation found:
 

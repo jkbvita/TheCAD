@@ -125,6 +125,20 @@ void validateMateParameters(MateKind k, const MateParameters& p)
         throw std::runtime_error("Invalid cylindrical distance condition.");
     if (p.coupler.firstRatio <= 0 || p.coupler.secondRatio <= 0 || p.coupler.pitch <= 0)
         throw std::runtime_error("Mate ratios and pitch must be positive.");
+    if ((k == MateKind::LimitAngle || (k == MateKind::Hinge && p.hinge.limits)) &&
+        (p.limit.minimum < 0 || p.limit.maximum > 180))
+        throw std::runtime_error("Angle limits must lie between 0 and 180 degrees.");
+    if (!std::isfinite(p.belt.length) || p.belt.length <= 0 || p.belt.length > 1e9 ||
+        !std::isfinite(p.belt.thickness) || p.belt.thickness < 0 || p.belt.thickness > 1e9 ||
+        p.belt.diameters.size() > 64 || p.belt.sides.size() > 64)
+        throw std::runtime_error("Invalid belt length, thickness or pulley count.");
+    for (double diameter : p.belt.diameters)
+        if (!std::isfinite(diameter) || diameter < 0 || diameter > 1e9)
+            throw std::runtime_error(
+                "Belt diameters must be finite and nonnegative; zero uses the measured diameter.");
+    for (int side : p.belt.sides)
+        if (side != -1 && side != 1)
+            throw std::runtime_error("Belt routing sides must be -1 or +1.");
     if (p.path.followAxis < -1 || p.path.followAxis > 2 || p.path.upAxis < -1 ||
         p.path.upAxis > 2 || (p.path.upAxis >= 0 && p.path.upAxis == p.path.followAxis))
         throw std::runtime_error("Path orientation must use different component axes.");

@@ -70,17 +70,37 @@ std::string id(const QJsonValue& v, bool empty = false)
 }
 QJsonObject reference(const AssemblyReference& ref)
 {
-    return {{"component", QString::fromStdString(ref.componentId)},
-            {"geometry", writeGeometryReference(ref.geometry)}};
+    QJsonObject object{{"component", QString::fromStdString(ref.componentId)},
+                       {"geometry", writeGeometryReference(ref.geometry)}};
+    if (!ref.connectorId.empty())
+        object["connector"] = QString::fromStdString(ref.connectorId);
+    return object;
 }
 AssemblyReference reference(const QJsonValue& v)
 {
     const auto o = object(v);
-    fields(o, {"component", "geometry"});
-    return {id(o["component"], true), readGeometryReference(object(o["geometry"]), 27)};
+    QSet<QString> expected{"component", "geometry"};
+    if (o.contains("connector"))
+        expected.insert("connector");
+    fields(o, expected);
+    AssemblyReference ref{id(o["component"], true),
+                          readGeometryReference(object(o["geometry"]), 27)};
+    if (o.contains("connector"))
+    {
+        ref.connectorId = id(o["connector"]);
+        require(!ref.componentId.empty() &&
+                    ref.geometry.source == modeling::ReferenceSource::Origin,
+                "A published connector requires its component frame.");
+    }
+    return ref;
 }
 QJsonObject parameters(const MateParameters& p)
 {
+    QJsonArray diameters, sides;
+    for (double value : p.belt.diameters)
+        diameters.append(value);
+    for (int side : p.belt.sides)
+        sides.append(side);
     return {{"standard", QJsonObject{{"lockRotation", p.standard.lockRotation},
                                      {"alignAxes", p.standard.alignAxes},
                                      {"firstArc", int(p.standard.firstArc)},
@@ -101,13 +121,25 @@ QJsonObject parameters(const MateParameters& p)
             {"coupler", QJsonObject{{"firstRatio", p.coupler.firstRatio},
                                     {"secondRatio", p.coupler.secondRatio},
                                     {"pitch", p.coupler.pitch},
-                                    {"reverse", p.coupler.reverse}}},
-            {"hinge", QJsonObject{{"limits", p.hinge.limits}}}};
+                                    {"reverse", p.coupler.reverse},
+                                    {"useGeometryRatio", p.coupler.useGeometryRatio}}},
+            {"hinge", QJsonObject{{"limits", p.hinge.limits}}},
+            {"magnetic", QJsonObject{{"locked", p.magnetic.locked}}},
+            {"belt", QJsonObject{{"engaged", p.belt.engaged},
+                                 {"driving", p.belt.driving},
+                                 {"length", p.belt.length},
+                                 {"thickness", p.belt.thickness},
+                                 {"diameters", diameters},
+                                 {"sides", sides}}}};
 }
 MateParameters parameters(const QJsonValue& v)
 {
     const auto o = object(v);
-    fields(o, {"standard", "limit", "position", "profile", "path", "coupler", "hinge"});
+    QSet<QString> expected{"standard", "limit", "position", "profile", "path", "coupler", "hinge"};
+    for (auto field : {"belt", "magnetic"})
+        if (o.contains(field))
+            expected.insert(field);
+    fields(o, expected);
     MateParameters p;
     auto s = object(o["standard"]);
     fields(s, {"lockRotation", "alignAxes", "firstArc", "secondArc", "internalTangency"});
@@ -129,12 +161,40 @@ MateParameters parameters(const QJsonValue& v)
     p.path = {integer(s["followAxis"], -1, 2), integer(s["upAxis"], -1, 2),
               boolean(s["flipTangent"]), boolean(s["flipUp"])};
     s = object(o["coupler"]);
-    fields(s, {"firstRatio", "secondRatio", "pitch", "reverse"});
+    QSet<QString> couplerFields{"firstRatio", "secondRatio", "pitch", "reverse"};
+    if (s.contains("useGeometryRatio"))
+        couplerFields.insert("useGeometryRatio");
+    fields(s, couplerFields);
     p.coupler = {number(s["firstRatio"]), number(s["secondRatio"]), number(s["pitch"]),
                  boolean(s["reverse"])};
+    if (s.contains("useGeometryRatio"))
+        p.coupler.useGeometryRatio = boolean(s["useGeometryRatio"]);
     s = object(o["hinge"]);
     fields(s, {"limits"});
     p.hinge.limits = boolean(s["limits"]);
+    if (o.contains("magnetic"))
+    {
+        s = object(o["magnetic"]);
+        fields(s, {"locked"});
+        p.magnetic.locked = boolean(s["locked"]);
+    }
+    if (o.contains("belt"))
+    {
+        s = object(o["belt"]);
+        fields(s, {"engaged", "driving", "length", "thickness", "diameters", "sides"});
+        p.belt.engaged = boolean(s["engaged"]);
+        p.belt.driving = boolean(s["driving"]);
+        p.belt.length = number(s["length"]);
+        p.belt.thickness = number(s["thickness"]);
+        for (const auto& value : array(s["diameters"], 64))
+            p.belt.diameters.push_back(number(value));
+        for (const auto& value : array(s["sides"], 64))
+        {
+            const int side = integer(value, -1, 1);
+            require(side != 0, "Belt routing side must be -1 or +1.");
+            p.belt.sides.push_back(side);
+        }
+    }
     return p;
 }
 QJsonArray matrix(const gp_Trsf& t)
@@ -167,6 +227,22 @@ gp_Trsf matrix(const QJsonValue& v)
     return t;
 }
 } // namespace
+QJsonObject writeAssemblyReference(const AssemblyReference& ref)
+{
+    return reference(ref);
+}
+AssemblyReference readAssemblyReference(const QJsonValue& value)
+{
+    return reference(value);
+}
+QJsonArray writeAssemblyTransform(const gp_Trsf& value)
+{
+    return matrix(value);
+}
+gp_Trsf readAssemblyTransform(const QJsonValue& value)
+{
+    return matrix(value);
+}
 QJsonObject writeMateDefinition(const AssemblyMate::Definition& definition)
 {
     QJsonArray groups, anchors, coordinates;

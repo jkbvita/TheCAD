@@ -2,6 +2,10 @@
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepPrimAPI_MakePrism.hxx>
+#include <BRepPrimAPI_MakeCone.hxx>
+#include <GC_MakeArcOfCircle.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <TopExp_Explorer.hxx>
 #include <Geom_Line.hxx>
@@ -229,6 +233,40 @@ void mechanical()
     for (auto kind : {MateKind::LockToSketch, MateKind::InPlace})
         solve(bodies(), pair(kind, frame, frame), 0);
 }
+void relativeMechanicalMotion()
+{
+    const auto cylinder = entity(K::Cylinder, {}, gp_Dir(0, 0, 1), 2);
+    auto screw = pair(MateKind::Screw, cylinder, cylinder);
+    screw.definition->parameters.coupler.pitch = 4;
+    std::vector<gp_Trsf> poses(2);
+    prepareMate(screw, poses);
+    for (int step = 1; step <= 80; ++step)
+    {
+        const double angle = step * 0.2;
+        gp_Trsf common, relative;
+        common.SetRotation(gp_Quaternion(gp_Vec(1, 2, 3), step * 0.01));
+        common.SetTranslationPart({step * 0.3, 2, 7});
+        relative.SetRotation(gp_Quaternion(gp_Vec(0, 0, 1), angle));
+        relative.SetTranslationPart({0, 0, 4 * angle / (2 * pi)});
+        poses = {common, common * relative};
+        prepareMate(screw, poses);
+        const auto residual = mateResidual(screw, poses, screw.definition->motion.coordinates, 10);
+        for (std::size_t i = 0; i < residual.values.size(); ++i)
+            require(std::abs(residual.values[i]) <= residual.tolerances[i] * 1.01,
+                    "Screw pitch changed under common rigid motion or a complete turn");
+    }
+    auto gear = pair(MateKind::Gear, cylinder, entity(K::Cylinder, {}, gp_Dir(0, 0, 1), 4));
+    gear.definition->parameters.coupler.useGeometryRatio = true;
+    poses.assign(2, {});
+    prepareMate(gear, poses);
+    poses[0].SetRotation(gp_Quaternion(gp_Vec(0, 0, 1), 0.8));
+    poses[1].SetRotation(gp_Quaternion(gp_Vec(0, 0, 1), -0.4));
+    prepareMate(gear, poses);
+    const auto residual = mateResidual(gear, poses, gear.definition->motion.coordinates, 10);
+    for (std::size_t i = 0; i < residual.values.size(); ++i)
+        require(std::abs(residual.values[i]) <= residual.tolerances[i] * 1.01,
+                "Geometry-derived gear ratio is wrong");
+}
 void geometry()
 {
     BRepBuilderAPI_MakePolygon polygon;
@@ -246,6 +284,65 @@ void geometry()
     require(path->closed && std::abs(path->length - 8 * pi) < 1e-6,
             "Circular path length is wrong");
     require(path->point(0.25).Distance(gp_Pnt(0, 4, 0)) < 1e-6, "Circular path position is wrong");
+    BRepBuilderAPI_MakeWire capsule;
+    capsule.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(-5, -2, 0), gp_Pnt(5, -2, 0)).Edge());
+    capsule.Add(BRepBuilderAPI_MakeEdge(
+                    GC_MakeArcOfCircle(gp_Pnt(5, -2, 0), gp_Pnt(7, 0, 0), gp_Pnt(5, 2, 0)).Value())
+                    .Edge());
+    capsule.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(5, 2, 0), gp_Pnt(-5, 2, 0)).Edge());
+    capsule.Add(
+        BRepBuilderAPI_MakeEdge(
+            GC_MakeArcOfCircle(gp_Pnt(-5, 2, 0), gp_Pnt(-7, 0, 0), gp_Pnt(-5, -2, 0)).Value())
+            .Edge());
+    const auto camSolid =
+        BRepPrimAPI_MakePrism(BRepBuilderAPI_MakeFace(capsule.Wire()).Face(), gp_Vec(0, 0, 5))
+            .Shape();
+    std::vector<MateGeometry> faces;
+    for (TopExp_Explorer it(camSolid, TopAbs_FACE); it.More(); it.Next())
+        faces.push_back(mateGeometry(it.Current()));
+    for (std::size_t seed = 0; seed < faces.size(); ++seed)
+    {
+        if (faces[seed].kind == K::Plane && std::abs(faces[seed].frame.Direction().Z()) > 0.9)
+            continue;
+        const auto indices = camFaceChain(faces, seed);
+        require(indices.size() == 4,
+                "Cam chain selection missed tangent neighbors or included an end face");
+        auto m = pair(MateKind::Cam, faces[seed], entity(K::Cylinder, {}, gp_Dir(0, 0, 1), 1));
+        m.definition->references.clear();
+        for (auto i : indices)
+            m.definition->references.push_back({"cam", 0, faces[i]});
+        m.definition->references.push_back(
+            {"follower", 1, entity(K::Cylinder, {}, gp_Dir(0, 0, 1), 1)});
+        std::vector<gp_Trsf> poses(2);
+        prepareMate(m, poses);
+        const auto cam = m.definition->references[0].geometry.path;
+        require(std::abs(cam->length - (20 + 4 * pi)) < 1e-6, "Extruded cam path length is wrong");
+        for (double at : {0.01, 0.25, 0.49, 0.75, 0.99})
+        {
+            const auto p = cam->point(at);
+            const gp_Vec normal(m.definition->references[0].geometry.frame.Direction());
+            const auto outward = gp_Vec(cam->tangent(at)).Crossed(normal).Normalized();
+            const auto target = p.Translated(outward);
+            require(gp_Vec(gp_Pnt(), p).Dot(outward) > 0,
+                    "Cam roller offset points inside the cam");
+            poses[1].SetRotation(gp_Quaternion(gp_Vec(0, 0, 1), normal));
+            poses[1].SetTranslationPart(target.XYZ());
+            const auto residual = mateResidual(m, poses, {at}, 10);
+            for (std::size_t i = 0; i < residual.values.size(); ++i)
+                require(std::abs(residual.values[i]) <= residual.tolerances[i] * 1.01,
+                        "Cam contact failed across a tangent join: " + std::to_string(i) + "=" +
+                            std::to_string(residual.values[i]));
+        }
+    }
+    MateGeometry cone;
+    for (TopExp_Explorer it(BRepPrimAPI_MakeCone(4, 2, 10).Shape(), TopAbs_FACE); it.More();
+         it.Next())
+    {
+        auto g = mateGeometry(it.Current());
+        if (g.kind == K::Cone)
+            cone = g;
+    }
+    solve(bodies(), pair(MateKind::Tangent, cone, entity(K::Plane)), 4);
 }
 } // namespace
 int main()
@@ -255,6 +352,7 @@ int main()
         standards();
         advanced();
         mechanical();
+        relativeMechanicalMotion();
         geometry();
         std::cout << "PASS: typed standard, advanced, mechanical and generated equations, freedom "
                      "and geometry\n";

@@ -130,15 +130,18 @@ void append(Sketch& sketch, const Route& route, double offset, const char* prefi
 BeltGeometry beltGeometry(const std::vector<BeltPulley>& pulleys, double thickness,
                           double planeOffset)
 {
-    if (!std::isfinite(thickness) || thickness <= 0 || thickness > 1e9)
-        throw std::runtime_error("Belt thickness must be positive.");
+    if (!std::isfinite(thickness) || thickness < 0 || thickness > 1e9)
+        throw std::runtime_error("Belt thickness must be finite and nonnegative.");
     const auto route = calculate(pulleys, planeOffset);
     BeltGeometry geometry;
     geometry.frame = route.frame;
     geometry.length = route.length;
     append(geometry.centerline, route, 0, "belt");
-    append(geometry.boundary, route, thickness / 2, "left");
-    append(geometry.boundary, route, -thickness / 2, "right");
+    if (thickness > 0)
+    {
+        append(geometry.boundary, route, thickness / 2, "left");
+        append(geometry.boundary, route, -thickness / 2, "right");
+    }
     return geometry;
 }
 double beltLength(const std::vector<BeltPulley>& pulleys)

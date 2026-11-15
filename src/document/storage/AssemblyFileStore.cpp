@@ -2,6 +2,7 @@
 #include "document/AssemblyDocument.h"
 #include "document/ReferenceGeometryData.h"
 #include "document/storage/AssemblyMateData.h"
+#include "document/storage/AssemblyWorkflowStore.h"
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -86,11 +87,15 @@ AssemblyDocument AssemblyFileStore::load(const QString& path)
     require(error.error == QJsonParseError::NoError && parsed.isObject(),
             "Assembly is not valid JSON.");
     const auto root = parsed.object();
-    fields(root, {"format", "version", "units", "components", "mates"});
+    QSet<QString> rootFields{"format", "version", "units", "components", "mates"};
+    if (root.contains("workflows"))
+        rootFields.insert("workflows");
+    fields(root, rootFields);
     const double version = number(root["version"]);
     require(root["format"] == "TheCAD.Assembly" && (version == 1 || version == 2) &&
                 root["units"] == "mm",
             "Unsupported assembly format, version or units.");
+    require(version == 2 || !root.contains("workflows"), "Assembly workflows require schema 2.");
     require(root["components"].isArray() && root["components"].toArray().size() <= 64 &&
                 root["mates"].isArray() && root["mates"].toArray().size() <= 256,
             "Invalid assembly component/mate list.");
@@ -101,15 +106,30 @@ AssemblyDocument AssemblyFileStore::load(const QString& path)
     {
         require(value.isObject(), "Invalid assembly component.");
         const auto object = value.toObject();
-        fields(object, {"id", "name", "source", "sourceDigest", "placement", "fixed", "visible"});
+        QSet<QString> componentFields{"id",        "name",  "source", "sourceDigest",
+                                      "placement", "fixed", "visible"};
+        if (object.contains("embeddedPart"))
+            componentFields.insert("embeddedPart");
+        fields(object, componentFields);
         const auto source = text(object["source"]);
-        require(!source.isEmpty(), "Missing component source path.");
-        const auto absolute = QDir::cleanPath(directory.absoluteFilePath(source));
-        const auto key = absolute.toCaseFolded();
-        auto found = cache.find(key);
-        if (found == cache.end())
-            found = cache.emplace(key, AssemblyDocument::loadSource(absolute)).first;
-        auto component = found->second;
+        AssemblyComponent component;
+        if (object.contains("embeddedPart"))
+        {
+            require(version == 2 && source.isEmpty() && object["embeddedPart"].isObject(),
+                    "Owned part data requires schema 2 and cannot also name an external source.");
+            component = AssemblyDocument::ownedSource(
+                QJsonDocument(object["embeddedPart"].toObject()).toJson(QJsonDocument::Indented));
+        }
+        else
+        {
+            require(!source.isEmpty(), "Missing component source path.");
+            const auto absolute = QDir::cleanPath(directory.absoluteFilePath(source));
+            const auto key = absolute.toCaseFolded();
+            auto found = cache.find(key);
+            if (found == cache.end())
+                found = cache.emplace(key, AssemblyDocument::loadSource(absolute)).first;
+            component = found->second;
+        }
         component.id = identifier(object["id"]);
         component.name = text(object["name"], 256).toStdString();
         require(object["fixed"].isBool() && object["visible"].isBool(),
@@ -164,12 +184,19 @@ AssemblyDocument AssemblyFileStore::load(const QString& path)
         mate.alignment = int(alignment);
         result.m_mates.push_back(std::move(mate));
     }
+    if (root.contains("workflows"))
+    {
+        require(root["workflows"].isObject(), "Invalid assembly workflow metadata.");
+        AssemblyWorkflowStore::read(result, root["workflows"].toObject());
+    }
     result.solve();
     return result;
 }
 void AssemblyFileStore::save(const AssemblyDocument& document, const QString& path)
 {
     const bool version2 =
+        !document.m_assets.empty() || !document.m_belts.empty() || !document.m_inPlaces.empty() ||
+        document.m_groundPlane ||
         std::any_of(document.m_mates.begin(), document.m_mates.end(),
                     [](const auto& mate)
                     {
@@ -185,13 +212,17 @@ void AssemblyFileStore::save(const AssemblyDocument& document, const QString& pa
         for (int i = 1; i <= 3; ++i)
             for (int j = 1; j <= 4; ++j)
                 matrix.append(c.placement.Value(i, j));
-        components.append(QJsonObject{{"id", q(c.id)},
-                                      {"name", q(c.name)},
-                                      {"source", directory.relativeFilePath(c.path)},
-                                      {"sourceDigest", c.digest},
-                                      {"placement", matrix},
-                                      {"fixed", c.fixed},
-                                      {"visible", c.visible}});
+        QJsonObject component{
+            {"id", q(c.id)},
+            {"name", q(c.name)},
+            {"source", c.embeddedPart.isEmpty() ? directory.relativeFilePath(c.path) : QString{}},
+            {"sourceDigest", c.digest},
+            {"placement", matrix},
+            {"fixed", c.fixed},
+            {"visible", c.visible}};
+        if (!c.embeddedPart.isEmpty())
+            component["embeddedPart"] = QJsonDocument::fromJson(c.embeddedPart).object();
+        components.append(component);
     }
     for (const auto& m : document.m_mates)
         if (version2)
@@ -204,11 +235,13 @@ void AssemblyFileStore::save(const AssemblyDocument& document, const QString& pa
                                      {"second", reference(m.second)},
                                      {"value", m.value},
                                      {"alignment", m.alignment}});
-    const QJsonObject root{{"format", "TheCAD.Assembly"},
-                           {"version", version2 ? 2 : 1},
-                           {"units", "mm"},
-                           {"components", components},
-                           {"mates", mates}};
+    QJsonObject root{{"format", "TheCAD.Assembly"},
+                     {"version", version2 ? 2 : 1},
+                     {"units", "mm"},
+                     {"components", components},
+                     {"mates", mates}};
+    if (version2)
+        root["workflows"] = AssemblyWorkflowStore::write(document);
     const auto bytes = QJsonDocument(root).toJson(QJsonDocument::Indented);
     require(bytes.size() <= 4 * 1024 * 1024, "Assembly exceeds its file-size limit.");
     QSaveFile file(path);

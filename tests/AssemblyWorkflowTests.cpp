@@ -1,6 +1,10 @@
 #include "ui/assembly/AssemblyWindow.h"
 #include "ui/assembly/AssemblyViewport.h"
 #include "ui/assembly/AssemblyMateEditor.h"
+#include "ui/assembly/AssemblyPropertyEditor.h"
+#include "ui/assembly/AssemblyBeltEditor.h"
+#include "ui/assembly/AssemblyReferenceWorkflowEditors.h"
+#include "ui/widgets/PropertyManagerControls.h"
 #include "ui/PropertyManagerPage.h"
 #include <Graphic3d_Camera.hxx>
 #include <gp_Quaternion.hxx>
@@ -20,6 +24,7 @@
 #include <QTest>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
+#include <QTabBar>
 #include <cmath>
 
 namespace thecad::ui
@@ -107,7 +112,188 @@ class AssemblyWorkflowTest final : public QObject
         QCOMPARE(expected->Scale(), actual->Scale());
         QCOMPARE(expected->ProjectionType(), actual->ProjectionType());
     }
+    void confirmWorkflow(AssemblyWindow& window)
+    {
+        QVERIFY(window.m_workflow);
+        auto* ok = window.m_workflow->page()->buttons->button(QDialogButtonBox::Ok);
+        QVERIFY2(ok->isEnabled(), qPrintable(window.m_workflow->page()->status->text()));
+        QTest::mouseClick(ok, Qt::LeftButton);
+        QApplication::processEvents();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    }
 private slots:
+    void tangentCamFaceSelection()
+    {
+        QTemporaryDir temp;
+        modeling::Sketch profile;
+        profile.entities = {
+            {modeling::EntityKind::Line, {-5, -2}, {5, -2}, 1, "bottom"},
+            {modeling::EntityKind::Arc, {5, -2}, {5, 2}, 2, "right", false, {5, 0}},
+            {modeling::EntityKind::Line, {5, 2}, {-5, 2}, 1, "top"},
+            {modeling::EntityKind::Arc, {-5, 2}, {-5, -2}, 2, "left", false, {-5, 0}}};
+        auto part = document::PartDocument::createEmpty();
+        const auto sketch = part.addSketch(profile);
+        part.addExtrude(sketch, {"bottom", "right", "top", "left"}, 5,
+                        modeling::Direction::Positive);
+        const auto camPath = temp.filePath("cam.thepart");
+        part.save(camPath);
+        auto roller = document::PartDocument::createEmpty();
+        profile.entities = {{modeling::EntityKind::Circle, {0, 0}, {}, 1, "roller"}};
+        const auto rollerSketch = roller.addSketch(profile);
+        roller.addExtrude(rollerSketch, {"roller"}, 5, modeling::Direction::Positive);
+        const auto rollerPath = temp.filePath("roller.thepart");
+        roller.save(rollerPath);
+        document::AssemblyDocument doc;
+        const auto cam = doc.insertComponent(camPath);
+        gp_Trsf placement;
+        placement.SetTranslationPart({8, 0, 0});
+        const auto follower = doc.insertComponent(rollerPath, placement);
+        AssemblyTestWindow window;
+        window.m_session.commit(doc);
+        window.refresh();
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        QTRY_VERIFY(window.m_viewport->isReady());
+        const Handle(Graphic3d_Camera) camera = new Graphic3d_Camera(window.m_viewport->camera());
+        command(window, "actionMate");
+        window.m_mate->findChild<QTabBar*>("assemblyMateFamily")->setCurrentIndex(2);
+        auto* type = window.m_mate->findChild<QComboBox*>("assemblyMateType");
+        type->setCurrentIndex(type->findData(int(document::AssemblyMateKind::Cam)));
+        const auto cylinder = [&](const std::string& id)
+        {
+            const auto options = doc.referenceOptions(id);
+            for (const auto& option : options)
+                if (option.reference.geometry.source == modeling::ReferenceSource::BodyFace &&
+                    option.mateGeometry.kind == modeling::assembly::MateGeometryKind::Cylinder)
+                    return option.reference;
+            return document::AssemblyReference{};
+        };
+        window.m_mate->pick(cylinder(cam));
+        window.m_mate->pick(cylinder(follower));
+        QVERIFY2(window.m_mate->candidate(), qPrintable(window.m_mate->page()->status->text()));
+        confirmMate(window);
+        QCOMPARE(window.document().mates().size(), std::size_t(1));
+        QCOMPARE(window.document().mates()[0].definition->groups[0].references.size(),
+                 std::size_t(4));
+        unchanged(camera, window.m_viewport);
+    }
+    void generatedPropertyManagers()
+    {
+        QTemporaryDir temp;
+        const auto path = temp.filePath("template.thepart");
+        auto part = document::PartDocument::createBox({20, 10, 5});
+        modeling::DatumDefinition point;
+        point.method = modeling::DatumMethod::PointXYZ;
+        point.position = {20, 5, 0};
+        const auto pointId = part.addReferenceGeometry(point);
+        part.save(path);
+        document::AssemblyDocument doc;
+        const auto a = doc.insertComponent(path);
+        gp_Trsf pose;
+        pose.SetTranslationPart({35, 0, 0});
+        const auto b = doc.insertComponent(path, pose);
+        AssemblyTestWindow window;
+        window.m_session.commit(doc);
+        window.refresh();
+        window.showMaximized();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        QTRY_VERIFY(window.m_viewport->isReady());
+        window.m_viewport->fitAll();
+        QApplication::processEvents();
+        const Handle(Graphic3d_Camera) camera = new Graphic3d_Camera(window.m_viewport->camera());
+        const auto enterBelt = [&]
+        {
+            command(window, "actionBeltChain");
+            QVERIFY(window.m_workflow);
+            reference(window, a, true, 2);
+            window.m_workflow->findChild<QDoubleSpinBox*>("beltPulleyDiameter")->setValue(10);
+            reference(window, b, true, 2);
+            window.m_workflow->findChild<QDoubleSpinBox*>("beltPulleyDiameter")->setValue(10);
+            window.m_workflow->findChild<QCheckBox*>("beltCreatePart")->setChecked(true);
+        };
+        enterBelt();
+        QVERIFY2(window.m_workflow->candidate(),
+                 qPrintable(window.m_workflow->page()->status->text()));
+        window.finishWorkflow(false);
+        QVERIFY(window.document().belts().empty());
+        QCOMPARE(window.document().components().size(), std::size_t(2));
+        unchanged(camera, window.m_viewport);
+        enterBelt();
+        confirmWorkflow(window);
+        QCOMPARE(window.document().belts().size(), std::size_t(1));
+        QCOMPARE(window.document().components().size(), std::size_t(3));
+        const auto beltId = window.document().belts()[0].id;
+        QVERIFY(item(window, beltId));
+        unchanged(camera, window.m_viewport);
+        window.startWorkflow(AssemblyWindow::Workflow::Belt, beltId);
+        window.m_workflow->findChild<QCheckBox*>("beltEngaged")->setChecked(false);
+        confirmWorkflow(window);
+        QVERIFY(!window.document().belts()[0].engaged);
+        command(window, "actionUndo");
+        QVERIFY(window.document().belts()[0].engaged);
+        command(window, "actionRedo");
+        QVERIFY(!window.document().belts()[0].engaged);
+        command(window, "actionAssemblyGroundPlane");
+        reference(window, {}, false, 0);
+        confirmWorkflow(window);
+        QVERIFY(window.document().groundPlane());
+        unchanged(camera, window.m_viewport);
+        command(window, "actionAssetPublisher");
+        modeling::GeometryReference p;
+        p.source = modeling::ReferenceSource::Datum;
+        p.featureId = pointId;
+        window.m_workflow->pick({a, p});
+        window.m_workflow->pick(
+            {a,
+             {modeling::ReferenceSource::BaseAxis, {}, {}, {}, {}, modeling::PointRole::First, 0}});
+        auto* ground = window.m_workflow->findChild<QComboBox*>("assetGroundPlane");
+        static_cast<PropertyReference*>(ground)->pick();
+        window.m_workflow->pick({a,
+                                 {modeling::ReferenceSource::BasePlane,
+                                  {},
+                                  {},
+                                  {},
+                                  {},
+                                  modeling::PointRole::First,
+                                  0}});
+        confirmWorkflow(window);
+        QCOMPARE(window.document().assets().size(), std::size_t(1));
+        QCOMPARE(window.document().assets()[0].connectors.size(), std::size_t(1));
+        unchanged(camera, window.m_viewport);
+        command(window, "actionNewInContextPart");
+        auto* context = dynamic_cast<AssemblyInPlaceEditor*>(window.m_workflow);
+        QVERIFY(context);
+        QVERIFY(context->setTemplateFile(path));
+        window.m_workflow->pick({a,
+                                 {modeling::ReferenceSource::BasePlane,
+                                  {},
+                                  {},
+                                  {},
+                                  {},
+                                  modeling::PointRole::First,
+                                  0}});
+        window.m_workflow->findChild<QDoubleSpinBox*>("inContextOffsetZ")->setValue(12);
+        confirmWorkflow(window);
+        QCOMPARE(window.document().inPlaceParts().size(), std::size_t(1));
+        const auto owned = window.document().inPlaceParts()[0].componentId;
+        QVERIFY(std::abs(window.document().component(owned).placement.TranslationPart().Z() - 12) <
+                1e-7);
+        unchanged(camera, window.m_viewport);
+        window.allowDeletion = true;
+        window.m_tree->setCurrentItem(item(window, beltId));
+        command(window, "actionDeleteAssemblySelection");
+        QVERIFY(window.document().belts().empty());
+        QCOMPARE(window.document().components().size(), std::size_t(3));
+        command(window, "actionUndo");
+        QCOMPARE(window.document().belts().size(), std::size_t(1));
+        window.savePath = temp.filePath("workflows.theasmb");
+        command(window, "actionSaveAssemblyAs");
+        QVERIFY(window.openAssemblyFile(window.savePath));
+        QCOMPARE(window.document().belts().size(), std::size_t(1));
+        QCOMPARE(window.document().inPlaceParts().size(), std::size_t(1));
+        QCOMPARE(window.document().assets().size(), std::size_t(1));
+        QVERIFY(window.errors.isEmpty());
+    }
     void typedEntityPickingAndMultipleMates()
     {
         QTemporaryDir temp;

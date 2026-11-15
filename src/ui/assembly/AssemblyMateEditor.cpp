@@ -172,6 +172,8 @@ void AssemblyMateEditor::changeKind()
     const auto old = references();
     const auto kind = MateKind(m_kind->currentData().toInt());
     auto params = m_parameters->parameters();
+    if (kind == MateKind::Gear)
+        params.coupler.useGeometryRatio = true;
     params.position.mode = (kind == MateKind::Path || kind == MateKind::Cam)
                                ? PositionMode::Free
                                : PositionMode::Centered;
@@ -192,7 +194,7 @@ int AssemblyMateEditor::optionIndex(const document::AssemblyReference& reference
     for (int i = 0; i < int(m_options.size()); ++i)
     {
         const auto& ref = m_options[std::size_t(i)].reference;
-        if (ref.componentId != reference.componentId ||
+        if (ref.componentId != reference.componentId || ref.connectorId != reference.connectorId ||
             ref.geometry.source != reference.geometry.source)
             continue;
         if (!reference.geometry.topologyName.empty())
@@ -349,6 +351,35 @@ void AssemblyMateEditor::pick(const document::AssemblyReference& ref)
             item->setSelected(true);
             ++count;
         }
+        if (!initializing && selection.role.key == "cam" && count == 1 && item->isSelected() &&
+            ref.geometry.source == modeling::ReferenceSource::BodyFace)
+        {
+            std::vector<MateGeometry> faces;
+            std::vector<int> options;
+            std::size_t seed = 0;
+            for (int i = 0; i < int(m_options.size()); ++i)
+                if (m_options[std::size_t(i)].reference.componentId == ref.componentId &&
+                    m_options[std::size_t(i)].reference.geometry.source ==
+                        modeling::ReferenceSource::BodyFace)
+                {
+                    if (i == option)
+                        seed = faces.size();
+                    faces.push_back(m_options[std::size_t(i)].mateGeometry);
+                    options.push_back(i);
+                }
+            try
+            {
+                const auto chain = camFaceChain(faces, seed);
+                for (auto i : chain)
+                    list->item(options[i])->setSelected(true);
+                count = int(chain.size());
+                if (m_active + 1 < int(m_selections.size()))
+                    activate(m_active + 1);
+            }
+            catch (const std::exception&)
+            { /* Keep the user's explicit face selection for repair. */
+            }
+        }
     }
     if (count >= selection.role.maximum && m_active + 1 < int(m_selections.size()))
         activate(m_active + 1);
@@ -365,6 +396,38 @@ void AssemblyMateEditor::pick(const document::AssemblyReference& ref)
         m_flip->setChecked(a.frame.Direction()
                                .Transformed(transform(selected[0]))
                                .Dot(b.frame.Direction().Transformed(transform(selected[1]))) < 0);
+    }
+    if (MateKind(m_kind->currentData().toInt()) == MateKind::Cam)
+    {
+        try
+        {
+            std::vector<MateGeometry> chain;
+            std::optional<document::AssemblyReference> carrier, follower;
+            for (const auto& group : groups())
+                for (const auto& reference : group.references)
+                    if (group.role == "cam")
+                    {
+                        chain.push_back(m_source.mateGeometry(reference));
+                        carrier = reference;
+                    }
+                    else if (group.role == "follower")
+                        follower = reference;
+            if (carrier && follower)
+            {
+                gp_Dir normal;
+                (void)camPath(chain, normal);
+                if (!carrier->componentId.empty())
+                    normal.Transform(m_source.component(carrier->componentId).placement);
+                auto direction = m_source.mateGeometry(*follower).frame.Direction();
+                if (!follower->componentId.empty())
+                    direction.Transform(m_source.component(follower->componentId).placement);
+                const QSignalBlocker block(m_flip);
+                m_flip->setChecked(normal.Dot(direction) < 0);
+            }
+        }
+        catch (const std::exception&)
+        { /* The preview reports incomplete or invalid chains. */
+        }
     }
     m_initializing = initializing;
     refreshPreview();
@@ -434,7 +497,8 @@ void AssemblyMateEditor::refreshPreview()
                                                            m_source.mateGeometry(selected[0]),
                                                            m_source.mateGeometry(selected[1]));
                 model->item(i)->setEnabled(valid);
-                if (valid && fallback < 0)
+                if (valid && fallback < 0 &&
+                    MateKind(m_kind->itemData(i).toInt()) != MateKind::Lock)
                     fallback = i;
             }
             if (m_kind->currentIndex() >= 0 && !model->item(m_kind->currentIndex())->isEnabled() &&
@@ -444,6 +508,13 @@ void AssemblyMateEditor::refreshPreview()
                 m_kind->setCurrentIndex(fallback);
             }
         }
+        if (MateKind(m_kind->currentData().toInt()) == MateKind::Gear && selected.size() == 2)
+            m_parameters->geometryRatio(m_source.mateGeometry(selected[0]).radius,
+                                        m_source.mateGeometry(selected[1]).radius);
+        if (selected.size() == 2)
+            m_parameters->coordinateFrames(
+                m_source.mateGeometry(selected[0]).kind == MateGeometryKind::Frame &&
+                m_source.mateGeometry(selected[1]).kind == MateGeometryKind::Frame);
         auto mate = m_mate;
         mate.name = m_name->text().trimmed().toStdString();
         mate.kind = MateKind(m_kind->currentData().toInt());
@@ -465,6 +536,11 @@ void AssemblyMateEditor::refreshPreview()
         }
         mate.definition = document::AssemblyMate::Definition{};
         mate.definition->groups = groups();
+        std::vector<std::pair<std::string, MateGeometry>> selectedGeometry;
+        for (const auto& group : mate.definition->groups)
+            for (const auto& ref : group.references)
+                selectedGeometry.emplace_back(group.role, m_source.mateGeometry(ref));
+        m_parameters->selectionGeometry(mate.kind, selectedGeometry);
         mate.definition->parameters = m_parameters->parameters();
         if (m_mate.definition && m_mate.kind == mate.kind &&
             QJsonDocument(document::writeMateDefinition(*m_mate.definition)).object()["groups"] ==

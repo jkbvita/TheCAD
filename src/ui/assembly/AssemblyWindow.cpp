@@ -1,6 +1,8 @@
 #include "ui/assembly/AssemblyWindow.h"
 #include "ui/assembly/AssemblyViewport.h"
 #include "ui/assembly/AssemblyMateEditor.h"
+#include "ui/assembly/AssemblyPropertyEditor.h"
+#include "ui/assembly/AssemblyBeltEditor.h"
 #include "ui/assembly/ComponentPlacementEditor.h"
 #include "ui/MainWindow.h"
 #include "ui/PropertyManagerPage.h"
@@ -22,6 +24,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QInputDialog>
 #include <QGridLayout>
 #include <QKeyEvent>
 #include <QLabel>
@@ -29,6 +32,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSet>
+#include <QSettings>
 #include <QSignalBlocker>
 #include <QSplitter>
 #include <QStackedWidget>
@@ -40,6 +44,7 @@
 #include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <cmath>
 #include <stdexcept>
 
 namespace thecad::ui
@@ -55,7 +60,8 @@ bool sameReference(const document::AssemblyReference& a, const document::Assembl
 {
     const auto& x = a.geometry;
     const auto& y = b.geometry;
-    return a.componentId == b.componentId && x.source == y.source &&
+    return a.componentId == b.componentId && a.connectorId == b.connectorId &&
+           x.source == y.source &&
            (!x.topologyName.empty() ? x.topologyName == y.topologyName
                                     : x.featureId == y.featureId && x.entityId == y.entityId &&
                                           x.role == y.role && x.index == y.index);
@@ -91,6 +97,30 @@ AssemblyWindow::AssemblyWindow(QWidget* parent) : QMainWindow(parent)
     connect(m_tree, &QTreeWidget::itemChanged, this,
             [this](QTreeWidgetItem* item, int)
             {
+                if (!draftActive() && item->data(0, kindRole).toString() == "belt")
+                {
+                    startWorkflow(Workflow::Belt,
+                                  item->data(0, Qt::UserRole).toString().toStdString());
+                    return;
+                }
+                if (!draftActive() && item->data(0, kindRole).toString() == "asset")
+                {
+                    startWorkflow(Workflow::Asset,
+                                  item->data(0, referenceRole).toString().toStdString());
+                    return;
+                }
+                if (!draftActive() && item->data(0, kindRole).toString() == "ground")
+                {
+                    startWorkflow(Workflow::Ground);
+                    return;
+                }
+                if (!draftActive() && item->data(0, kindRole).toString() == "component")
+                    for (const auto& part : document().inPlaceParts())
+                        if (q(part.componentId) == item->data(0, Qt::UserRole).toString())
+                        {
+                            startWorkflow(Workflow::InPlace, part.id);
+                            return;
+                        }
                 if (draftActive() || item->data(0, kindRole).toString() != "component")
                     return;
                 const auto id = item->data(0, Qt::UserRole).toString().toStdString();
@@ -105,7 +135,7 @@ AssemblyWindow::AssemblyWindow(QWidget* parent) : QMainWindow(parent)
                     for (const auto& mate : document().mates())
                         if (q(mate.id) == item->data(0, Qt::UserRole).toString())
                         {
-                            startMate(mate);
+                            editMate(mate);
                             break;
                         }
             });
@@ -121,12 +151,14 @@ AssemblyWindow::AssemblyWindow(QWidget* parent) : QMainWindow(parent)
             if (!item->isSelected())
                 m_tree->setCurrentItem(item, 0, QItemSelectionModel::ClearAndSelect);
             QMenu menu(this);
+            workflowContextMenu(menu, item);
             if (item->data(0, kindRole).toString() == "component")
             {
                 menu.addAction(m_fix);
                 menu.addAction(m_hide);
                 auto* open = menu.addAction("Open part");
                 const auto id = item->data(0, Qt::UserRole).toString().toStdString();
+                open->setEnabled(document().component(id).embeddedPart.isEmpty());
                 connect(open, &QAction::triggered, this,
                         [this, id]
                         {
@@ -147,7 +179,7 @@ AssemblyWindow::AssemblyWindow(QWidget* parent) : QMainWindow(parent)
                             for (const auto& mate : document().mates())
                                 if (q(mate.id) == id)
                                 {
-                                    startMate(mate);
+                                    editMate(mate);
                                     break;
                                 }
                         });
@@ -201,7 +233,13 @@ AssemblyWindow::AssemblyWindow(QWidget* parent) : QMainWindow(parent)
                 try
                 {
                     auto candidate = *m_dragCandidate;
+                    m_magneticMovingId = id.toStdString();
+                    m_magneticRawPose = pose;
                     candidate.setPlacement(id.toStdString(), pose);
+                    if (m_magneticAction->isChecked())
+                        candidate.snapMagnetic(id.toStdString(), m_magneticDistance,
+                                               m_magneticMovingConnector,
+                                               m_magneticStationaryConnector);
                     m_dragCandidate = std::move(candidate);
                     render(*m_dragCandidate);
                 }
@@ -243,7 +281,7 @@ AssemblyWindow::AssemblyWindow(QWidget* parent) : QMainWindow(parent)
 }
 bool AssemblyWindow::draftActive() const
 {
-    return m_mate || m_insertPage || m_dragCandidate.has_value();
+    return m_mate || m_workflow || m_insertPage || m_dragCandidate.has_value();
 }
 void AssemblyWindow::buildCommands()
 {
@@ -368,6 +406,42 @@ void AssemblyWindow::buildCommands()
     insert->addAction(m_insertAction);
     m_mateAction = action("actionMate", "Mate", [this] { startMate(); });
     insert->addAction(m_mateAction);
+    m_beltAction =
+        action("actionBeltChain", "Belt/Chain", [this] { startWorkflow(Workflow::Belt); });
+    m_assetAction = action("actionAssetPublisher", "Asset Publisher",
+                           [this] { startWorkflow(Workflow::Asset); });
+    m_groundAction = action("actionAssemblyGroundPlane", "Ground Plane",
+                            [this] { startWorkflow(Workflow::Ground); });
+    m_contextAction = action("actionNewInContextPart", "New Part in Context",
+                             [this] { startWorkflow(Workflow::InPlace); });
+    for (auto* command : {m_beltAction, m_assetAction, m_groundAction, m_contextAction})
+        insert->addAction(command);
+    m_magneticAction = action("actionMagneticMates", "Magnetic Mates", [] {});
+    m_magneticAction->setCheckable(true);
+    m_magneticAction->setChecked(QSettings().value("assembly/magneticEnabled", true).toBool());
+    m_magneticAction->setToolTip("Snap published assets. Moving an unlocked asset disconnects its "
+                                 "magnetic mate; lock the mate to keep it joined.");
+    connect(m_magneticAction, &QAction::toggled, this,
+            [](bool enabled) { QSettings().setValue("assembly/magneticEnabled", enabled); });
+    m_magneticDistance = QSettings().value("assembly/magneticSnapDistance", 10.).toDouble();
+    if (!std::isfinite(m_magneticDistance) || m_magneticDistance <= 0 || m_magneticDistance > 1e9)
+        m_magneticDistance = 10;
+    auto* snapDistance =
+        action("actionMagneticSnapDistance", "Magnetic snap distance",
+               [this]
+               {
+                   bool accepted = false;
+                   const double value =
+                       QInputDialog::getDouble(this, "Magnetic snap distance", "Distance (mm)",
+                                               m_magneticDistance, 0.000001, 1e9, 6, &accepted);
+                   if (accepted)
+                   {
+                       m_magneticDistance = value;
+                       QSettings().setValue("assembly/magneticSnapDistance", value);
+                   }
+               });
+    insert->addAction(m_magneticAction);
+    insert->addAction(snapDistance);
     m_moveAction = action("actionMoveComponent", "Move Component",
                           [this]
                           {
@@ -421,6 +495,17 @@ void AssemblyWindow::buildCommands()
     commandButton(m_rotateAction, grid, 1, 0);
     commandButton(m_rebuild, grid, 2, 0);
     row->addWidget(group);
+    auto* workflows = new QWidget;
+    workflows->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    auto* workflowGrid = new QGridLayout(workflows);
+    workflowGrid->setContentsMargins(5, 0, 5, 0);
+    commandButton(m_beltAction, workflowGrid, 0, 0);
+    commandButton(m_contextAction, workflowGrid, 1, 0);
+    commandButton(m_magneticAction, workflowGrid, 2, 0);
+    commandButton(m_assetAction, workflowGrid, 0, 1);
+    commandButton(m_groundAction, workflowGrid, 1, 1);
+    commandButton(snapDistance, workflowGrid, 2, 1);
+    row->addWidget(workflows);
     row->addStretch();
     tabs->addTab(page, "Assembly");
     toolbar->addWidget(tabs);
@@ -458,12 +543,11 @@ bool AssemblyWindow::maybeSave()
 }
 bool AssemblyWindow::confirmComponentDeletion(const QStringList& names, const QStringList& mates)
 {
-    return QMessageBox::question(this, "Delete components and mates",
-                                 "Delete:\n" + names.join('\n') +
-                                     "\n\nThese dependent mates will also be deleted:\n" +
-                                     mates.join('\n') + "\n\nExternal part files are retained.",
-                                 QMessageBox::Yes | QMessageBox::Cancel,
-                                 QMessageBox::Cancel) == QMessageBox::Yes;
+    return QMessageBox::question(
+               this, "Delete components and mates",
+               "Delete:\n" + names.join('\n') + "\n\nDependent mates and generated features:\n" +
+                   mates.join('\n') + "\n\nExternal part files are retained.",
+               QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) == QMessageBox::Yes;
 }
 void AssemblyWindow::closeEvent(QCloseEvent* event)
 {
@@ -552,14 +636,18 @@ void AssemblyWindow::render(const document::AssemblyDocument& doc)
 {
     std::vector<AssemblyVisual> visuals;
     for (const auto& c : doc.components())
-        visuals.push_back({c.id, c.part->shape(), c.placement, c.visible, c.fixed,
+        visuals.push_back({c.id, c.shape(), c.placement, c.visible, !doc.componentMovable(c.id),
                            m_insertCandidate && c.id == m_insertId});
     m_viewport->setComponents(visuals);
     std::vector<AssemblyVisual> highlights;
     std::vector<document::AssemblyReference> refs;
     if (m_mate)
         refs = m_mate->references();
-    else if (m_preselection.size() > 1 ||
+    else if (m_workflow)
+        refs = m_workflow->references();
+    else if ((m_tree->currentItem() &&
+              m_tree->currentItem()->data(0, kindRole).toString() == "ground") ||
+             m_preselection.size() > 1 ||
              (m_preselection.size() == 1 &&
               m_preselection[0].reference.geometry.source != modeling::ReferenceSource::BodyFace))
         for (const auto& option : m_preselection)
@@ -572,14 +660,33 @@ void AssemblyWindow::render(const document::AssemblyDocument& doc)
                 visual.shape = option.shape;
                 if (!ref.componentId.empty())
                     visual.placement = doc.component(ref.componentId).placement;
-                visual.filled = ref.geometry.source == modeling::ReferenceSource::BodyFace;
+                visual.filled = ref.geometry.source == modeling::ReferenceSource::BodyFace &&
+                                !(m_tree->currentItem() &&
+                                  m_tree->currentItem()->data(0, kindRole).toString() == "ground");
                 highlights.push_back(std::move(visual));
                 break;
+            }
+    std::string beltId = m_selectedBelt;
+    if (auto* editor = dynamic_cast<AssemblyBeltEditor*>(m_workflow))
+        beltId = editor->definition().id;
+    if (!beltId.empty())
+        for (const auto& belt : doc.belts())
+            if (belt.id == beltId)
+            {
+                const auto layout = doc.beltGeometry(belt);
+                AssemblyVisual path;
+                path.shape = modeling::sketchShape(layout.centerline);
+                path.placement.SetDisplacement(gp_Ax3(), layout.frame);
+                path.preview = true;
+                highlights.push_back(std::move(path));
             }
     m_viewport->setReferenceHighlights(highlights);
 }
 void AssemblyWindow::refresh()
 {
+    if (std::none_of(document().belts().begin(), document().belts().end(),
+                     [&](const auto& b) { return b.id == m_selectedBelt; }))
+        m_selectedBelt.clear();
     std::vector<document::AssemblyReferenceOption> valid;
     for (const auto& old : m_preselection)
         try
@@ -639,7 +746,7 @@ void AssemblyWindow::refreshTree()
         for (const auto& option : document().referenceOptions(id))
         {
             const auto source = option.reference.geometry.source;
-            if (int(source) >= 6)
+            if (int(source) >= 6 || !option.reference.connectorId.empty())
                 continue;
             auto* referenceParent = parent;
             if (source == modeling::ReferenceSource::SketchLine ||
@@ -670,7 +777,9 @@ void AssemblyWindow::refreshTree()
                            QString("reference:%1:%2:%3:%4:%5")
                                .arg(q(id))
                                .arg(int(source))
-                               .arg(source == modeling::ReferenceSource::Datum
+                               .arg(source == modeling::ReferenceSource::Datum ||
+                                            source == modeling::ReferenceSource::SketchPoint ||
+                                            source == modeling::ReferenceSource::SketchLine
                                         ? q(option.reference.geometry.featureId)
                                         : QString::number(option.reference.geometry.index))
                                .arg(q(option.reference.geometry.entityId))
@@ -693,6 +802,7 @@ void AssemblyWindow::refreshTree()
         item->setToolTip(0, c.path);
         references(item, c.id);
     }
+    addWorkflowTree(root);
     auto* mates = new QTreeWidgetItem(root, {"Mates"});
     mates->setData(0, Qt::UserRole, "assembly-mates");
     mates->setData(0, kindRole, "folder");
@@ -709,7 +819,9 @@ void AssemblyWindow::refreshTree()
         item->setToolTip(0, QString::fromUtf8(modeling::assembly::mateName(mate.kind)) + "\n" +
                                 q(mate.diagnostic));
     }
-    const auto desired = m_selected.empty() ? current : q(m_selected);
+    const auto desired = !m_selectedBelt.empty() ? q(m_selectedBelt)
+                         : m_selected.empty()    ? current
+                                                 : q(m_selected);
     for (QTreeWidgetItemIterator it(m_tree); *it; ++it)
     {
         const auto id = (*it)->data(0, Qt::UserRole).toString();
@@ -719,7 +831,8 @@ void AssemblyWindow::refreshTree()
             m_tree->setCurrentItem(*it);
     }
     for (QTreeWidgetItemIterator it(m_tree); *it; ++it)
-        if ((*it)->data(0, kindRole).toString() == "reference")
+        if ((*it)->data(0, kindRole).toString() == "reference" ||
+            (*it)->data(0, kindRole).toString() == "ground")
         {
             const auto& ref =
                 m_treeReferences.at(std::size_t((*it)->data(0, referenceRole).toInt())).reference;
@@ -730,6 +843,14 @@ void AssemblyWindow::refreshTree()
 }
 void AssemblyWindow::selectComponent(const std::string& id, int face, TopAbs_ShapeEnum kind)
 {
+    if (m_magneticMovingId != id)
+    {
+        m_magneticMovingId = id;
+        m_magneticMovingConnector = m_magneticStationaryConnector = -1;
+        if (!id.empty())
+            m_magneticRawPose = document().component(id).placement;
+    }
+    m_selectedBelt.clear();
     m_preselection.clear();
     m_viewport->setReferenceHighlights({});
     m_selected = id;
@@ -753,18 +874,35 @@ void AssemblyWindow::selectTree()
     auto* item = m_tree->currentItem();
     if (!item)
         return;
+    if (m_workflow)
+    {
+        const auto kind = item->data(0, kindRole).toString();
+        if (kind == "reference" || kind == "ground")
+            m_workflow->pick(
+                m_treeReferences.at(std::size_t(item->data(0, referenceRole).toInt())).reference);
+        else if (kind == "component")
+            m_workflow->pickComponent(item->data(0, Qt::UserRole).toString().toStdString());
+        return;
+    }
     if (m_mate)
     {
-        if (item->data(0, kindRole).toString() == "reference")
+        if (item->data(0, kindRole).toString() == "reference" ||
+            item->data(0, kindRole).toString() == "ground")
             m_mate->pick(
                 m_treeReferences.at(std::size_t(item->data(0, referenceRole).toInt())).reference);
+        else if (item->data(0, kindRole).toString() == "component")
+            m_mate->pick({item->data(0, Qt::UserRole).toString().toStdString(), {}});
         return;
     }
     if (draftActive())
         return;
+    m_selectedBelt = item->data(0, kindRole).toString() == "belt"
+                         ? item->data(0, Qt::UserRole).toString().toStdString()
+                         : std::string{};
     std::vector<document::AssemblyReferenceOption> selected;
     for (auto* selectedItem : m_tree->selectedItems())
-        if (selectedItem->data(0, kindRole).toString() == "reference")
+        if (selectedItem->data(0, kindRole).toString() == "reference" ||
+            selectedItem->data(0, kindRole).toString() == "ground")
             selected.push_back(
                 m_treeReferences.at(std::size_t(selectedItem->data(0, referenceRole).toInt())));
     // Keep the user's selection order when Ctrl/Shift adds a second reference.
@@ -804,7 +942,7 @@ document::AssemblyReferenceOption AssemblyWindow::faceReference(const std::strin
 {
     const auto& component = document().component(id);
     TopTools_IndexedMapOfShape faces;
-    TopExp::MapShapes(component.part->shape(), kind, faces);
+    TopExp::MapShapes(component.shape(), kind, faces);
     if (face > 0 && face <= faces.Extent())
         for (const auto& option : document().referenceOptions(id))
             if (option.shape.IsSame(faces(face)))
@@ -819,6 +957,19 @@ void AssemblyWindow::picked(const QString& component, int face, Qt::KeyboardModi
 void AssemblyWindow::pickedEntity(const QString& component, TopAbs_ShapeEnum kind, int face,
                                   Qt::KeyboardModifiers modifiers)
 {
+    if (m_workflow)
+    {
+        if (!component.isEmpty())
+            try
+            {
+                m_workflow->pick(faceReference(component.toStdString(), face, kind).reference);
+            }
+            catch (const std::exception& e)
+            {
+                m_workflow->page()->setStatus(QString::fromUtf8(e.what()), true);
+            }
+        return;
+    }
     if (m_mate)
     {
         if (!component.isEmpty())
@@ -867,7 +1018,7 @@ void AssemblyWindow::pickedEntity(const QString& component, TopAbs_ShapeEnum kin
             selectedId = selected[0].reference.componentId;
             TopTools_IndexedMapOfShape faces;
             kind = selected[0].shape.ShapeType();
-            TopExp::MapShapes(document().component(selectedId).part->shape(), kind, faces);
+            TopExp::MapShapes(document().component(selectedId).shape(), kind, faces);
             selectedFace = faces.FindIndex(selected[0].shape);
         }
         selectComponent(selectedId, selectedFace, kind);
@@ -897,6 +1048,9 @@ bool AssemblyWindow::insertPartFile(const QString& path)
         const auto id = candidate.insertComponent(path, {}, false);
         m_preselection.clear();
         m_insertId = id;
+        m_magneticMovingId = id;
+        m_magneticRawPose = candidate.component(id).placement;
+        m_magneticMovingConnector = m_magneticStationaryConnector = -1;
         m_insertCandidate = std::move(candidate);
         m_insertPage = new PropertyManagerPage(
             "Insert Components",
@@ -960,12 +1114,17 @@ void AssemblyWindow::moveInsertion(const gp_Pnt& point)
         auto candidate = *m_insertCandidate;
         gp_Trsf pose = candidate.component(m_insertId).placement;
         pose.SetTranslationPart(point.XYZ());
+        m_magneticRawPose = pose;
         candidate.setPlacement(m_insertId, pose);
+        if (m_magneticAction->isChecked())
+            candidate.snapMagnetic(m_insertId, m_magneticDistance, m_magneticMovingConnector,
+                                   m_magneticStationaryConnector);
         m_insertCandidate = std::move(candidate);
         for (int i = 0; i < 3; ++i)
         {
             const QSignalBlocker block(m_insertCoordinates[i]);
-            m_insertCoordinates[i]->setValue(point.Coord(i + 1));
+            m_insertCoordinates[i]->setValue(
+                m_insertCandidate->component(m_insertId).placement.TranslationPart().Coord(i + 1));
         }
         render(*m_insertCandidate);
     }
@@ -1071,7 +1230,9 @@ void AssemblyWindow::finishMate(bool accepted)
 }
 void AssemblyWindow::cancelDraft()
 {
-    if (m_mate)
+    if (m_workflow)
+        finishWorkflow(false);
+    else if (m_mate)
         finishMate(false);
     else if (m_insertPage)
         finishInsertion(false);
@@ -1080,34 +1241,72 @@ void AssemblyWindow::deleteSelected()
 {
     if (draftActive())
         return;
-    std::vector<std::string> components, mates;
-    QStringList names;
+    std::vector<std::string> components, mates, belts;
+    bool ground = false;
+    QStringList names, dependents;
     for (const auto* item : m_tree->selectedItems())
     {
         const auto id = item->data(0, Qt::UserRole).toString().toStdString();
-        if (item->data(0, kindRole).toString() == "component")
+        const auto kind = item->data(0, kindRole).toString();
+        if (kind == "component")
         {
             components.push_back(id);
             names << q(document().component(id).name);
         }
-        if (item->data(0, kindRole).toString() == "mate")
+        else if (kind == "mate")
+        {
             mates.push_back(id);
+            names << item->text(0);
+        }
+        else if (kind == "belt")
+        {
+            belts.push_back(id);
+            for (const auto& belt : document().belts())
+                if (belt.id == id)
+                {
+                    names << q(belt.name);
+                    if (!belt.componentId.empty())
+                    {
+                        dependents << q(document().component(belt.componentId).name) +
+                                          " (owned belt part)";
+                        for (const auto& name :
+                             document().componentDependencyNames({belt.componentId}))
+                            dependents << q(name);
+                    }
+                }
+        }
+        else if (kind == "ground")
+        {
+            ground = true;
+            names << "Assembly Ground Plane";
+            for (const auto& mate : document().mates())
+                if (mate.id.rfind("mate-ground-", 0) == 0)
+                    dependents << q(mate.name);
+        }
     }
-    if (components.empty() && mates.empty())
+    if (components.empty() && mates.empty() && belts.empty() && !ground)
         return;
-    const auto dependents = document().componentDependents(components);
-    QStringList dependentNames;
-    for (const auto& mate : dependents)
-        dependentNames << q(mate.name);
-    if (!dependents.empty() && !confirmComponentDeletion(names, dependentNames))
+    for (const auto& name : document().componentDependencyNames(components))
+        dependents << q(name);
+    dependents.removeDuplicates();
+    if (!dependents.empty() && !confirmComponentDeletion(names, dependents))
         return;
     mutate(
         [&](auto& doc)
         {
             if (!mates.empty())
                 doc.deleteMates(mates);
-            if (!components.empty())
-                doc.deleteComponents(components, true);
+            for (const auto& id : belts)
+                doc.deleteBelt(id, true);
+            std::vector<std::string> remaining;
+            for (const auto& id : components)
+                if (std::any_of(doc.components().begin(), doc.components().end(),
+                                [&](const auto& c) { return c.id == id; }))
+                    remaining.push_back(id);
+            if (!remaining.empty())
+                doc.deleteComponents(remaining, true);
+            if (ground)
+                doc.setGroundPlane({});
         });
 }
 void AssemblyWindow::updateActions()
@@ -1116,9 +1315,14 @@ void AssemblyWindow::updateActions()
     const auto found = std::find_if(document().components().begin(), document().components().end(),
                                     [&](const auto& c) { return c.id == m_selected; });
     const bool selected = found != document().components().end(),
-               movable = selected && !found->fixed && !active;
+               movable = selected && document().componentMovable(found->id) && !active;
     m_insertAction->setEnabled(!active);
     m_mateAction->setEnabled(!active && !document().components().empty());
+    m_beltAction->setEnabled(!active && document().components().size() >= 2);
+    m_assetAction->setEnabled(!active && !document().components().empty());
+    m_groundAction->setEnabled(!active);
+    m_contextAction->setEnabled(!active);
+    m_magneticAction->setEnabled(!m_mate && !m_workflow);
     m_rebuild->setEnabled(!active && !document().components().empty());
     m_undo->setEnabled(!active && m_session.canUndo());
     m_redo->setEnabled(!active && m_session.canRedo());
@@ -1128,7 +1332,7 @@ void AssemblyWindow::updateActions()
     m_hide->setEnabled(!active && selected);
     m_fix->setText(selected && found->fixed ? "Float" : "Fix");
     m_hide->setText(selected && found->visible ? "Hide" : "Show");
-    const bool placementMode = selected && !found->fixed && !m_mate && !m_insertPage;
+    const bool placementMode = selected && !found->fixed && !m_mate && !m_workflow && !m_insertPage;
     m_moveAction->setEnabled(movable);
     m_rotateAction->setEnabled(movable);
     m_moveAction->setChecked(placementMode && !m_viewport->rotationMode());
@@ -1136,7 +1340,9 @@ void AssemblyWindow::updateActions()
     bool deletable = false;
     for (const auto* item : m_tree->selectedItems())
         deletable |= item->data(0, kindRole).toString() == "component" ||
-                     item->data(0, kindRole).toString() == "mate";
+                     item->data(0, kindRole).toString() == "mate" ||
+                     item->data(0, kindRole).toString() == "belt" ||
+                     item->data(0, kindRole).toString() == "ground";
     m_delete->setEnabled(!active && deletable);
 }
 bool AssemblyWindow::eventFilter(QObject* object, QEvent* event)
@@ -1151,20 +1357,28 @@ bool AssemblyWindow::eventFilter(QObject* object, QEvent* event)
     if (event->type() == QEvent::KeyPress && widget && widget->window() == this)
     {
         auto* key = static_cast<QKeyEvent*>(event);
-        if (key->key() == Qt::Key_Escape && (m_mate || m_insertPage))
+        if (key->key() == Qt::Key_Escape && (m_mate || m_workflow || m_insertPage))
         {
             cancelDraft();
             return true;
         }
         if ((key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) &&
-            (m_mate || m_insertPage))
+            (m_mate || m_workflow || m_insertPage))
         {
             if (auto* spin = qobject_cast<QDoubleSpinBox*>(QApplication::focusWidget()))
                 spin->interpretText();
-            if (m_mate)
+            if (m_workflow)
+                finishWorkflow(true);
+            else if (m_mate)
                 finishMate(true);
             else
                 finishInsertion(true);
+            return true;
+        }
+        if ((key->key() == Qt::Key_BracketLeft || key->key() == Qt::Key_BracketRight) &&
+            (widget == m_viewport || m_dragCandidate || m_insertCandidate))
+        {
+            cycleMagnetic(key->key() == Qt::Key_BracketLeft);
             return true;
         }
     }
