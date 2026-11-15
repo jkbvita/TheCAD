@@ -17,6 +17,12 @@ struct AssemblyVisual
     bool visible = true, fixed = false, preview = false;
     bool filled = false; // Filled face selection versus datum outlines.
 };
+struct AssemblyHit
+{
+    std::string first;
+    int second = 0;
+    TopAbs_ShapeEnum kind = TopAbs_FACE;
+};
 class AssemblyViewport final : public QWidget
 {
     Q_OBJECT
@@ -25,7 +31,7 @@ public:
     bool isReady() const { return m_graphics.ready(); }
     QString initializationError() const { return m_error; }
     void setComponents(const std::vector<AssemblyVisual>& visuals);
-    void setSelected(const std::string& id, int face = 0);
+    void setSelected(const std::string& id, int face = 0, TopAbs_ShapeEnum kind = TopAbs_FACE);
     void setReferenceHighlights(const std::vector<AssemblyVisual>& references);
     void setMatePicking(bool active) { m_matePicking = active; }
     void setInserting(bool active) { m_inserting = active; }
@@ -39,6 +45,8 @@ public:
     void applyTheme();
 signals:
     void picked(const QString& component, int face, Qt::KeyboardModifiers modifiers);
+    void entityPicked(const QString& component, TopAbs_ShapeEnum kind, int index,
+                      Qt::KeyboardModifiers modifiers);
     void dragStarted();
     void dragPlacement(const QString& component, const gp_Trsf& placement);
     void dragFinished(bool accepted);
@@ -62,8 +70,9 @@ private:
     friend class AssemblyWorkflowTest;
     void initialize();
     QPoint native(const QPointF& point) const;
-    std::pair<std::string, int> hit(const QPointF& point);
-    TopoDS_Shape selectedShape(const std::string& id, int face) const;
+    AssemblyHit hit(const QPointF& point);
+    TopoDS_Shape selectedShape(const std::string& id, int face,
+                               TopAbs_ShapeEnum kind = TopAbs_FACE) const;
     void refreshSelection();
     void hover(const QPointF& point);
     viewport::GraphicsScene m_graphics;
@@ -75,6 +84,7 @@ private:
     std::vector<AssemblyVisual> m_referenceVisuals;
     std::string m_selected, m_hovered, m_dragId;
     int m_selectedFace = 0, m_hoveredFace = 0;
+    TopAbs_ShapeEnum m_selectedKind = TopAbs_FACE, m_hoveredKind = TopAbs_FACE;
     QPointF m_press;
     gp_Trsf m_dragPose;
     gp_Pnt m_dragPoint;

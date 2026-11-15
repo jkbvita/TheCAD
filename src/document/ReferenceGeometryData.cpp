@@ -149,7 +149,7 @@ PartDocument PartDocument::beforeFeature(const std::string& id) const
     result.apply(std::vector<Feature>(m_features.begin(), found), false, std::size_t(found - m_features.begin()));
     return result;
 }
-std::vector<ReferenceOption> PartDocument::referenceOptions(bool includeCircularAxes, bool includeExtrusionFaces) const{
+std::vector<ReferenceOption> PartDocument::referenceOptions(bool includeCircularAxes, bool includeExtrusionFaces, bool includeBody) const{
     std::map<std::string,DatumGeometry> datums;std::map<std::string,Sketch> sketches;for(const auto& feature:m_features){if(feature.kind==FeatureKind::ReferenceGeometry)datums.emplace(feature.id,feature.datum);if(feature.kind==FeatureKind::Sketch)sketches.emplace(feature.id,feature.sketch);}
     std::vector<ReferenceOption> result;const auto add=[&](std::string label,GeometryReference ref){try{bindGeometryReference(ref,m_bodies,m_namedBodies);
         TopoDS_Shape shape;
@@ -174,7 +174,7 @@ std::vector<ReferenceOption> PartDocument::referenceOptions(bool includeCircular
         if(feature.kind==FeatureKind::ReferenceGeometry){GeometryReference ref;ref.source=ReferenceSource::Datum;ref.featureId=feature.id;add(feature.name,ref);}
         if(feature.kind==FeatureKind::Sketch){for(const auto& point:sketchPoints(feature.sketch)){if(point.first.role==PointRole::Origin)continue;GeometryReference ref;ref.source=ReferenceSource::SketchPoint;ref.featureId=feature.id;ref.entityId=point.first.entityId;ref.role=point.first.role;add(feature.name+" / "+ref.entityId+" / "+(ref.role==PointRole::Center?"center":ref.role==PointRole::Second?"end":"start"),ref);}for(const auto& e:feature.sketch.entities)if(e.kind==EntityKind::Line){GeometryReference ref;ref.source=ReferenceSource::SketchLine;ref.featureId=feature.id;ref.entityId=e.id;add(feature.name+" / "+e.id,ref);ref.source=ReferenceSource::SketchPoint;ref.role=PointRole::Midpoint;add(feature.name+" / "+e.id+" / midpoint",ref);}}
     }
-    if (!bodyId.empty())
+    if (includeBody && !bodyId.empty())
     {
         const auto& body = m_bodies.at(bodyId);
         const auto signature = referenceBodySignature(body);
@@ -202,6 +202,43 @@ std::vector<ReferenceOption> PartDocument::referenceOptions(bool includeCircular
                     add("Axis of circular edge " + std::to_string(i), ref);
                 }
             }
+        }
+    }
+    return result;
+}
+std::vector<ReferenceOption> PartDocument::namedTopologyOptions() const
+{
+    const auto last = std::find_if(m_features.rbegin(), m_features.rend(), [](const auto& feature)
+                                   { return isSolidFeature(feature.kind); });
+    std::vector<ReferenceOption> result;
+    if (last == m_features.rend())
+        return result;
+    const auto& shape = m_bodies.at(last->id);
+    const auto& names = m_namedBodies.at(last->id);
+    const auto signature = referenceBodySignature(shape);
+    for (const auto type : {TopAbs_VERTEX, TopAbs_EDGE, TopAbs_FACE})
+    {
+        TopTools_IndexedMapOfShape topology;
+        TopExp::MapShapes(shape, type, topology);
+        for (int i = 1; i <= topology.Extent(); ++i)
+        {
+            GeometryReference ref;
+            ref.source = type == TopAbs_VERTEX ? ReferenceSource::BodyVertex
+                         : type == TopAbs_EDGE ? ReferenceSource::BodyEdge
+                                               : ReferenceSource::BodyFace;
+            ref.featureId = last->id;
+            ref.index = i;
+            ref.signature = signature;
+            ref.topologyName = names.nameOf(topology(i));
+            if (ref.topologyName.empty())
+                continue;
+            result.push_back({std::string(type == TopAbs_VERTEX ? "Vertex "
+                                          : type == TopAbs_EDGE ? "Edge "
+                                                                : "Face ") +
+                                  std::to_string(i),
+                              ref,
+                              {},
+                              topology(i)});
         }
     }
     return result;

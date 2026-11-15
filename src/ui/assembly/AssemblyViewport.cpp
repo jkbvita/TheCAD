@@ -173,7 +173,11 @@ void AssemblyViewport::setComponents(const std::vector<AssemblyVisual>& visuals)
         if (std::abs(item->Transparency() - (visual.preview ? 0.3 : 0)) > 1e-9)
             item->SetTransparency(visual.preview ? 0.3 : 0);
         if (visual.visible && (replaced || !context->IsDisplayed(item)))
+        {
             context->Display(item, AIS_Shaded, AIS_Shape::SelectionMode(TopAbs_FACE), false);
+            context->Activate(item, AIS_Shape::SelectionMode(TopAbs_EDGE), false);
+            context->Activate(item, AIS_Shape::SelectionMode(TopAbs_VERTEX), false);
+        }
         else if (!visual.visible && context->IsDisplayed(item))
             context->Erase(item, false);
     }
@@ -181,7 +185,8 @@ void AssemblyViewport::setComponents(const std::vector<AssemblyVisual>& visuals)
     m_graphics.view()->ZFitAll();
     update();
 }
-TopoDS_Shape AssemblyViewport::selectedShape(const std::string& id, int face) const
+TopoDS_Shape AssemblyViewport::selectedShape(const std::string& id, int face,
+                                             TopAbs_ShapeEnum kind) const
 {
     const auto visual = std::find_if(m_visuals.begin(), m_visuals.end(),
                                      [&](const auto& v) { return v.id == id && v.visible; });
@@ -190,15 +195,16 @@ TopoDS_Shape AssemblyViewport::selectedShape(const std::string& id, int face) co
     if (!face)
         return visual->shape;
     TopTools_IndexedMapOfShape faces;
-    TopExp::MapShapes(visual->shape, TopAbs_FACE, faces);
+    TopExp::MapShapes(visual->shape, kind, faces);
     return face > 0 && face <= faces.Extent() ? faces(face) : TopoDS_Shape{};
 }
-void AssemblyViewport::setSelected(const std::string& id, int face)
+void AssemblyViewport::setSelected(const std::string& id, int face, TopAbs_ShapeEnum kind)
 {
-    if (m_selected == id && m_selectedFace == face)
+    if (m_selected == id && m_selectedFace == face && m_selectedKind == kind)
         return;
     m_selected = id;
     m_selectedFace = face;
+    m_selectedKind = kind;
     refreshSelection();
     update();
 }
@@ -206,7 +212,7 @@ void AssemblyViewport::refreshSelection()
 {
     if (!isReady())
         return;
-    const auto shape = selectedShape(m_selected, m_selectedFace);
+    const auto shape = selectedShape(m_selected, m_selectedFace, m_selectedKind);
     if (shape.IsNull())
     {
         if (!m_highlight.IsNull())
@@ -286,19 +292,22 @@ void AssemblyViewport::setReferenceHighlights(const std::vector<AssemblyVisual>&
     if (changed)
         update();
 }
-std::pair<std::string, int> AssemblyViewport::hit(const QPointF& point)
+AssemblyHit AssemblyViewport::hit(const QPointF& point)
 {
     if (!isReady())
         return {};
     m_graphics.synchronizeSurface();
     const auto pixel = native(point);
     const auto selector = m_graphics.context()->MainSelector();
-    const int tolerance = qMax(1, qRound(16 * devicePixelRatioF()));
+    const int tolerance = qMax(1, qRound(8 * devicePixelRatioF()));
     if (selector->CustomPixelTolerance() != tolerance)
     {
         selector->SetPixelTolerance(tolerance + 1);
         selector->SetPixelTolerance(tolerance);
     }
+    selector->SetPickClosest(false);
+    selector->SetDepthTolerance(SelectMgr_TypeOfDepthTolerance_UniformPixels,
+                                8 * devicePixelRatioF());
     selector->Pick(pixel.x(), pixel.y(), m_graphics.view());
     for (int index = 1; index <= selector->NbPicked(); ++index)
     {
@@ -309,8 +318,11 @@ std::pair<std::string, int> AssemblyViewport::hit(const QPointF& point)
             if (owner->Selectable() == item && m_graphics.context()->IsDisplayed(item))
             {
                 TopTools_IndexedMapOfShape faces;
-                TopExp::MapShapes(item->Shape(), TopAbs_FACE, faces);
-                return {id, faces.FindIndex(owner->Shape())};
+                const auto kind = owner->Shape().ShapeType();
+                if (kind != TopAbs_VERTEX && kind != TopAbs_EDGE && kind != TopAbs_FACE)
+                    continue;
+                TopExp::MapShapes(item->Shape(), kind, faces);
+                return {id, faces.FindIndex(owner->Shape()), kind};
             }
     }
     return {};
@@ -318,14 +330,16 @@ std::pair<std::string, int> AssemblyViewport::hit(const QPointF& point)
 void AssemblyViewport::hover(const QPointF& point)
 {
     const auto selected = hit(point);
-    if (selected.first == m_hovered && selected.second == m_hoveredFace)
+    if (selected.first == m_hovered && selected.second == m_hoveredFace &&
+        selected.kind == m_hoveredKind)
         return;
     m_hovered = selected.first;
     m_hoveredFace = selected.second;
+    m_hoveredKind = selected.kind;
     if (!m_hover.IsNull())
         m_graphics.context()->Remove(m_hover, false);
     m_hover.Nullify();
-    const auto shape = selectedShape(m_hovered, m_hoveredFace);
+    const auto shape = selectedShape(m_hovered, m_hoveredFace, m_hoveredKind);
     if (shape.IsNull())
     {
         update();
@@ -415,7 +429,11 @@ void AssemblyViewport::mousePressEvent(QMouseEvent* event)
     auto visual = std::find_if(m_visuals.begin(), m_visuals.end(),
                                [&](const auto& v) { return v.id == pickedValue.first; });
     const auto value = visual == m_visuals.end() ? AssemblyVisual{} : *visual;
-    emit picked(QString::fromStdString(pickedValue.first), pickedValue.second, event->modifiers());
+    emit entityPicked(QString::fromStdString(pickedValue.first), pickedValue.kind,
+                      pickedValue.second, event->modifiers());
+    if (pickedValue.kind == TopAbs_FACE)
+        emit picked(QString::fromStdString(pickedValue.first), pickedValue.second,
+                    event->modifiers());
     if (!m_matePicking && !value.id.empty() && !value.fixed &&
         !(event->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier)))
     {

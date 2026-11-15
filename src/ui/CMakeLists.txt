@@ -17,6 +17,8 @@ add_library(thecad_ui STATIC
     SelectionUi.cpp MeasureUi.cpp ReferenceGeometryUi.cpp SketchConstraintsUi.cpp
     SmartDimensionUi.cpp SketchToolsUi.cpp SketchModifierUi.cpp RelationsContextUi.cpp
     assembly/AssemblyWindow.cpp assembly/AssemblyWindow.h assembly/AssemblyMateEditor.cpp assembly/AssemblyMateEditor.h
+    assembly/AssemblyMateParameters.cpp assembly/AssemblyMateParameters.h
+    assembly/AssemblyQuickMates.cpp
     assembly/ComponentPlacementEditor.cpp assembly/ComponentPlacementEditor.h)
 target_include_directories(thecad_ui PUBLIC "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(thecad_ui PUBLIC thecad_viewport_widget thecad_widgets thecad_application thecad_exchange)

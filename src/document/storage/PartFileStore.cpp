@@ -621,6 +621,11 @@ PartDocument PartFileStore::load(const QString& path)
     const auto bytes = file.read(maximumDocumentBytes + 1);
     if (file.error() != QFileDevice::NoError || bytes.size() > maximumDocumentBytes)
         fail("Cannot read part document, or it exceeds the size limit.");
+    return decode(bytes);
+}
+PartDocument PartFileStore::decode(const QByteArray& bytes)
+{
+    if(bytes.size()>maximumDocumentBytes)fail("Part document exceeds the 1 MiB prototype size limit.");
     QJsonParseError parseError;
     const auto json = QJsonDocument::fromJson(bytes, &parseError);
     if (parseError.error != QJsonParseError::NoError || !json.isObject())
@@ -1070,6 +1075,16 @@ void PartFileStore::save(const PartDocument& document, const QString& path)
     if (QFileInfo(path).suffix().compare("thepart", Qt::CaseInsensitive) != 0)
         fail("Save parts as .thepart. Legacy .tcpart files are read-only inputs and must be "
              "converted to a new path.");
+    const auto bytes=encode(document);
+    QSaveFile file(path);
+    file.setDirectWriteFallback(false);
+    if (!file.open(QIODevice::WriteOnly))
+        fail("Cannot save part document: " + file.errorString());
+    if (file.write(bytes) != bytes.size() || !file.commit())
+        fail("Cannot save part document atomically: " + file.errorString());
+}
+QByteArray PartFileStore::encode(const PartDocument& document)
+{
     QJsonArray features;
     std::string resultId;
     for (const auto& feature : document.features())
@@ -1285,11 +1300,6 @@ void PartFileStore::save(const PartDocument& document, const QString& path)
     const auto bytes = QJsonDocument(root).toJson(QJsonDocument::Indented);
     if (bytes.size() > maximumDocumentBytes)
         fail("Part document exceeds the 1 MiB prototype size limit.");
-    QSaveFile file(path);
-    file.setDirectWriteFallback(false);
-    if (!file.open(QIODevice::WriteOnly))
-        fail("Cannot save part document: " + file.errorString());
-    if (file.write(bytes) != bytes.size() || !file.commit())
-        fail("Cannot save part document atomically: " + file.errorString());
+    return bytes;
 }
 } // namespace thecad::document

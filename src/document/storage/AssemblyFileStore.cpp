@@ -1,6 +1,7 @@
 #include "document/storage/AssemblyFileStore.h"
 #include "document/AssemblyDocument.h"
 #include "document/ReferenceGeometryData.h"
+#include "document/storage/AssemblyMateData.h"
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -86,7 +87,8 @@ AssemblyDocument AssemblyFileStore::load(const QString& path)
             "Assembly is not valid JSON.");
     const auto root = parsed.object();
     fields(root, {"format", "version", "units", "components", "mates"});
-    require(root["format"] == "TheCAD.Assembly" && number(root["version"]) == 1 &&
+    const double version = number(root["version"]);
+    require(root["format"] == "TheCAD.Assembly" && (version == 1 || version == 2) &&
                 root["units"] == "mm",
             "Unsupported assembly format, version or units.");
     require(root["components"].isArray() && root["components"].toArray().size() <= 64 &&
@@ -142,6 +144,11 @@ AssemblyDocument AssemblyFileStore::load(const QString& path)
     {
         require(value.isObject(), "Invalid assembly mate.");
         const auto object = value.toObject();
+        if (version == 2)
+        {
+            result.m_mates.push_back(readAssemblyMate(object));
+            continue;
+        }
         fields(object, {"id", "name", "kind", "first", "second", "value", "alignment"});
         AssemblyMate mate;
         mate.id = identifier(object["id"]);
@@ -162,6 +169,14 @@ AssemblyDocument AssemblyFileStore::load(const QString& path)
 }
 void AssemblyFileStore::save(const AssemblyDocument& document, const QString& path)
 {
+    const bool version2 =
+        std::any_of(document.m_mates.begin(), document.m_mates.end(),
+                    [](const auto& mate)
+                    {
+                        return mate.definition.has_value() ||
+                               mate.status != modeling::assembly::MateStatus::Active ||
+                               !mate.diagnostic.empty();
+                    });
     QJsonArray components, mates;
     const QDir directory(QFileInfo(path).absolutePath());
     for (const auto& c : document.m_components)
@@ -179,15 +194,18 @@ void AssemblyFileStore::save(const AssemblyDocument& document, const QString& pa
                                       {"visible", c.visible}});
     }
     for (const auto& m : document.m_mates)
-        mates.append(QJsonObject{{"id", q(m.id)},
-                                 {"name", q(m.name)},
-                                 {"kind", int(m.kind)},
-                                 {"first", reference(m.first)},
-                                 {"second", reference(m.second)},
-                                 {"value", m.value},
-                                 {"alignment", m.alignment}});
+        if (version2)
+            mates.append(writeAssemblyMate(m));
+        else
+            mates.append(QJsonObject{{"id", q(m.id)},
+                                     {"name", q(m.name)},
+                                     {"kind", int(m.kind)},
+                                     {"first", reference(m.first)},
+                                     {"second", reference(m.second)},
+                                     {"value", m.value},
+                                     {"alignment", m.alignment}});
     const QJsonObject root{{"format", "TheCAD.Assembly"},
-                           {"version", 1},
+                           {"version", version2 ? 2 : 1},
                            {"units", "mm"},
                            {"components", components},
                            {"mates", mates}};

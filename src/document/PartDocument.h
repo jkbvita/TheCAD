@@ -86,7 +86,8 @@ public:
     modeling::DatumGeometry resolveReference(const modeling::GeometryReference& reference) const;
     modeling::DatumGeometry resolveCurrentReference(modeling::GeometryReference reference) const;
     TopoDS_Shape currentReferenceShape(modeling::GeometryReference reference) const;
-    std::vector<ReferenceOption> referenceOptions(bool includeCircularAxes = false, bool includeExtrusionFaces = false) const;
+    std::vector<ReferenceOption> referenceOptions(bool includeCircularAxes = false, bool includeExtrusionFaces = false, bool includeBody = true) const;
+    std::vector<ReferenceOption> namedTopologyOptions() const;
     TopoDS_Shape solidBefore(const std::string& featureId) const;
     const TopoDS_Shape& solidResult(const std::string& featureId) const;
     // currentBody follows generated face names through downstream operations.

@@ -10,6 +10,11 @@ add_library(thecad_modeling STATIC
     SketchArcs.cpp
     SketchSplines.cpp
     assembly/MateSolver.cpp
+    assembly/MateTypes.cpp assembly/MateGeometry.cpp
+    assembly/MateEquations.cpp
+    assembly/MateWidth.cpp
+    assembly/BeltGeometry.cpp
+    assembly/MateGeneralSolver.cpp
     SketchModifiers.cpp
     SketchContourEdits.cpp
     SketchOffset.cpp

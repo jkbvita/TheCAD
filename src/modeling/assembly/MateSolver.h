@@ -1,17 +1,25 @@
 #pragma once
 #include "modeling/ReferenceGeometry.h"
+#include "modeling/assembly/MateTypes.h"
+#include "modeling/assembly/MateGeometry.h"
 #include <gp_Trsf.hxx>
 #include <string>
 #include <vector>
+#include <optional>
 
 namespace thecad::modeling::assembly
 {
-enum class MateKind
+struct ResolvedMateReference
 {
-    Coincident,
-    Concentric,
-    Distance,
-    Angle
+    std::string role;
+    int body = -1;
+    MateGeometry geometry;
+};
+struct ResolvedMateDefinition
+{
+    std::vector<ResolvedMateReference> references;
+    MateParameters parameters;
+    MateMotionState motion;
 };
 struct RigidBody
 {
@@ -28,12 +36,14 @@ struct ResolvedMate
     DatumGeometry a, b;
     double value = 0;
     int alignment = 1;
+    std::optional<ResolvedMateDefinition> definition;
 };
 struct MateSolution
 {
     std::vector<gp_Trsf> placements;
     std::vector<bool> fullyConstrained;
     int degreesOfFreedom = 0;
+    std::vector<MateMotionState> motion;
 };
 bool validMateTypes(MateKind kind, DatumKind first, DatumKind second);
 const char* mateName(MateKind kind);

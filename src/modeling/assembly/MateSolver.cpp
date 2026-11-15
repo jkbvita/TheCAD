@@ -150,21 +150,6 @@ void seedSingularOrientations(Poses& poses, const std::vector<RigidBody>& bodies
     }
 }
 } // namespace
-const char* mateName(MateKind kind)
-{
-    switch (kind)
-    {
-    case MateKind::Coincident:
-        return "Coincident";
-    case MateKind::Concentric:
-        return "Concentric";
-    case MateKind::Distance:
-        return "Distance";
-    case MateKind::Angle:
-        return "Angle";
-    }
-    return "Invalid";
-}
 bool validMateTypes(MateKind kind, DatumKind first, DatumKind second)
 {
     if (kind == MateKind::Concentric)
@@ -184,9 +169,13 @@ void validateRigidPlacement(const gp_Trsf& placement)
                 std::abs(placement.Value(row, column)) > 1e9)
                 throw std::runtime_error("Component placement exceeds the finite 1e9 mm limit.");
 }
+MateSolution solveGeneralMates(const std::vector<RigidBody>&, const std::vector<ResolvedMate>&);
 MateSolution solveMates(const std::vector<RigidBody>& bodies,
                         const std::vector<ResolvedMate>& mates)
 {
+    if (std::any_of(mates.begin(), mates.end(),
+                    [](const auto& mate) { return mate.definition.has_value(); }))
+        return solveGeneralMates(bodies, mates);
     if (bodies.size() > 64 || mates.size() > 256)
         throw std::runtime_error(
             "This assembly milestone supports up to 64 components and 256 mates.");

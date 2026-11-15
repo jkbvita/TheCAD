@@ -42,8 +42,10 @@ private:
     void render(const document::AssemblyDocument& document);
     void selectTree();
     void picked(const QString& component, int face, Qt::KeyboardModifiers modifiers);
-    void selectComponent(const std::string& id, int face = 0);
+    void pickedEntity(const QString&, TopAbs_ShapeEnum, int, Qt::KeyboardModifiers);
+    void selectComponent(const std::string& id, int face = 0, TopAbs_ShapeEnum kind = TopAbs_FACE);
     void startMate(const std::optional<document::AssemblyMate>& editing = {});
+    void quickMates();
     void finishMate(bool accepted);
     void updateMatePreview();
     void finishInsertion(bool accepted);
@@ -56,7 +58,8 @@ private:
     void updateActions();
     void mutate(const std::function<void(document::AssemblyDocument&)>& operation);
     bool draftActive() const;
-    document::AssemblyReferenceOption faceReference(const std::string& id, int face) const;
+    document::AssemblyReferenceOption faceReference(const std::string& id, int face,
+                                                    TopAbs_ShapeEnum kind = TopAbs_FACE) const;
     application::AssemblySession m_session;
     AssemblyViewport* m_viewport;
     QTreeWidget* m_tree;

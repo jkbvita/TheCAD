@@ -93,7 +93,7 @@ approved scope do not need repeated approval.
 - [0053. Linked components and basic rigid-body mates](0053-assembly-foundation.md)
 - [0054. Features toolbar matched to the owner's reference](0054-features-toolbar-reference-layout.md)
 - [0055. Assembly mate preselection and responsive reference handling](0055-assembly-mate-preselection-performance.md)
-- [0056. Complete assembly mate architecture — proposed](0056-complete-assembly-mates-proposal.md) — owner-requested full coverage; implementation architecture awaiting approval.
+- [0056. Complete assembly mate architecture — approved](0056-complete-assembly-mates-proposal.md) — owner-approved typed mates, contact/motion state and schema-2 persistence; implementation in progress.
 
 ## Pending owner decisions
 

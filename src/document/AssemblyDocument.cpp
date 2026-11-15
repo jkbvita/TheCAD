@@ -1,6 +1,7 @@
 #include "document/AssemblyDocument.h"
 #include "document/ReferenceGeometryData.h"
 #include "document/storage/AssemblyFileStore.h"
+#include "document/storage/AssemblyMateData.h"
 #include <BRepBndLib.hxx>
 #include <Bnd_Box.hxx>
 #include <QCryptographicHash>
@@ -16,6 +17,7 @@
 #include <set>
 #include <cmath>
 #include <stdexcept>
+#include <BRepBuilderAPI_MakeVertex.hxx>
 
 namespace thecad::document
 {
@@ -33,6 +35,31 @@ std::string uuid(const char* prefix)
 bool member(const std::vector<std::string>& ids, const std::string& id)
 {
     return std::find(ids.begin(), ids.end(), id) != ids.end();
+}
+modeling::DatumGeometry legacyGeometry(const modeling::assembly::MateGeometry& g)
+{
+    using K = modeling::assembly::MateGeometryKind;
+    return {g.kind == K::Plane ? modeling::DatumKind::Plane
+            : modeling::assembly::mateGeometryDirection(g) && g.kind != K::Frame
+                ? modeling::DatumKind::Axis
+                : modeling::DatumKind::Point,
+            g.frame, g.kind == K::Cylinder ? g.radius : 0};
+}
+std::vector<AssemblyReference> mateReferences(const AssemblyMate& mate)
+{
+    if (!mate.definition)
+        return {mate.first, mate.second};
+    std::vector<AssemblyReference> refs;
+    for (const auto& group : mate.definition->groups)
+        refs.insert(refs.end(), group.references.begin(), group.references.end());
+    return refs;
+}
+bool sameReference(const modeling::GeometryReference& a, const modeling::GeometryReference& b)
+{
+    return a.source == b.source &&
+           (!a.topologyName.empty() ? a.topologyName == b.topologyName
+                                    : a.featureId == b.featureId && a.entityId == b.entityId &&
+                                          a.role == b.role && a.index == b.index);
 }
 } // namespace
 AssemblyDocument AssemblyDocument::load(const QString& path)
@@ -68,15 +95,56 @@ AssemblyComponent AssemblyDocument::loadSource(const QString& source)
     box.Get(x0, y0, z0, x1, y1, z1);
     component.size = std::max(
         1.0, std::sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0) + (z1 - z0) * (z1 - z0)));
-    auto references = std::make_shared<std::vector<ReferenceOption>>();
-    for (auto option : component.part->referenceOptions(true))
+    auto references = std::make_shared<std::vector<AssemblySourceReference>>();
+    for (auto option : component.part->referenceOptions(false, false, false))
     {
-        if (option.geometry.kind == modeling::DatumKind::Point)
-            continue;
-        if (int(option.reference.source) < 6)
-            option.selectionShape = component.part->currentReferenceShape(option.reference);
-        references->push_back(std::move(option));
+        auto geometry = modeling::assembly::mateGeometry(
+            option.geometry, option.reference.source == modeling::ReferenceSource::Origin);
+        if (option.reference.source == modeling::ReferenceSource::SketchLine)
+            geometry = modeling::assembly::mateGeometry(option.selectionShape);
+        references->push_back(
+            {option.label, option.reference, option.geometry, option.selectionShape, geometry});
     }
+    for (const auto& option : component.part->namedTopologyOptions())
+        try
+        {
+            const auto geometry = modeling::assembly::mateGeometry(option.selectionShape);
+            references->push_back({option.label, option.reference, legacyGeometry(geometry),
+                                   option.selectionShape, geometry});
+            if (geometry.kind == modeling::assembly::MateGeometryKind::Circle)
+            {
+                auto ref = option.reference;
+                ref.source = modeling::ReferenceSource::BodyCircleAxis;
+                auto axis = geometry;
+                axis.kind = modeling::assembly::MateGeometryKind::Line;
+                axis.curve.Nullify();
+                axis.profile = modeling::assembly::MateProfileKind::None;
+                axis.radius = 0;
+                references->push_back({"Axis of " + option.label,
+                                       ref,
+                                       {modeling::DatumKind::Axis, geometry.frame},
+                                       option.selectionShape,
+                                       axis});
+                ref.source = modeling::ReferenceSource::BodyCircleCenter;
+                auto point = geometry;
+                point.kind = modeling::assembly::MateGeometryKind::Point;
+                point.radius = 0;
+                point.curve.Nullify();
+                point.profile = modeling::assembly::MateProfileKind::None;
+                point.shape = BRepBuilderAPI_MakeVertex(geometry.frame.Location());
+                references->push_back({"Center of " + option.label,
+                                       ref,
+                                       {modeling::DatumKind::Point, geometry.frame},
+                                       point.shape,
+                                       point});
+            }
+        }
+        catch (const Standard_Failure&)
+        {
+        }
+        catch (const std::exception&)
+        {
+        }
     component.references = std::move(references);
     return component;
 }
@@ -123,7 +191,39 @@ void AssemblyDocument::setPlacement(const std::string& id, const gp_Trsf& placem
     for (auto& c : candidate.m_components)
         if (c.id == id)
             c.placement = placement;
-    candidate.solve();
+    const auto mechanical = [](AssemblyMateKind kind)
+    {
+        using K = AssemblyMateKind;
+        return kind == K::Gear || kind == K::RackPinion || kind == K::Screw ||
+               kind == K::LinearCoupler || kind == K::UniversalJoint || kind == K::Belt;
+    };
+    const bool drive = std::any_of(m_mates.begin(), m_mates.end(),
+                                   [&](const auto& mate)
+                                   {
+                                       if (!mechanical(mate.kind) ||
+                                           mate.status != modeling::assembly::MateStatus::Active)
+                                           return false;
+                                       for (const auto& ref : mateReferences(mate))
+                                           if (ref.componentId == id)
+                                               return true;
+                                       return false;
+                                   });
+    if (drive)
+    {
+        auto driven = candidate;
+        try
+        {
+            driven.solve(id);
+            driven.solve();
+            candidate = std::move(driven);
+        }
+        catch (const std::exception&)
+        {
+            candidate.solve();
+        }
+    }
+    else
+        candidate.solve();
     *this = std::move(candidate);
 }
 void AssemblyDocument::setFixed(const std::string& id, bool fixed)
@@ -159,6 +259,20 @@ std::string AssemblyDocument::setMate(AssemblyMate mate)
     auto candidate = *this;
     const auto found = std::find_if(candidate.m_mates.begin(), candidate.m_mates.end(),
                                     [&](const auto& m) { return m.id == mate.id; });
+    if (mate.definition && found != candidate.m_mates.end())
+    {
+        const auto before = mateReferences(*found), after = mateReferences(mate);
+        bool changed =
+            found->kind != mate.kind || before.size() != after.size() || !found->definition;
+        for (std::size_t i = 0; !changed && i < before.size(); ++i)
+            changed = before[i].componentId != after[i].componentId ||
+                      !sameReference(before[i].geometry, after[i].geometry);
+        if (!changed && mate.definition->parameters.standard.lockRotation &&
+            !found->definition->parameters.standard.lockRotation)
+            changed = true;
+        if (changed)
+            mate.definition->motion = {};
+    }
     if (found == candidate.m_mates.end())
         candidate.m_mates.push_back(mate);
     else
@@ -181,12 +295,74 @@ void AssemblyDocument::deleteMates(const std::vector<std::string>& ids)
     candidate.solve();
     *this = std::move(candidate);
 }
+std::string AssemblyDocument::keepUnsolvedMate(AssemblyMate mate)
+{
+    try
+    {
+        return setMate(mate);
+    }
+    catch (const std::exception& error)
+    {
+        auto candidate = *this;
+        mate.status = modeling::assembly::MateStatus::Unsolved;
+        mate.diagnostic = error.what();
+        const auto id = candidate.setMate(std::move(mate));
+        *this = std::move(candidate);
+        return id;
+    }
+}
+std::string AssemblyDocument::forceMate(AssemblyMate mate, const std::vector<std::string>& affected)
+{
+    require(!affected.empty(), "Select the mates that will be marked unsolved.");
+    auto candidate = *this;
+    for (const auto& id : affected)
+    {
+        const auto found =
+            std::find_if(candidate.m_mates.begin(), candidate.m_mates.end(),
+                         [&](const auto& m) { return m.id == id && m.id != mate.id; });
+        require(found != candidate.m_mates.end(), "The affected mate is unavailable.");
+        found->status = modeling::assembly::MateStatus::Unsolved;
+        found->diagnostic =
+            "Explicitly left unsolved while forcing " +
+            (mate.name.empty() ? std::string(modeling::assembly::mateName(mate.kind)) : mate.name);
+    }
+    mate.status = modeling::assembly::MateStatus::Active;
+    mate.diagnostic.clear();
+    const auto id = candidate.setMate(std::move(mate));
+    *this = std::move(candidate);
+    return id;
+}
+void AssemblyDocument::setMateStatus(const std::vector<std::string>& ids,
+                                     modeling::assembly::MateStatus status)
+{
+    require(!ids.empty() && int(status) >= 0 && int(status) <= 2,
+            "Select valid mates and a valid status.");
+    auto candidate = *this;
+    for (const auto& id : ids)
+    {
+        const auto found = std::find_if(candidate.m_mates.begin(), candidate.m_mates.end(),
+                                        [&](const auto& m) { return m.id == id; });
+        require(found != candidate.m_mates.end(), "Mate is unavailable.");
+        found->status = status;
+        if (status != modeling::assembly::MateStatus::Unsolved)
+            found->diagnostic.clear();
+    }
+    candidate.solve();
+    *this = std::move(candidate);
+}
 std::vector<AssemblyMate>
 AssemblyDocument::componentDependents(const std::vector<std::string>& ids) const
 {
     std::vector<AssemblyMate> result;
     for (const auto& m : m_mates)
-        if (member(ids, m.first.componentId) || member(ids, m.second.componentId))
+        if (
+            [&]
+            {
+                for (const auto& ref : mateReferences(m))
+                    if (member(ids, ref.componentId))
+                        return true;
+                return false;
+            }())
             result.push_back(m);
     return result;
 }
@@ -204,11 +380,15 @@ void AssemblyDocument::deleteComponents(const std::vector<std::string>& ids,
                                                 candidate.m_components.end(),
                                                 [&](const auto& c) { return member(ids, c.id); }),
                                  candidate.m_components.end());
-    candidate.m_mates.erase(
-        std::remove_if(
-            candidate.m_mates.begin(), candidate.m_mates.end(), [&](const auto& m)
-            { return member(ids, m.first.componentId) || member(ids, m.second.componentId); }),
-        candidate.m_mates.end());
+    candidate.m_mates.erase(std::remove_if(candidate.m_mates.begin(), candidate.m_mates.end(),
+                                           [&](const auto& m)
+                                           {
+                                               for (const auto& ref : mateReferences(m))
+                                                   if (member(ids, ref.componentId))
+                                                       return true;
+                                               return false;
+                                           }),
+                            candidate.m_mates.end());
     candidate.solve();
     *this = std::move(candidate);
 }
@@ -250,9 +430,13 @@ std::vector<AssemblyReferenceOption> AssemblyDocument::referenceOptions(const st
     static const auto origin = []
     {
         const auto part = PartDocument::createEmpty();
-        auto options = part.referenceOptions();
-        for (auto& option : options)
-            option.selectionShape = part.currentReferenceShape(option.reference);
+        std::vector<AssemblySourceReference> options;
+        for (const auto& option : part.referenceOptions(false, false, false))
+            options.push_back({option.label, option.reference, option.geometry,
+                               part.currentReferenceShape(option.reference),
+                               modeling::assembly::mateGeometry(
+                                   option.geometry,
+                                   option.reference.source == modeling::ReferenceSource::Origin)});
         return options;
     }();
     const auto* instance = id.empty() ? nullptr : &component(id);
@@ -261,17 +445,32 @@ std::vector<AssemblyReferenceOption> AssemblyDocument::referenceOptions(const st
     std::vector<AssemblyReferenceOption> result;
     for (const auto& option : options)
     {
-        if (id.empty() && option.reference.source != modeling::ReferenceSource::BasePlane &&
-            option.reference.source != modeling::ReferenceSource::BaseAxis)
-            continue;
-        if (option.geometry.kind == modeling::DatumKind::Point)
-            continue;
         const auto label = prefix + QString::fromStdString(option.label);
-        result.push_back({label, {id, option.reference}, option.geometry, option.selectionShape});
+        result.push_back({label,
+                          {id, option.reference},
+                          option.geometry,
+                          option.selectionShape,
+                          option.mateGeometry});
     }
     return result;
 }
-void AssemblyDocument::solve()
+modeling::assembly::MateGeometry AssemblyDocument::mateGeometry(const AssemblyReference& ref) const
+{
+    if (int(ref.geometry.source) >= 6)
+    {
+        require(!ref.geometry.topologyName.empty() &&
+                    ref.geometry.role == modeling::PointRole::First &&
+                    ref.geometry.entityId.empty() && ref.geometry.signature.size() == 64,
+                "Body mate references require valid persistent topology names.");
+        (void)component(ref.componentId).part->currentReferenceShape(ref.geometry);
+    }
+    for (const auto& option : referenceOptions(ref.componentId))
+        if (sameReference(option.reference.geometry, ref.geometry))
+            return option.mateGeometry;
+    throw std::runtime_error("The mate reference is missing or its geometry is unsupported. "
+                             "Replace the reference explicitly.");
+}
+void AssemblyDocument::solve(const std::string& driven)
 {
     require(m_components.size() <= 64 && m_mates.size() <= 256,
             "This assembly milestone supports 64 components and 256 mates.");
@@ -283,7 +482,7 @@ void AssemblyDocument::solve()
                 "Invalid or duplicate component ID.");
         require(!c.name.empty() && c.name.size() <= 256 && c.part && !c.part->shape().IsNull(),
                 "Invalid component source or name.");
-        bodies.push_back({c.id, c.placement, c.fixed, c.size});
+        bodies.push_back({c.id, c.placement, c.fixed || c.id == driven, c.size});
     }
     const auto index = [&](const std::string& id)
     {
@@ -295,16 +494,54 @@ void AssemblyDocument::solve()
         throw std::runtime_error("Mate component is missing: " + id);
     };
     std::vector<modeling::assembly::ResolvedMate> mates;
-    for (const auto& m : m_mates)
+    std::vector<std::size_t> activeMates;
+    for (std::size_t mi = 0; mi < m_mates.size(); ++mi)
     {
+        const auto& m = m_mates[mi];
         require(!m.id.empty() && m.id.size() <= 128 && ids.insert(m.id).second && !m.name.empty() &&
                     m.name.size() <= 256,
                 "Invalid or duplicate mate ID/name.");
         try
         {
-            mates.push_back({m.name, m.kind, index(m.first.componentId),
-                             index(m.second.componentId), referenceGeometry(m.first, false),
-                             referenceGeometry(m.second, false), m.value, m.alignment});
+            (void)readAssemblyMate(writeAssemblyMate(m));
+            require(int(m.status) >= 0 && int(m.status) <= 2, "Invalid mate status.");
+            for (const auto& ref : mateReferences(m))
+                (void)index(ref.componentId);
+            if (m.definition)
+                modeling::assembly::validateMateParameters(m.kind, m.definition->parameters);
+            if (m.status != modeling::assembly::MateStatus::Active)
+                continue;
+            modeling::assembly::ResolvedMate resolved;
+            resolved.id = m.name;
+            resolved.kind = m.kind;
+            resolved.value = m.value;
+            resolved.alignment = m.alignment;
+            if (m.definition)
+            {
+                resolved.definition = modeling::assembly::ResolvedMateDefinition{};
+                resolved.definition->parameters = m.definition->parameters;
+                resolved.definition->motion = m.definition->motion;
+                for (const auto& group : m.definition->groups)
+                    for (const auto& ref : group.references)
+                        resolved.definition->references.push_back(
+                            {group.role, index(ref.componentId), mateGeometry(ref)});
+                if (resolved.definition->references.size() >= 2)
+                {
+                    resolved.first = resolved.definition->references[0].body;
+                    resolved.second = resolved.definition->references[1].body;
+                    resolved.a = legacyGeometry(resolved.definition->references[0].geometry);
+                    resolved.b = legacyGeometry(resolved.definition->references[1].geometry);
+                }
+            }
+            else
+            {
+                resolved.first = index(m.first.componentId);
+                resolved.second = index(m.second.componentId);
+                resolved.a = referenceGeometry(m.first, false);
+                resolved.b = referenceGeometry(m.second, false);
+            }
+            mates.push_back(std::move(resolved));
+            activeMates.push_back(mi);
         }
         catch (const std::exception& failure)
         {
@@ -312,6 +549,9 @@ void AssemblyDocument::solve()
         }
     }
     m_solution = modeling::assembly::solveMates(bodies, mates);
+    for (std::size_t i = 0; i < m_solution.motion.size(); ++i)
+        if (m_mates[activeMates[i]].definition)
+            m_mates[activeMates[i]].definition->motion = m_solution.motion[i];
     for (std::size_t i = 0; i < m_components.size(); ++i)
         m_components[i].placement = m_solution.placements[i];
 }
@@ -330,6 +570,7 @@ QByteArray AssemblyDocument::stateKey() const
     }
     for (const auto& m : m_mates)
     {
+        out << QJsonDocument(writeAssemblyMate(m)).toJson(QJsonDocument::Compact);
         out << QString::fromStdString(m.id) << QString::fromStdString(m.name) << int(m.kind)
             << m.value << m.alignment;
         for (const auto* ref : {&m.first, &m.second})

@@ -1,11 +1,12 @@
-# 0056. Complete assembly mate architecture — proposed
+# 0056. Complete assembly mate architecture
 
-**Status: proposed; implementation architecture awaiting owner approval.**
+**Status: approved by the owner on 2026-11-15.**
 
 The owner explicitly requested research and implementation of all SolidWorks
 assembly mates. The functional goal is authorized. This record proposes the
 major data/solver changes needed to achieve it. It does not claim those changes
-have been approved or implemented. The accepted application at `10cb319`
+were already implemented. The owner approved the recommended architecture in
+the explicit approval reply for proposal 0056. The accepted application at `10cb319`
 remains the working baseline.
 
 See the [official-documentation research and coverage table](../research/solidworks-assembly-mates.md).
@@ -167,6 +168,6 @@ review, a second integration boundary and separate behavior/performance risks;
 it does not eliminate the geometry, selection, persistence or workflow work.
 
 **Recommend extending the existing assembly solver and document as described
-above.** Owner approval is needed for this major architecture/data/error-state
-extension under AGENTS.md before implementing it. The current request approves
-the functional goal; this record makes the implementation decision concrete.
+above.** The owner approved this major architecture/data/error-state extension
+under AGENTS.md. The implementation must still satisfy the acceptance checks;
+approval alone does not mark any mate implemented.

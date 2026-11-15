@@ -108,6 +108,58 @@ class AssemblyWorkflowTest final : public QObject
         QCOMPARE(expected->ProjectionType(), actual->ProjectionType());
     }
 private slots:
+    void typedEntityPickingAndMultipleMates()
+    {
+        QTemporaryDir temp;
+        const auto path = temp.filePath("block.thepart");
+        document::PartDocument::createBox({20, 20, 20}).save(path);
+        document::AssemblyDocument doc;
+        const auto a = doc.insertComponent(path), b = doc.insertComponent(path),
+                   c = doc.insertComponent(path);
+        AssemblyTestWindow window;
+        window.m_session.commit(doc);
+        window.refresh();
+        window.showMaximized();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* viewport = window.m_viewport;
+        QTRY_VERIFY(viewport->isReady());
+        viewport->standardView(0);
+        viewport->fitAll();
+        QApplication::processEvents();
+        Handle(Graphic3d_Camera) camera = new Graphic3d_Camera(viewport->camera());
+        const auto vertex = viewport->hit(viewport->project({0, 0, 20}));
+        QCOMPARE(vertex.kind, TopAbs_VERTEX);
+        QVERIFY(vertex.second > 0);
+        const auto edge = viewport->hit(viewport->project({10, 0, 20}));
+        QCOMPARE(edge.kind, TopAbs_EDGE);
+        QVERIFY(edge.second > 0);
+        window.pickedEntity(QString::fromStdString(vertex.first), vertex.kind, vertex.second, {});
+        QCOMPARE(window.m_preselection.size(), std::size_t(1));
+        QCOMPARE(window.m_preselection[0].mateGeometry.kind,
+                 modeling::assembly::MateGeometryKind::Point);
+        unchanged(camera, viewport);
+        reference(window, a, false, 0);
+        reference(window, b, false, 0, true);
+        reference(window, c, false, 0, true);
+        command(window, "actionMate");
+        QVERIFY(window.m_mate);
+        QVERIFY(window.m_mate->findChild<QCheckBox*>("assemblyMateMultiple")->isChecked());
+        confirmMate(window);
+        QCOMPARE(window.document().mates().size(), std::size_t(2));
+        unchanged(camera, viewport);
+        reference(window, a, false, 1);
+        reference(window, b, false, 1, true);
+        command(window, "actionMate");
+        auto* kind = window.m_mate->findChild<QComboBox*>("assemblyMateType");
+        kind->setCurrentIndex(kind->findData(int(modeling::assembly::MateKind::Parallel)));
+        window.m_mate->findChild<QCheckBox*>("assemblyMateKeepOpen")->setChecked(true);
+        confirmMate(window);
+        QVERIFY(window.m_mate);
+        QCOMPARE(window.document().mates().size(), std::size_t(3));
+        window.finishMate(false);
+        unchanged(camera, viewport);
+        QVERIFY(window.errors.isEmpty());
+    }
     void preselectedFacesAndPlanes()
     {
         QTemporaryDir temp;

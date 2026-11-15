@@ -2,6 +2,7 @@ add_library(thecad_document STATIC
     PartDocument.cpp
     AssemblyDocument.cpp
     storage/AssemblyFileStore.cpp
+    storage/AssemblyMateData.cpp
     detail/PartValidation.cpp
     storage/PartFileStore.cpp)
 target_sources(thecad_document PRIVATE ReferenceGeometryData.cpp SketchProjectionData.cpp)

@@ -109,57 +109,84 @@ AssemblyWindow::AssemblyWindow(QWidget* parent) : QMainWindow(parent)
                             break;
                         }
             });
-    connect(m_tree, &QTreeWidget::customContextMenuRequested, this,
-            [this](QPoint point)
+    connect(
+        m_tree, &QTreeWidget::customContextMenuRequested, this,
+        [this](QPoint point)
+        {
+            if (draftActive())
+                return;
+            auto* item = m_tree->itemAt(point);
+            if (!item)
+                return;
+            if (!item->isSelected())
+                m_tree->setCurrentItem(item, 0, QItemSelectionModel::ClearAndSelect);
+            QMenu menu(this);
+            if (item->data(0, kindRole).toString() == "component")
             {
-                if (draftActive())
-                    return;
-                auto* item = m_tree->itemAt(point);
-                if (!item)
-                    return;
-                if (!item->isSelected())
-                    m_tree->setCurrentItem(item, 0, QItemSelectionModel::ClearAndSelect);
-                QMenu menu(this);
-                if (item->data(0, kindRole).toString() == "component")
-                {
-                    menu.addAction(m_fix);
-                    menu.addAction(m_hide);
-                    auto* open = menu.addAction("Open part");
-                    const auto id = item->data(0, Qt::UserRole).toString().toStdString();
-                    connect(open, &QAction::triggered, this,
-                            [this, id]
-                            {
-                                auto* window = new MainWindow;
-                                window->setAttribute(Qt::WA_DeleteOnClose);
-                                window->showMaximized();
-                                if (!window->openPartFile(document().component(id).path))
-                                    window->close();
-                            });
-                }
-                if (item->data(0, kindRole).toString() == "mate")
-                {
-                    auto* edit = menu.addAction("Edit mate");
-                    const auto id = item->data(0, Qt::UserRole).toString();
-                    connect(edit, &QAction::triggered, this,
-                            [this, id]
-                            {
-                                for (const auto& mate : document().mates())
-                                    if (q(mate.id) == id)
-                                    {
-                                        startMate(mate);
-                                        break;
-                                    }
-                            });
-                }
-                menu.addSeparator();
-                menu.addAction(m_delete);
-                menu.exec(m_tree->viewport()->mapToGlobal(point));
-            });
+                menu.addAction(m_fix);
+                menu.addAction(m_hide);
+                auto* open = menu.addAction("Open part");
+                const auto id = item->data(0, Qt::UserRole).toString().toStdString();
+                connect(open, &QAction::triggered, this,
+                        [this, id]
+                        {
+                            auto* window = new MainWindow;
+                            window->setAttribute(Qt::WA_DeleteOnClose);
+                            window->showMaximized();
+                            if (!window->openPartFile(document().component(id).path))
+                                window->close();
+                        });
+            }
+            if (item->data(0, kindRole).toString() == "mate")
+            {
+                auto* edit = menu.addAction("Edit mate");
+                const auto id = item->data(0, Qt::UserRole).toString();
+                connect(edit, &QAction::triggered, this,
+                        [this, id]
+                        {
+                            for (const auto& mate : document().mates())
+                                if (q(mate.id) == id)
+                                {
+                                    startMate(mate);
+                                    break;
+                                }
+                        });
+            }
+            if (item->data(0, kindRole).toString() == "mate")
+            {
+                std::vector<std::string> ids;
+                for (const auto* selected : m_tree->selectedItems())
+                    if (selected->data(0, kindRole).toString() == "mate")
+                        ids.push_back(selected->data(0, Qt::UserRole).toString().toStdString());
+                auto* suppress = menu.addAction("Suppress selected mates");
+                auto* unsuppress = menu.addAction("Unsuppress selected mates");
+                connect(suppress, &QAction::triggered, this,
+                        [this, ids]
+                        {
+                            mutate(
+                                [&](auto& doc)
+                                {
+                                    doc.setMateStatus(ids,
+                                                      modeling::assembly::MateStatus::Suppressed);
+                                });
+                        });
+                connect(
+                    unsuppress, &QAction::triggered, this,
+                    [this, ids]
+                    {
+                        mutate([&](auto& doc)
+                               { doc.setMateStatus(ids, modeling::assembly::MateStatus::Active); });
+                    });
+            }
+            menu.addSeparator();
+            menu.addAction(m_delete);
+            menu.exec(m_tree->viewport()->mapToGlobal(point));
+        });
     connect(m_placement, &ComponentPlacementEditor::applyRequested, this,
             &AssemblyWindow::applyPlacement);
     connect(m_viewport, &AssemblyViewport::initializationFailed, this,
             &AssemblyWindow::reportError);
-    connect(m_viewport, &AssemblyViewport::picked, this, &AssemblyWindow::picked);
+    connect(m_viewport, &AssemblyViewport::entityPicked, this, &AssemblyWindow::pickedEntity);
     connect(m_viewport, &AssemblyViewport::dragStarted, this,
             [this]
             {
@@ -173,7 +200,7 @@ AssemblyWindow::AssemblyWindow(QWidget* parent) : QMainWindow(parent)
                     return;
                 try
                 {
-                    auto candidate = document();
+                    auto candidate = *m_dragCandidate;
                     candidate.setPlacement(id.toStdString(), pose);
                     m_dragCandidate = std::move(candidate);
                     render(*m_dragCandidate);
@@ -608,29 +635,46 @@ void AssemblyWindow::refreshTree()
     root->setExpanded(true);
     const auto references = [&](QTreeWidgetItem* parent, const std::string& id)
     {
+        QTreeWidgetItem* sketches = nullptr;
         for (const auto& option : document().referenceOptions(id))
         {
             const auto source = option.reference.geometry.source;
-            if (source != modeling::ReferenceSource::BasePlane &&
-                source != modeling::ReferenceSource::BaseAxis &&
-                source != modeling::ReferenceSource::Datum)
+            if (int(source) >= 6)
                 continue;
+            auto* referenceParent = parent;
+            if (source == modeling::ReferenceSource::SketchLine ||
+                source == modeling::ReferenceSource::SketchPoint)
+            {
+                if (!sketches)
+                {
+                    sketches = new QTreeWidgetItem(parent, {"Sketch reference geometry"});
+                    sketches->setData(0, Qt::UserRole, "sketch-references:" + q(id));
+                    sketches->setData(0, kindRole, "folder");
+                }
+                referenceParent = sketches;
+            }
             const int index = int(m_treeReferences.size());
             m_treeReferences.push_back(option);
             const auto label = option.label.section(" / ", -1);
-            auto* child = new QTreeWidgetItem(parent, {label});
+            auto* child = new QTreeWidgetItem(
+                referenceParent,
+                {referenceParent == sketches ? option.label.section(" / ", 1) : label});
             child->setIcon(0, commandIcon(option.geometry.kind == modeling::DatumKind::Plane
                                               ? "Reference Plane"
+                                          : option.geometry.kind == modeling::DatumKind::Point
+                                              ? "Reference Point"
                                               : "Reference Axis"));
             child->setData(0, kindRole, "reference");
             child->setData(0, referenceRole, index);
             child->setData(0, Qt::UserRole,
-                           QString("reference:%1:%2:%3")
+                           QString("reference:%1:%2:%3:%4:%5")
                                .arg(q(id))
                                .arg(int(source))
                                .arg(source == modeling::ReferenceSource::Datum
                                         ? q(option.reference.geometry.featureId)
-                                        : QString::number(option.reference.geometry.index)));
+                                        : QString::number(option.reference.geometry.index))
+                               .arg(q(option.reference.geometry.entityId))
+                               .arg(int(option.reference.geometry.role)));
         }
     };
     references(root, {});
@@ -655,10 +699,15 @@ void AssemblyWindow::refreshTree()
     mates->setExpanded(true);
     for (const auto& mate : document().mates())
     {
-        auto* item = new QTreeWidgetItem(mates, {q(mate.name)});
+        const auto status =
+            mate.status == modeling::assembly::MateStatus::Suppressed ? " (suppressed)"
+            : mate.status == modeling::assembly::MateStatus::Unsolved ? " (unsolved)"
+                                                                      : "";
+        auto* item = new QTreeWidgetItem(mates, {q(mate.name) + status});
         item->setData(0, Qt::UserRole, q(mate.id));
         item->setData(0, kindRole, "mate");
-        item->setToolTip(0, modeling::assembly::mateName(mate.kind));
+        item->setToolTip(0, QString::fromUtf8(modeling::assembly::mateName(mate.kind)) + "\n" +
+                                q(mate.diagnostic));
     }
     const auto desired = m_selected.empty() ? current : q(m_selected);
     for (QTreeWidgetItemIterator it(m_tree); *it; ++it)
@@ -679,12 +728,12 @@ void AssemblyWindow::refreshTree()
                 (*it)->setSelected(true);
         }
 }
-void AssemblyWindow::selectComponent(const std::string& id, int face)
+void AssemblyWindow::selectComponent(const std::string& id, int face, TopAbs_ShapeEnum kind)
 {
     m_preselection.clear();
     m_viewport->setReferenceHighlights({});
     m_selected = id;
-    m_viewport->setSelected(id, face);
+    m_viewport->setSelected(id, face, kind);
     {
         const QSignalBlocker block(m_tree);
         m_tree->clearSelection();
@@ -727,7 +776,7 @@ void AssemblyWindow::selectTree()
         if (found != selected.end())
             ordered.push_back(*found);
         else if ((QApplication::keyboardModifiers() & (Qt::ControlModifier | Qt::ShiftModifier)) &&
-                 old.reference.geometry.source == modeling::ReferenceSource::BodyFace)
+                 int(old.reference.geometry.source) >= 6)
             ordered.push_back(old);
     }
     for (const auto& option : selected)
@@ -750,28 +799,32 @@ void AssemblyWindow::selectTree()
     render(document());
     updateActions();
 }
-document::AssemblyReferenceOption AssemblyWindow::faceReference(const std::string& id,
-                                                                int face) const
+document::AssemblyReferenceOption AssemblyWindow::faceReference(const std::string& id, int face,
+                                                                TopAbs_ShapeEnum kind) const
 {
     const auto& component = document().component(id);
     TopTools_IndexedMapOfShape faces;
-    TopExp::MapShapes(component.part->shape(), TopAbs_FACE, faces);
+    TopExp::MapShapes(component.part->shape(), kind, faces);
     if (face > 0 && face <= faces.Extent())
         for (const auto& option : document().referenceOptions(id))
-            if (option.reference.geometry.source == modeling::ReferenceSource::BodyFace &&
-                option.shape.IsSame(faces(face)))
+            if (option.shape.IsSame(faces(face)))
                 return option;
     throw std::runtime_error(
-        "Select a planar or cylindrical face, or choose a plane/axis in the component tree.");
+        "Select a supported vertex, edge, face or reference in the component tree.");
 }
 void AssemblyWindow::picked(const QString& component, int face, Qt::KeyboardModifiers modifiers)
+{
+    pickedEntity(component, TopAbs_FACE, face, modifiers);
+}
+void AssemblyWindow::pickedEntity(const QString& component, TopAbs_ShapeEnum kind, int face,
+                                  Qt::KeyboardModifiers modifiers)
 {
     if (m_mate)
     {
         if (!component.isEmpty())
             try
             {
-                m_mate->pick(faceReference(component.toStdString(), face).reference);
+                m_mate->pick(faceReference(component.toStdString(), face, kind).reference);
             }
             catch (const std::exception& error)
             {
@@ -787,7 +840,7 @@ void AssemblyWindow::picked(const QString& component, int face, Qt::KeyboardModi
         if (!component.isEmpty())
             try
             {
-                const auto option = faceReference(component.toStdString(), face);
+                const auto option = faceReference(component.toStdString(), face, kind);
                 const auto found =
                     std::find_if(selected.begin(), selected.end(), [&](const auto& old)
                                  { return sameReference(old.reference, option.reference); });
@@ -809,16 +862,19 @@ void AssemblyWindow::picked(const QString& component, int face, Qt::KeyboardModi
             selectedFace = 0;
         }
         else if (additive && selected.size() == 1 &&
-                 selected[0].reference.geometry.source == modeling::ReferenceSource::BodyFace)
+                 int(selected[0].reference.geometry.source) >= 6)
         {
             selectedId = selected[0].reference.componentId;
             TopTools_IndexedMapOfShape faces;
-            TopExp::MapShapes(document().component(selectedId).part->shape(), TopAbs_FACE, faces);
+            kind = selected[0].shape.ShapeType();
+            TopExp::MapShapes(document().component(selectedId).part->shape(), kind, faces);
             selectedFace = faces.FindIndex(selected[0].shape);
         }
-        selectComponent(selectedId, selectedFace);
+        selectComponent(selectedId, selectedFace, kind);
         m_preselection = std::move(selected);
-        if (m_preselection.size() > 1)
+        if (m_preselection.size() > 1 ||
+            (m_preselection.size() == 1 &&
+             m_preselection[0].reference.geometry.source != modeling::ReferenceSource::BodyFace))
             m_viewport->setSelected({});
         render(document());
     }
@@ -990,11 +1046,13 @@ void AssemblyWindow::finishMate(bool accepted)
         return;
     if (accepted)
     {
-        m_mate->refreshPreview();
+        if (!m_mate->candidate())
+            m_mate->refreshPreview();
         if (!m_mate->candidate())
             return;
         m_session.commit(*m_mate->candidate());
     }
+    const bool again = accepted && m_mate->keepOpen();
     auto* editor = m_mate;
     m_mate = nullptr;
     m_viewport->setMatePicking(false);
@@ -1003,6 +1061,13 @@ void AssemblyWindow::finishMate(bool accepted)
     editor->deleteLater();
     refresh();
     m_viewport->setSelected(m_selected);
+    if (again)
+    {
+        m_preselection.clear();
+        startMate();
+        if (m_mate)
+            m_mate->findChild<QCheckBox*>("assemblyMateKeepOpen")->setChecked(true);
+    }
 }
 void AssemblyWindow::cancelDraft()
 {
@@ -1077,6 +1142,12 @@ void AssemblyWindow::updateActions()
 bool AssemblyWindow::eventFilter(QObject* object, QEvent* event)
 {
     const auto* widget = qobject_cast<QWidget*>(object);
+    if (event->type() == QEvent::KeyRelease && widget && widget->window() == this)
+    {
+        const auto* key = static_cast<QKeyEvent*>(event);
+        if (!key->isAutoRepeat() && (key->key() == Qt::Key_Control || key->key() == Qt::Key_Shift))
+            quickMates();
+    }
     if (event->type() == QEvent::KeyPress && widget && widget->window() == this)
     {
         auto* key = static_cast<QKeyEvent*>(event);
