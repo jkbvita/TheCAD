@@ -130,6 +130,10 @@ QGridLayout* group(QHBoxLayout* row, const QString& name)
     auto* widget = new QWidget;
     widget->setAccessibleName(name);
     widget->setFixedHeight(commandHeight);
+    // QGridLayout inherits horizontal expansion from its command buttons.
+    // Keep each group at its size hint so the trailing stretch takes all spare
+    // toolbar width instead of spreading it between the grid's columns.
+    widget->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     widget->setProperty("featureCommandGroup", true);
     auto* grid = new QGridLayout(widget);
     grid->setContentsMargins(3, 0, 3, 0);

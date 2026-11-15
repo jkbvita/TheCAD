@@ -51,3 +51,10 @@ Manual check: inspect the three-row layout; use the Fillet/Chamfer and
 Linear/Circular Pattern arrows, click their main buttons, open each Reference
 Geometry command, and verify the unavailable entries stay disabled. Check both
 themes and a narrow window. No owner decision remains pending for this change.
+
+Follow-up: the first check covered a compact window and missed horizontal grid
+expansion on maximized windows. Command groups now have a fixed size policy;
+all spare width goes to the trailing stretch. A regression reproduced the old
+failure and now verifies unchanged command/separator bounds at widths 960,
+1440, 1920 and 2560 in both themes and at 150% scaling. The Release build and
+architecture, document UI and both toolbar suites pass (4/4).

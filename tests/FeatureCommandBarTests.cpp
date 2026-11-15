@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QHBoxLayout>
 #include <QMenu>
+#include <QMap>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSignalSpy>
@@ -73,6 +74,22 @@ private slots:
         QVERIFY(position("actionRevolvedCutButton").x() < position("actionSweptCutButton").x());
         QCOMPARE(position("actionMirrorButton").y(), position("actionShellButton").y());
         QCOMPARE(page.findChildren<QWidget*>("featureCommandSeparator").size(), 3);
+        // Maximizing must leave the command strip at its natural width. Spare
+        // viewport width belongs after Curves, never between command columns.
+        QMap<QWidget*, QRect> compactBounds;
+        for (auto* tool : page.findChildren<QToolButton*>())
+            compactBounds.insert(tool, QRect(tool->mapTo(&page, QPoint()), tool->size()));
+        for (auto* divider : page.findChildren<QWidget*>("featureCommandSeparator"))
+            compactBounds.insert(divider, QRect(divider->mapTo(&page, QPoint()), divider->size()));
+        for (int width : {1440, 1920, 2560})
+        {
+            page.resize(width, 84);
+            QCoreApplication::processEvents();
+            for (auto it = compactBounds.cbegin(); it != compactBounds.cend(); ++it)
+                QCOMPARE(QRect(it.key()->mapTo(&page, QPoint()), it.key()->size()), it.value());
+        }
+        page.resize(960, 84);
+        QCoreApplication::processEvents();
         int future = 0;
         for (auto* candidate : page.findChildren<QAction*>())
             if (candidate->property("futureFeature").toBool())
