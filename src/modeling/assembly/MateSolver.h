@@ -45,6 +45,16 @@ struct MateSolution
     int degreesOfFreedom = 0;
     std::vector<MateMotionState> motion;
 };
+// Transient screen-plane grab target. It never becomes a persisted mate.
+struct ComponentDragTarget
+{
+    int body = -1;
+    gp_Pnt localPoint, target;
+    gp_Dir viewNormal;
+    double tolerance = 0.01;
+};
+MateSolution dragMates(const std::vector<RigidBody>& bodies, const std::vector<ResolvedMate>& mates,
+                       const ComponentDragTarget& target);
 bool validMateTypes(MateKind kind, DatumKind first, DatumKind second);
 const char* mateName(MateKind kind);
 MateSolution solveMates(const std::vector<RigidBody>& bodies,

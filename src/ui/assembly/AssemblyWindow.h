@@ -68,6 +68,8 @@ private:
     void finishInsertion(bool accepted);
     void moveInsertion(const gp_Pnt& point);
     void applyPlacement();
+    void previewComponentDrag(const QString&,
+                              const std::function<void(document::AssemblyDocument&)>&);
     void deleteSelected();
     bool save(bool saveAs = false);
     bool maybeSave();

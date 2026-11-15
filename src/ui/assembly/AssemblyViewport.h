@@ -16,12 +16,14 @@ struct AssemblyVisual
     gp_Trsf placement;
     bool visible = true, fixed = false, preview = false;
     bool filled = false; // Filled face selection versus datum outlines.
+    bool constrained = false;
 };
 struct AssemblyHit
 {
     std::string first;
     int second = 0;
     TopAbs_ShapeEnum kind = TopAbs_FACE;
+    gp_Pnt point;
 };
 class AssemblyViewport final : public QWidget
 {
@@ -35,8 +37,6 @@ public:
     void setReferenceHighlights(const std::vector<AssemblyVisual>& references);
     void setMatePicking(bool active) { m_matePicking = active; }
     void setInserting(bool active) { m_inserting = active; }
-    void setRotationMode(bool rotate) { m_rotate = rotate; }
-    bool rotationMode() const { return m_rotate; }
     void fitAll();
     void standardView(int index);
     gp_Pnt cursorPoint(const QPointF& position) const;
@@ -49,6 +49,8 @@ signals:
                       Qt::KeyboardModifiers modifiers);
     void dragStarted();
     void dragPlacement(const QString& component, const gp_Trsf& placement);
+    void dragPointRequested(const QString& component, const gp_Pnt& local, const gp_Pnt& target,
+                            const gp_Dir& normal, double tolerance);
     void dragFinished(bool accepted);
     void insertionMoved(const gp_Pnt& point);
     void insertionConfirmed();
@@ -71,6 +73,7 @@ private:
     void initialize();
     QPoint native(const QPointF& point) const;
     AssemblyHit hit(const QPointF& point);
+    gp_Pnt cursorAtGrabDepth(const QPointF& point) const;
     TopoDS_Shape selectedShape(const std::string& id, int face,
                                TopAbs_ShapeEnum kind = TopAbs_FACE) const;
     void refreshSelection();
@@ -88,8 +91,16 @@ private:
     QPointF m_press;
     gp_Trsf m_dragPose;
     gp_Pnt m_dragPoint;
-    bool m_dragMoved = false, m_matePicking = false, m_inserting = false, m_rotate = false,
-         m_attempted = false, m_fitPending = false;
+    gp_Pnt m_localGrab, m_localCenter, m_rotationPivot;
+    gp_Trsf m_rotationBase;
+    QPointF m_lastStroke, m_lastSegment;
+    double m_strokeTurning = 0, m_rotationStartTurning = 0;
+    double m_straightTravel = 0;
+    int m_curvedSamples = 0;
+    Qt::MouseButton m_dragButton = Qt::NoButton;
+    bool m_rotationGesture = false, m_dragConstrained = false;
+    bool m_dragMoved = false, m_matePicking = false, m_inserting = false, m_attempted = false,
+         m_fitPending = false;
     QString m_error;
 };
 } // namespace thecad::ui

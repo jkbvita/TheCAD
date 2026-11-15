@@ -5,6 +5,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QVBoxLayout>
+#include <QToolButton>
 
 namespace thecad::ui
 {
@@ -15,8 +16,34 @@ ComponentPlacementEditor::ComponentPlacementEditor(QWidget* parent) : QWidget(pa
     m_title = new QLabel("Select a component");
     m_title->setWordWrap(true);
     layout->addWidget(m_title);
+    layout->setContentsMargins(10, 8, 10, 8);
+    layout->setSpacing(6);
+    m_title->setObjectName("operationTitle");
+    m_hint = new QLabel("Drag a component to position it. Its mates guide the movement.");
+    m_hint->setObjectName("operationDescription");
+    m_hint->setWordWrap(true);
+    layout->addWidget(m_hint);
+    m_details = new QToolButton;
+    m_details->setObjectName("componentNumericPlacement");
+    m_details->setText("Exact position and orientation");
+    m_details->setCheckable(true);
+    m_details->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_details->setArrowType(Qt::RightArrow);
+    layout->addWidget(m_details);
+    m_numbers = new QWidget;
+    auto* numericLayout = new QVBoxLayout(m_numbers);
+    numericLayout->setContentsMargins(0, 0, 0, 0);
     auto* form = new QFormLayout;
-    layout->addLayout(form);
+    numericLayout->addLayout(form);
+    layout->addWidget(m_numbers);
+    m_numbers->hide();
+    connect(m_details, &QToolButton::toggled, this,
+            [this](bool open)
+            {
+                m_numbers->setVisible(open);
+                m_details->setArrowType(open ? Qt::DownArrow : Qt::RightArrow);
+                emit layoutChanged();
+            });
     const char* labels[]{"X", "Y", "Z", "Rotation X", "Rotation Y", "Rotation Z"};
     const char* names[]{"componentX",         "componentY",         "componentZ",
                         "componentRotationX", "componentRotationY", "componentRotationZ"};
@@ -32,7 +59,7 @@ ComponentPlacementEditor::ComponentPlacementEditor(QWidget* parent) : QWidget(pa
     }
     m_apply = new QPushButton("Apply placement");
     m_apply->setObjectName("applyComponentPlacement");
-    layout->addWidget(m_apply);
+    numericLayout->addWidget(m_apply);
     layout->addStretch();
     connect(m_apply, &QPushButton::clicked, this, &ComponentPlacementEditor::applyRequested);
     setComponent(nullptr);
@@ -42,6 +69,13 @@ void ComponentPlacementEditor::setComponent(const document::AssemblyComponent* c
     m_title->setText(component ? QString::fromStdString(component->name) +
                                      (component->fixed ? " · Fixed" : " · Floating")
                                : "Select a component");
+    m_details->setVisible(component != nullptr);
+    m_numbers->setVisible(component && m_details->isChecked());
+    m_hint->setText(!component ? "Select a component in the viewport or tree."
+                    : component->fixed
+                        ? "Fixed component · use Float to allow movement."
+                        : "Drag to move · curve the pointer to rotate a free part. Mates guide "
+                          "constrained parts. Right-drag rotates in 3D.");
     double values[6]{};
     if (component)
     {
@@ -76,6 +110,7 @@ gp_Trsf ComponentPlacementEditor::placement()
 }
 void ComponentPlacementEditor::focusRotation(bool rotate)
 {
+    m_details->setChecked(true);
     m_values[rotate ? 3 : 0]->setFocus();
     m_values[rotate ? 3 : 0]->selectAll();
 }

@@ -9,6 +9,7 @@
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
+#include <QGroupBox>
 #include <QJsonDocument>
 #include <QLabel>
 #include <QLineEdit>
@@ -36,6 +37,7 @@ AssemblyMateEditor::AssemblyMateEditor(document::AssemblyDocument source,
                                      "selection box to replace its references.",
                                      this);
     layout->addWidget(m_page);
+    m_page->useAssemblyHeader();
     const auto append = [&](const std::string& id)
     {
         auto options = m_source.referenceOptions(id);
@@ -60,9 +62,9 @@ AssemblyMateEditor::AssemblyMateEditor(document::AssemblyDocument source,
     m_name->setObjectName("assemblyMateName");
     m_name->setPlaceholderText("Automatic name");
     m_form->addRow("Name", m_name);
-    m_selectionPanel = new QWidget;
+    m_selectionPanel = new QGroupBox("Mate selections");
     m_selectionLayout = new QVBoxLayout(m_selectionPanel);
-    m_selectionLayout->setContentsMargins(0, 0, 0, 0);
+    m_selectionLayout->setContentsMargins(8, 10, 8, 8);
     m_page->settings->addWidget(m_selectionPanel);
     auto* values = new QFormLayout;
     m_page->settings->addLayout(values);
@@ -236,6 +238,7 @@ void AssemblyMateEditor::buildSelections(const std::vector<document::AssemblyMat
         if (role.maximum == 1)
         {
             auto* box = new PropertyReference;
+            box->setPlaceholderText("Select in the viewport or tree");
             widget = box;
             box->addItem("");
             for (int i = 0; i < int(m_options.size()); ++i)

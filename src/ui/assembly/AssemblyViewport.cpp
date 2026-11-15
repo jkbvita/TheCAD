@@ -3,6 +3,9 @@
 #include "presentation/SolidPresentation.h"
 #include "presentation/SelectionAppearance.h"
 #include <AIS_Shape.hxx>
+#include <BRepBndLib.hxx>
+#include <Bnd_Box.hxx>
+#include <gp_Ax1.hxx>
 #include <Graphic3d_Camera.hxx>
 #include <SelectMgr_ViewerSelector.hxx>
 #include <StdSelect_BRepOwner.hxx>
@@ -114,15 +117,15 @@ void AssemblyViewport::applyTheme()
 }
 void AssemblyViewport::setComponents(const std::vector<AssemblyVisual>& visuals)
 {
-    const bool unchanged = visuals.size() == m_visuals.size() &&
-                           std::equal(visuals.begin(), visuals.end(), m_visuals.begin(),
-                                      [](const auto& a, const auto& b)
-                                      {
-                                          return a.id == b.id && a.shape.IsSame(b.shape) &&
-                                                 a.visible == b.visible && a.fixed == b.fixed &&
-                                                 a.preview == b.preview &&
-                                                 samePose(a.placement, b.placement);
-                                      });
+    const bool unchanged =
+        visuals.size() == m_visuals.size() &&
+        std::equal(visuals.begin(), visuals.end(), m_visuals.begin(),
+                   [](const auto& a, const auto& b)
+                   {
+                       return a.id == b.id && a.shape.IsSame(b.shape) && a.visible == b.visible &&
+                              a.fixed == b.fixed && a.preview == b.preview &&
+                              a.constrained == b.constrained && samePose(a.placement, b.placement);
+                   });
     m_visuals = visuals;
     if (!isReady())
         return;
@@ -324,7 +327,7 @@ AssemblyHit AssemblyViewport::hit(const QPointF& point)
                 if (kind != TopAbs_VERTEX && kind != TopAbs_EDGE && kind != TopAbs_FACE)
                     continue;
                 TopExp::MapShapes(item->Shape(), kind, faces);
-                return {id, faces.FindIndex(owner->Shape()), kind};
+                return {id, faces.FindIndex(owner->Shape()), kind, selector->PickedPoint(index)};
             }
     }
     return {};
@@ -364,6 +367,18 @@ gp_Pnt AssemblyViewport::cursorPoint(const QPointF& point) const
     double x, y, z;
     m_graphics.view()->Convert(pixel.x(), pixel.y(), x, y, z);
     return {x, y, z};
+}
+gp_Pnt AssemblyViewport::cursorAtGrabDepth(const QPointF& point) const
+{
+    const auto pixel = native(point);
+    double x, y, z, dx, dy, dz;
+    m_graphics.view()->ConvertWithProj(pixel.x(), pixel.y(), x, y, z, dx, dy, dz);
+    const gp_Pnt origin(x, y, z);
+    const gp_Vec ray(dx, dy, dz), normal(camera()->Direction());
+    const double denominator = ray.Dot(normal);
+    return std::abs(denominator) < 1e-12
+               ? m_dragPoint
+               : origin.Translated(ray * (gp_Vec(origin, m_dragPoint).Dot(normal) / denominator));
 }
 QPoint AssemblyViewport::project(const gp_Pnt& point) const
 {
@@ -420,7 +435,9 @@ void AssemblyViewport::mousePressEvent(QMouseEvent* event)
         event->accept();
         return;
     }
-    if (event->button() != Qt::LeftButton)
+    if (event->button() != Qt::LeftButton && event->button() != Qt::RightButton)
+        return;
+    if (event->button() == Qt::RightButton && (m_inserting || m_matePicking))
         return;
     if (m_inserting)
     {
@@ -441,7 +458,24 @@ void AssemblyViewport::mousePressEvent(QMouseEvent* event)
     {
         m_dragId = value.id;
         m_press = event->position();
-        m_dragPoint = cursorPoint(m_press);
+        m_dragPoint = pickedValue.point;
+        m_localGrab = m_dragPoint.Transformed(value.placement.Inverted());
+        Bnd_Box bounds;
+        BRepBndLib::AddOptimal(value.shape, bounds, false, false);
+        m_localCenter = bounds.IsVoid()
+                            ? gp_Pnt()
+                            : gp_Pnt((bounds.CornerMin().XYZ() + bounds.CornerMax().XYZ()) * 0.5);
+        m_dragConstrained = value.constrained;
+        m_dragButton = event->button();
+        m_rotationGesture = m_dragButton == Qt::RightButton;
+        m_lastStroke = m_press;
+        m_lastSegment = {};
+        m_strokeTurning = 0;
+        m_rotationStartTurning = 0;
+        m_curvedSamples = 0;
+        m_straightTravel = 0;
+        m_rotationBase = value.placement;
+        m_rotationPivot = m_localCenter.Transformed(value.placement);
         m_dragPose = value.placement;
         m_dragMoved = false;
     }
@@ -462,7 +496,7 @@ void AssemblyViewport::mouseMoveEvent(QMouseEvent* event)
         emit insertionMoved(cursorPoint(event->position()));
         return;
     }
-    if (!m_dragId.empty() && event->buttons().testFlag(Qt::LeftButton))
+    if (!m_dragId.empty() && event->buttons().testFlag(m_dragButton))
     {
         if (!m_dragMoved &&
             (event->position() - m_press).manhattanLength() < QApplication::startDragDistance())
@@ -473,21 +507,84 @@ void AssemblyViewport::mouseMoveEvent(QMouseEvent* event)
             emit dragStarted();
             grabMouse();
         }
-        auto placement = m_dragPose;
-        if (m_rotate)
+        const auto segment = event->position() - m_lastStroke;
+        if (std::hypot(segment.x(), segment.y()) >= 2)
         {
-            const gp_Vec up(camera()->Up()), right = gp_Vec(camera()->Direction()).Crossed(up);
-            const auto delta = event->position() - m_press;
-            const auto rotation = gp_Quaternion(up, -delta.x() * 0.01) *
-                                  gp_Quaternion(right, -delta.y() * 0.01) *
-                                  m_dragPose.GetRotation();
-            placement.SetRotation(rotation);
-            placement.SetTranslationPart(m_dragPose.TranslationPart());
+            if (!m_lastSegment.isNull())
+            {
+                const double turn =
+                    std::atan2(m_lastSegment.x() * segment.y() - m_lastSegment.y() * segment.x(),
+                               QPointF::dotProduct(m_lastSegment, segment));
+                if (std::abs(turn) < 0.015 || std::abs(turn) > 2.8)
+                    m_straightTravel += std::hypot(segment.x(), segment.y());
+                else
+                    m_straightTravel = 0;
+                if (std::abs(turn) > 0.015 && std::abs(turn) < 1.2)
+                {
+                    if (m_strokeTurning * turn < 0 && !m_rotationGesture)
+                    {
+                        m_curvedSamples = 0;
+                        m_strokeTurning = 0;
+                    }
+                    m_strokeTurning += turn;
+                    ++m_curvedSamples;
+                }
+            }
+            m_lastStroke = event->position();
+            m_lastSegment = segment;
+        }
+        if (m_rotationGesture && m_dragButton == Qt::LeftButton && m_straightTravel > 24)
+        {
+            for (const auto& visual : m_visuals)
+                if (visual.id == m_dragId)
+                    m_dragPoint = m_localGrab.Transformed(visual.placement);
+            m_press = event->position();
+            m_rotationGesture = false;
+            m_curvedSamples = 0;
+            m_strokeTurning = 0;
+            m_lastSegment = {};
+            m_straightTravel = 0;
+        }
+        if (!m_rotationGesture && !m_dragConstrained && m_curvedSamples >= 4 &&
+            std::abs(m_strokeTurning) > 0.55)
+        {
+            m_rotationGesture = true;
+            m_rotationStartTurning = m_strokeTurning;
+            for (const auto& visual : m_visuals)
+                if (visual.id == m_dragId)
+                    m_rotationBase = visual.placement;
+            m_rotationPivot = m_localCenter.Transformed(m_rotationBase);
+        }
+        if (m_rotationGesture)
+        {
+            gp_Trsf rotation;
+            if (m_dragButton == Qt::RightButton)
+            {
+                const gp_Vec up(camera()->Up()), right = gp_Vec(camera()->Direction()).Crossed(up);
+                const auto delta = event->position() - m_press;
+                const auto q =
+                    gp_Quaternion(up, -delta.x() * 0.01) * gp_Quaternion(right, -delta.y() * 0.01);
+                rotation.SetRotation(q);
+                rotation.SetTranslationPart(
+                    gp_Vec(m_rotationPivot.Transformed(rotation), m_rotationPivot).XYZ());
+            }
+            else
+                rotation.SetRotation(gp_Ax1(m_rotationPivot, camera()->Direction()),
+                                     m_strokeTurning - m_rotationStartTurning);
+            emit dragPlacement(QString::fromStdString(m_dragId), rotation * m_rotationBase);
         }
         else
-            placement.SetTranslationPart(m_dragPose.TranslationPart() +
-                                         gp_Vec(m_dragPoint, cursorPoint(event->position())).XYZ());
-        emit dragPlacement(QString::fromStdString(m_dragId), placement);
+        {
+            const auto target = m_dragPoint.Translated(
+                gp_Vec(cursorAtGrabDepth(m_press), cursorAtGrabDepth(event->position())));
+            const double precision =
+                std::max(1e-7, gp_Vec(cursorAtGrabDepth(event->position()),
+                                      cursorAtGrabDepth(event->position() + QPointF(1, 0)))
+                                       .Magnitude() *
+                                   0.3);
+            emit dragPointRequested(QString::fromStdString(m_dragId), m_localGrab, target,
+                                    camera()->Direction(), precision);
+        }
         return;
     }
     hover(event->position());
@@ -501,7 +598,7 @@ void AssemblyViewport::mouseReleaseEvent(QMouseEvent* event)
             releaseMouse();
         return;
     }
-    if (event->button() == Qt::LeftButton && !m_dragId.empty())
+    if (event->button() == m_dragButton && !m_dragId.empty())
     {
         const bool moved = m_dragMoved;
         m_dragId.clear();

@@ -14,6 +14,7 @@
 #include <TopExp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <QAction>
+#include <QTimer>
 #include <QApplication>
 #include <QCheckBox>
 #include <QCloseEvent>
@@ -81,6 +82,9 @@ AssemblyWindow::AssemblyWindow(QWidget* parent) : QMainWindow(parent)
     m_tree = new QTreeWidget;
     m_tree->setObjectName("assemblyTree");
     m_tree->setHeaderHidden(true);
+    m_tree->setIndentation(17);
+    m_tree->setUniformRowHeights(true);
+    m_tree->setAnimated(false);
     m_tree->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_tree->setContextMenuPolicy(Qt::CustomContextMenu);
     m_panels = new QStackedWidget;
@@ -89,7 +93,11 @@ AssemblyWindow::AssemblyWindow(QWidget* parent) : QMainWindow(parent)
     m_panels->addWidget(m_placement);
     m_left->addWidget(m_tree);
     m_left->addWidget(m_panels);
-    m_left->setSizes({500, 300});
+    m_left->setSizes({650, 130});
+    m_left->setStretchFactor(0, 1);
+    m_left->setStretchFactor(1, 0);
+    connect(m_placement, &ComponentPlacementEditor::layoutChanged, this,
+            &AssemblyWindow::updateActions);
     dock->setWidget(m_left);
     addDockWidget(Qt::LeftDockWidgetArea, dock);
     buildCommands();
@@ -97,40 +105,55 @@ AssemblyWindow::AssemblyWindow(QWidget* parent) : QMainWindow(parent)
     connect(m_tree, &QTreeWidget::itemChanged, this,
             [this](QTreeWidgetItem* item, int)
             {
-                if (!draftActive() && item->data(0, kindRole).toString() == "belt")
+                if (draftActive() || item->data(0, kindRole).toString() != "component")
+                    return;
+                const auto id = item->data(0, Qt::UserRole).toString().toStdString();
+                const bool visible = item->checkState(0) == Qt::Checked;
+                // QTreeWidget still uses this item after itemChanged returns. Never
+                // delete it by rebuilding the tree inside the model notification.
+                QTimer::singleShot(0, this,
+                                   [this, id, visible]
+                                   {
+                                       if (draftActive())
+                                           return;
+                                       const auto& components = document().components();
+                                       const auto found =
+                                           std::find_if(components.begin(), components.end(),
+                                                        [&](const auto& c) { return c.id == id; });
+                                       if (found != components.end() && found->visible != visible)
+                                           mutate([&](auto& doc) { doc.setVisible(id, visible); });
+                                   });
+            });
+    connect(m_tree, &QTreeWidget::itemDoubleClicked, this,
+            [this](QTreeWidgetItem* item, int)
+            {
+                if (draftActive())
+                    return;
+                const auto kind = item->data(0, kindRole).toString();
+                const auto id = item->data(0, Qt::UserRole).toString().toStdString();
+                if (kind == "belt")
                 {
-                    startWorkflow(Workflow::Belt,
-                                  item->data(0, Qt::UserRole).toString().toStdString());
+                    startWorkflow(Workflow::Belt, id);
                     return;
                 }
-                if (!draftActive() && item->data(0, kindRole).toString() == "asset")
+                if (kind == "asset")
                 {
                     startWorkflow(Workflow::Asset,
                                   item->data(0, referenceRole).toString().toStdString());
                     return;
                 }
-                if (!draftActive() && item->data(0, kindRole).toString() == "ground")
+                if (kind == "ground")
                 {
                     startWorkflow(Workflow::Ground);
                     return;
                 }
-                if (!draftActive() && item->data(0, kindRole).toString() == "component")
+                if (kind == "component")
                     for (const auto& part : document().inPlaceParts())
-                        if (q(part.componentId) == item->data(0, Qt::UserRole).toString())
+                        if (part.componentId == id)
                         {
                             startWorkflow(Workflow::InPlace, part.id);
                             return;
                         }
-                if (draftActive() || item->data(0, kindRole).toString() != "component")
-                    return;
-                const auto id = item->data(0, Qt::UserRole).toString().toStdString();
-                const bool visible = item->checkState(0) == Qt::Checked;
-                if (m_session.document().component(id).visible != visible)
-                    mutate([&](auto& doc) { doc.setVisible(id, visible); });
-            });
-    connect(m_tree, &QTreeWidget::itemDoubleClicked, this,
-            [this](QTreeWidgetItem* item, int)
-            {
                 if (!draftActive() && item->data(0, kindRole).toString() == "mate")
                     for (const auto& mate : document().mates())
                         if (q(mate.id) == item->data(0, Qt::UserRole).toString())
@@ -228,25 +251,16 @@ AssemblyWindow::AssemblyWindow(QWidget* parent) : QMainWindow(parent)
     connect(m_viewport, &AssemblyViewport::dragPlacement, this,
             [this](const QString& id, const gp_Trsf& pose)
             {
-                if (!m_dragCandidate)
-                    return;
-                try
-                {
-                    auto candidate = *m_dragCandidate;
-                    m_magneticMovingId = id.toStdString();
-                    m_magneticRawPose = pose;
-                    candidate.setPlacement(id.toStdString(), pose);
-                    if (m_magneticAction->isChecked())
-                        candidate.snapMagnetic(id.toStdString(), m_magneticDistance,
-                                               m_magneticMovingConnector,
-                                               m_magneticStationaryConnector);
-                    m_dragCandidate = std::move(candidate);
-                    render(*m_dragCandidate);
-                }
-                catch (const std::exception& error)
-                {
-                    statusBar()->showMessage(QString::fromUtf8(error.what()));
-                }
+                previewComponentDrag(id,
+                                     [&](auto& doc) { doc.setPlacement(id.toStdString(), pose); });
+            });
+    connect(m_viewport, &AssemblyViewport::dragPointRequested, this,
+            [this](const QString& id, const gp_Pnt& local, const gp_Pnt& target,
+                   const gp_Dir& normal, double tolerance)
+            {
+                previewComponentDrag(
+                    id, [&](auto& doc)
+                    { doc.dragPoint(id.toStdString(), local, target, normal, tolerance); });
             });
     connect(m_viewport, &AssemblyViewport::dragFinished, this,
             [this](bool accepted)
@@ -442,22 +456,20 @@ void AssemblyWindow::buildCommands()
                });
     insert->addAction(m_magneticAction);
     insert->addAction(snapDistance);
-    m_moveAction = action("actionMoveComponent", "Move Component",
+    m_moveAction = action("actionMoveComponent", "Position…",
                           [this]
                           {
-                              m_viewport->setRotationMode(false);
                               m_placement->focusRotation(false);
                               updateActions();
                           });
-    m_moveAction->setCheckable(true);
-    m_rotateAction = action("actionRotateComponent", "Rotate Component",
+
+    m_rotateAction = action("actionRotateComponent", "Orientation…",
                             [this]
                             {
-                                m_viewport->setRotationMode(true);
                                 m_placement->focusRotation(true);
                                 updateActions();
                             });
-    m_rotateAction->setCheckable(true);
+
     m_rebuild = action("actionRebuildAssembly", "Rebuild",
                        [this] { mutate([](auto& doc) { doc.reloadSources(); }); });
     m_rebuild->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_B));
@@ -492,7 +504,7 @@ void AssemblyWindow::buildCommands()
     auto* grid = new QGridLayout(group);
     grid->setContentsMargins(5, 0, 5, 0);
     commandButton(m_moveAction, grid, 0, 0);
-    commandButton(m_rotateAction, grid, 1, 0);
+    commandButton(m_fix, grid, 1, 0);
     commandButton(m_rebuild, grid, 2, 0);
     row->addWidget(group);
     auto* workflows = new QWidget;
@@ -636,8 +648,14 @@ void AssemblyWindow::render(const document::AssemblyDocument& doc)
 {
     std::vector<AssemblyVisual> visuals;
     for (const auto& c : doc.components())
+    {
         visuals.push_back({c.id, c.shape(), c.placement, c.visible, !doc.componentMovable(c.id),
                            m_insertCandidate && c.id == m_insertId});
+        const auto dependents = doc.componentDependents({c.id});
+        visuals.back().constrained =
+            std::any_of(dependents.begin(), dependents.end(), [](const auto& mate)
+                        { return mate.status == modeling::assembly::MateStatus::Active; });
+    }
     m_viewport->setComponents(visuals);
     std::vector<AssemblyVisual> highlights;
     std::vector<document::AssemblyReference> refs;
@@ -1030,6 +1048,32 @@ void AssemblyWindow::pickedEntity(const QString& component, TopAbs_ShapeEnum kin
         render(document());
     }
 }
+void AssemblyWindow::previewComponentDrag(
+    const QString& id, const std::function<void(document::AssemblyDocument&)>& operation)
+{
+    if (!m_dragCandidate)
+        return;
+    try
+    {
+        auto candidate = *m_dragCandidate;
+        operation(candidate);
+        m_magneticMovingId = id.toStdString();
+        m_magneticRawPose = candidate.component(id.toStdString()).placement;
+        if (m_magneticAction->isChecked())
+            candidate.snapMagnetic(id.toStdString(), m_magneticDistance, m_magneticMovingConnector,
+                                   m_magneticStationaryConnector);
+        m_dragCandidate = std::move(candidate);
+        render(*m_dragCandidate);
+    }
+    catch (const Standard_Failure& e)
+    {
+        statusBar()->showMessage(QString::fromUtf8(e.GetMessageString()));
+    }
+    catch (const std::exception& e)
+    {
+        statusBar()->showMessage(QString::fromUtf8(e.what()));
+    }
+}
 void AssemblyWindow::applyPlacement()
 {
     if (m_selected.empty() || draftActive())
@@ -1312,6 +1356,14 @@ void AssemblyWindow::deleteSelected()
 void AssemblyWindow::updateActions()
 {
     const bool active = draftActive();
+    const bool editor = m_mate || m_workflow || m_insertPage;
+    const int panelHeight = editor ? QWIDGETSIZE_MAX : m_placement->sizeHint().height() + 12;
+    const bool panelChanged = m_panels->maximumHeight() != panelHeight;
+    m_panels->setMaximumHeight(panelHeight);
+    if (panelChanged)
+        m_left->setSizes(editor
+                             ? QList<int>{230, qMax(450, m_left->height() - 230)}
+                             : QList<int>{qMax(100, m_left->height() - panelHeight), panelHeight});
     const auto found = std::find_if(document().components().begin(), document().components().end(),
                                     [&](const auto& c) { return c.id == m_selected; });
     const bool selected = found != document().components().end(),
@@ -1332,11 +1384,8 @@ void AssemblyWindow::updateActions()
     m_hide->setEnabled(!active && selected);
     m_fix->setText(selected && found->fixed ? "Float" : "Fix");
     m_hide->setText(selected && found->visible ? "Hide" : "Show");
-    const bool placementMode = selected && !found->fixed && !m_mate && !m_workflow && !m_insertPage;
     m_moveAction->setEnabled(movable);
     m_rotateAction->setEnabled(movable);
-    m_moveAction->setChecked(placementMode && !m_viewport->rotationMode());
-    m_rotateAction->setChecked(placementMode && m_viewport->rotationMode());
     bool deletable = false;
     for (const auto* item : m_tree->selectedItems())
         deletable |= item->data(0, kindRole).toString() == "component" ||

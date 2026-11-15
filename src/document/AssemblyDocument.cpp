@@ -219,6 +219,34 @@ std::string AssemblyDocument::insertComponent(const QString& path, const gp_Trsf
     *this = std::move(candidate);
     return added.id;
 }
+void AssemblyDocument::dragPoint(const std::string& id, const gp_Pnt& local, const gp_Pnt& target,
+                                 const gp_Dir& normal, double tolerance)
+{
+    require(componentMovable(id), "The component has no available movement.");
+    require(std::isfinite(tolerance) && tolerance > 0, "Invalid drag precision.");
+    for (const auto& p : {local, target})
+        require(std::isfinite(p.X()) && std::isfinite(p.Y()) && std::isfinite(p.Z()),
+                "Invalid drag point.");
+    auto candidate = *this;
+    for (auto& mate : candidate.m_mates)
+        if (mate.kind == AssemblyMateKind::Magnetic && mate.definition &&
+            !mate.definition->parameters.magnetic.locked &&
+            mate.status == modeling::assembly::MateStatus::Active)
+            for (const auto& ref : mateReferences(mate))
+                if (ref.componentId == id)
+                {
+                    mate.status = modeling::assembly::MateStatus::Suppressed;
+                    mate.diagnostic =
+                        "Disconnected unlocked magnetic connection while moving the component.";
+                    break;
+                }
+    const auto found = std::find_if(candidate.m_components.begin(), candidate.m_components.end(),
+                                    [&](const auto& c) { return c.id == id; });
+    modeling::assembly::ComponentDragTarget drag{int(found - candidate.m_components.begin()), local,
+                                                 target, normal, tolerance};
+    candidate.solve({}, 0, &drag);
+    *this = std::move(candidate);
+}
 void AssemblyDocument::setPlacement(const std::string& id, const gp_Trsf& placement)
 {
     require(!component(id).fixed, "Float the component before moving it.");
@@ -631,7 +659,8 @@ modeling::assembly::MateGeometry AssemblyDocument::mateGeometry(const AssemblyRe
     throw std::runtime_error("The mate reference is missing or its geometry is unsupported. "
                              "Replace the reference explicitly.");
 }
-void AssemblyDocument::solve(const std::string& driven, int generatedPass)
+void AssemblyDocument::solve(const std::string& driven, int generatedPass,
+                             const modeling::assembly::ComponentDragTarget* drag)
 {
     require(generatedPass < 8,
             "Generated assembly geometry did not converge. The previous document is retained.");
@@ -712,7 +741,8 @@ void AssemblyDocument::solve(const std::string& driven, int generatedPass)
             throw std::runtime_error("Mate " + m.name + ": " + failure.what());
         }
     }
-    m_solution = modeling::assembly::solveMates(bodies, mates);
+    m_solution = drag ? modeling::assembly::dragMates(bodies, mates, *drag)
+                      : modeling::assembly::solveMates(bodies, mates);
     for (std::size_t i = 0; i < m_solution.motion.size(); ++i)
         if (m_mates[activeMates[i]].definition)
             m_mates[activeMates[i]].definition->motion = m_solution.motion[i];
@@ -722,7 +752,7 @@ void AssemblyDocument::solve(const std::string& driven, int generatedPass)
         if (!part.linked)
             part.offset = component(part.componentId).placement;
     if (updateGeneratedParts())
-        solve(driven, generatedPass + 1);
+        solve(driven, generatedPass + 1, drag);
 }
 QByteArray AssemblyDocument::stateKey() const
 {

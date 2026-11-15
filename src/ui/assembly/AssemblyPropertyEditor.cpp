@@ -65,6 +65,7 @@ AssemblyPropertyEditor::AssemblyPropertyEditor(document::AssemblyDocument source
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     m_page = new PropertyManagerPage(title, description, this);
+    m_page->useAssemblyHeader();
     layout->addWidget(m_page);
     const auto append = [&](const std::string& id)
     {

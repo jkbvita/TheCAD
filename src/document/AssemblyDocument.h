@@ -122,6 +122,8 @@ public:
     std::string insertComponent(const QString& path, const gp_Trsf& placement = {},
                                 std::optional<bool> fixed = {});
     void setPlacement(const std::string& id, const gp_Trsf& placement);
+    void dragPoint(const std::string& id, const gp_Pnt& local, const gp_Pnt& target,
+                   const gp_Dir& viewNormal, double tolerance);
     void setFixed(const std::string& id, bool fixed);
     void setVisible(const std::string& id, bool visible);
     std::string setMate(AssemblyMate mate);
@@ -156,7 +158,8 @@ private:
     bool updateGeneratedParts();
     void updateGroundMates();
     modeling::assembly::MateGeometry connectorGeometry(const AssemblyReference&) const;
-    void solve(const std::string& driven = {}, int generatedPass = 0);
+    void solve(const std::string& driven = {}, int generatedPass = 0,
+               const modeling::assembly::ComponentDragTarget* drag = nullptr);
     std::vector<AssemblyComponent> m_components;
     std::vector<AssemblyMate> m_mates;
     std::vector<PublishedAsset> m_assets;

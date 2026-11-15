@@ -95,6 +95,8 @@ approved scope do not need repeated approval.
 - [0055. Assembly mate preselection and responsive reference handling](0055-assembly-mate-preselection-performance.md)
 - [0056. Complete assembly mate architecture — approved](0056-complete-assembly-mates-proposal.md) — owner-approved typed mates, contact/motion state and schema-2 persistence; implementation in progress.
 
+- [0057. Direct assembly dragging and compact panels](0057-assembly-direct-drag-ui.md) — owner-requested checkbox stability, point-driven movement and automatic gestures.
+
 ## Pending owner decisions
 
 - Resilient face references beyond the approved conservative planar-face strategy.

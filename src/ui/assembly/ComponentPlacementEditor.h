@@ -4,6 +4,7 @@
 class QDoubleSpinBox;
 class QLabel;
 class QPushButton;
+class QToolButton;
 namespace thecad::ui
 {
 class ComponentPlacementEditor final : public QWidget
@@ -16,10 +17,14 @@ public:
     void focusRotation(bool rotate);
 signals:
     void applyRequested();
+    void layoutChanged();
 
 private:
     QDoubleSpinBox* m_values[6];
     QLabel* m_title;
     QPushButton* m_apply;
+    QWidget* m_numbers;
+    QToolButton* m_details;
+    QLabel* m_hint;
 };
 } // namespace thecad::ui

@@ -122,6 +122,66 @@ class AssemblyWorkflowTest final : public QObject
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     }
 private slots:
+    void visibilityCheckboxAndAutomaticDrag()
+    {
+        QTemporaryDir temp;
+        const auto path = temp.filePath("part.thepart");
+        document::PartDocument::createBox({20, 20, 20}).save(path);
+        document::AssemblyDocument doc;
+        const auto id = doc.insertComponent(path);
+        doc.setFixed(id, false);
+        const auto owned = doc.createInPlacePart(document::PartDocument::createBox({2, 2, 2}),
+                                                 {{}, {modeling::ReferenceSource::BasePlane}});
+        AssemblyTestWindow window;
+        window.m_session.commit(doc);
+        window.refresh();
+        window.showMaximized();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* viewport = window.m_viewport;
+        QTRY_VERIFY(viewport->isReady());
+        viewport->standardView(0);
+        viewport->fitAll();
+        const Handle(Graphic3d_Camera) camera = new Graphic3d_Camera(viewport->camera());
+        for (const auto& component : {id, owned})
+            for (int i = 0; i < 4; ++i)
+            {
+                auto* row = item(window, component);
+                const bool visible = window.document().component(component).visible;
+                row->setCheckState(0, visible ? Qt::Unchecked : Qt::Checked);
+                QVERIFY(item(window, component) ==
+                        row); // Model notification must finish before item destruction.
+                QApplication::processEvents();
+                QVERIFY(window.document().component(component).visible != visible);
+                QVERIFY(!window.m_workflow);
+                unchanged(camera, viewport);
+                command(window, "actionUndo");
+                QCOMPARE(window.document().component(component).visible, visible);
+                command(window, "actionRedo");
+                QVERIFY(window.document().component(component).visible != visible);
+            }
+        QVERIFY(window.document().component(id).visible);
+        const auto start = viewport->project({16, 10, 20}),
+                   center = viewport->project({10, 10, 20});
+        const auto radius = std::hypot(start.x() - center.x(), start.y() - center.y());
+        QVERIFY(radius > 10);
+        const auto before = window.document().stateKey();
+        QTest::mousePress(viewport, Qt::LeftButton, Qt::NoModifier, start);
+        for (int i = 1; i <= 40; ++i)
+        {
+            const double angle = i * 0.1;
+            const QPoint p(center.x() + qRound(radius * std::cos(angle)),
+                           center.y() + qRound(radius * std::sin(angle)));
+            QMouseEvent move(QEvent::MouseMove, p, viewport->mapToGlobal(p), Qt::NoButton,
+                             Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(viewport, &move);
+        }
+        QTest::mouseRelease(viewport, Qt::LeftButton);
+        QVERIFY(window.document().component(id).placement.GetRotation().GetRotationAngle() > 0.3);
+        unchanged(camera, viewport);
+        command(window, "actionUndo");
+        QCOMPARE(window.document().stateKey(), before);
+        QVERIFY(window.errors.isEmpty());
+    }
     void tangentCamFaceSelection()
     {
         QTemporaryDir temp;
@@ -574,15 +634,15 @@ private slots:
                 1e-6);
         command(window, "actionRedo");
         command(window, "actionUndo");
-        command(window, "actionRotateComponent");
-        QTest::mousePress(viewport, Qt::LeftButton, Qt::NoModifier, start);
-        QApplication::sendEvent(viewport, &move);
-        QTest::mouseRelease(viewport, Qt::LeftButton, Qt::NoModifier, end);
+        QTest::mousePress(viewport, Qt::RightButton, Qt::NoModifier, start);
+        QMouseEvent turn(QEvent::MouseMove, end, viewport->mapToGlobal(end), Qt::NoButton,
+                         Qt::RightButton, Qt::NoModifier);
+        QApplication::sendEvent(viewport, &turn);
+        QTest::mouseRelease(viewport, Qt::RightButton, Qt::NoModifier, end);
         QVERIFY(window.document().component(b).placement.GetRotation().GetRotationAngle() > 0.01);
         unchanged(camera, viewport);
         command(window, "actionUndo");
         QVERIFY(window.document().component(b).placement.GetRotation().GetRotationAngle() < 1e-8);
-        command(window, "actionMoveComponent");
         const auto beforeCancel = window.document().stateKey();
         QTest::mousePress(viewport, Qt::LeftButton, Qt::NoModifier, start);
         QApplication::sendEvent(viewport, &move);
