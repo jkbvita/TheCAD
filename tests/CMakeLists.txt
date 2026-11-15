@@ -189,9 +189,12 @@ if(THECAD_BUILD_GUI AND THECAD_GUI_TESTS)
     add_executable(thecad_extrusion_panel_tests ExtrusionPanelTests.cpp)
     add_executable(thecad_feature_commandbar_tests FeatureCommandBarTests.cpp)
     target_link_libraries(thecad_feature_commandbar_tests PRIVATE thecad_widgets Qt6::Test)
-    add_test(NAME ui.feature-commandbar COMMAND thecad_feature_commandbar_tests)
+    add_test(NAME ui.feature-commandbar COMMAND thecad_feature_commandbar_tests -o "${CMAKE_BINARY_DIR}/feature-commandbar-results.txt,txt")
+    add_test(NAME ui.feature-commandbar.hidpi COMMAND thecad_feature_commandbar_tests -o "${CMAKE_BINARY_DIR}/feature-commandbar-hidpi-results.txt,txt")
     set_tests_properties(ui.feature-commandbar PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE LABELS "gui;toolbar"
         ENVIRONMENT "THECAD_TEST_ARTIFACT_DIR=${CMAKE_BINARY_DIR}/test-artifacts/feature-commands")
+    set_tests_properties(ui.feature-commandbar.hidpi PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE LABELS "gui;toolbar;hidpi"
+        ENVIRONMENT "QT_SCALE_FACTOR=1.5;THECAD_TEST_ARTIFACT_DIR=${CMAKE_BINARY_DIR}/test-artifacts/feature-commands-hidpi")
     target_link_libraries(thecad_extrusion_panel_tests PRIVATE thecad_ui Qt6::Test)
     add_test(NAME ui.extrusion-panel COMMAND thecad_extrusion_panel_tests)
     set_tests_properties(ui.extrusion-panel PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE LABELS "gui;extrusion"

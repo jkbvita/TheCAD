@@ -24,7 +24,64 @@ QIcon commandIcon(const QString& name)
     painter.setBrush(Qt::NoBrush);
     const QColor solid=ThemeManager::instance().isDark()?QColor("#b7c7d3"):QColor("#c7d3db");
     const QColor side=ThemeManager::instance().isDark()?QColor("#708da4"):QColor("#7996aa");
-    if (name.contains("Point"))
+    if (name == "Reference Geometry")
+    {
+        painter.setBrush(solid);
+        painter.drawPolygon(QPolygonF{QPointF(8, 12), QPointF(24, 6), QPointF(24, 25), QPointF(8, 29)});
+        painter.setPen(QPen(themeColor(ThemeColor::Accent), 1.3, Qt::DashLine));
+        painter.drawLine(16, 3, 16, 30);
+        painter.setBrush(side);painter.drawEllipse(QPointF(6, 8), 2.2, 2.2);
+    }
+    else if (name.contains("Lofted") || name.contains("Boundary"))
+    {
+        painter.setBrush(solid);
+        const bool boundary=name.contains("Boundary");
+        QPainterPath skin(QPointF(5, 23));
+        skin.cubicTo(10,boundary?14:19,11,11,12,5);skin.lineTo(24,8);
+        skin.cubicTo(24,15,26,boundary?16:21,28,25);skin.closeSubpath();painter.drawPath(skin);
+        painter.drawPolygon(QPolygonF{QPointF(5,23),QPointF(17,19),QPointF(28,25),QPointF(14,29)});
+        painter.setBrush(side);painter.drawPolygon(QPolygonF{QPointF(12,5),QPointF(18,3),QPointF(28,6),QPointF(24,8)});
+        if(name.contains("Cut")){painter.setPen(QPen(QColor("#b83b42"),2));painter.drawLine(13,13,23,24);}
+    }
+    else if (name == "Hole Wizard")
+    {
+        painter.setBrush(solid);painter.drawPolygon(QPolygonF{QPointF(5,12),QPointF(20,7),QPointF(27,13),QPointF(27,26),QPointF(12,30),QPointF(5,24)});
+        painter.drawLine(5,12,12,18);painter.drawLine(12,18,27,13);painter.drawLine(12,18,12,30);
+        painter.setBrush(side);painter.drawEllipse(QRectF(12,11,9,4));painter.drawLine(18,3,18,10);painter.drawLine(15,7,18,10);painter.drawLine(21,7,18,10);
+    }
+    else if (name == "Rib" || name == "Draft" || name == "Shell")
+    {
+        painter.setBrush(solid);
+        if(name=="Rib"){
+            painter.drawPolygon(QPolygonF{QPointF(5,27),QPointF(5,7),QPointF(24,27)});
+            painter.setBrush(side);painter.drawPolygon(QPolygonF{QPointF(5,7),QPointF(10,4),QPointF(29,24),QPointF(24,27)});
+            painter.drawLine(5,27,24,27);
+        }else if(name=="Draft"){
+            painter.drawPolygon(QPolygonF{QPointF(4,27),QPointF(9,9),QPointF(23,6),QPointF(28,23),QPointF(14,29)});
+            painter.drawLine(9,9,17,13);painter.drawLine(17,13,23,6);painter.drawLine(17,13,14,29);
+        }else{
+            painter.drawPolygon(QPolygonF{QPointF(5,9),QPointF(20,5),QPointF(27,11),QPointF(27,25),QPointF(12,29),QPointF(5,23)});
+            painter.drawPolygon(QPolygonF{QPointF(9,10),QPointF(20,8),QPointF(23,11),QPointF(13,15)});
+            painter.drawLine(5,9,12,18);painter.drawLine(12,18,27,11);painter.drawLine(12,18,12,29);
+        }
+    }
+    else if (name == "Wrap")
+    {
+        painter.setBrush(solid);painter.drawRoundedRect(QRectF(6,7,21,21),4,3);painter.drawEllipse(QRectF(6,4,21,7));
+        painter.setBrush(side);painter.drawPolygon(QPolygonF{QPointF(10,14),QPointF(23,13),QPointF(23,21),QPointF(10,22)});
+    }
+    else if (name == "Intersect")
+    {
+        painter.setBrush(solid);painter.drawPolygon(QPolygonF{QPointF(3,12),QPointF(16,6),QPointF(23,11),QPointF(23,24),QPointF(10,29),QPointF(3,24)});
+        painter.setBrush(side);painter.drawPolygon(QPolygonF{QPointF(13,7),QPointF(23,3),QPointF(29,8),QPointF(29,19),QPointF(19,23),QPointF(13,18)});
+        painter.drawLine(13,7,19,12);painter.drawLine(19,12,29,8);painter.drawLine(19,12,19,23);
+    }
+    else if (name == "Curves")
+    {
+        QPainterPath path(QPointF(5,25));path.cubicTo(26,29,7,3,27,6);painter.drawPath(path);
+        painter.setBrush(solid);painter.drawEllipse(QPointF(5,25),2,2);painter.drawEllipse(QPointF(27,6),2,2);
+    }
+    else if (name.contains("Point"))
     {
         painter.setBrush(themeColor(ThemeColor::Accent));
         painter.drawEllipse(QPointF(16, 16), 3.5, 3.5);
@@ -155,26 +212,32 @@ QIcon commandIcon(const QString& name)
     }
     else if(name.contains("Revol"))
     {
-        painter.setBrush(solid); painter.drawEllipse(QRectF(7,6,17,20)); painter.setBrush(Qt::NoBrush);
-        painter.drawArc(QRectF(3,9,25,14),30*16,290*16);
-        painter.drawLine(16,3,16,29);painter.drawLine(27,15,25,10);painter.drawLine(27,15,22,16);
+        QPainterPath body(QPointF(12,6));body.cubicTo(7,9,9,13,12,16);
+        body.cubicTo(15,20,9,23,10,26);body.cubicTo(14,29,23,28,24,24);
+        body.cubicTo(20,20,23,17,22,13);body.cubicTo(20,10,22,8,19,6);body.closeSubpath();
+        painter.setBrush(side);painter.drawPath(body);painter.setBrush(solid);painter.drawEllipse(QRectF(12,4,7,4));
+        painter.setBrush(Qt::NoBrush);painter.drawArc(QRectF(3,12,23,14),130*16,265*16);
+        painter.drawLine(25,17,28,21);painter.drawLine(28,21,23,22);
         if(name.contains("Cut")){painter.setPen(QPen(QColor("#b83b42"),2));painter.drawLine(8,9,23,23);}
     }
     else if(name=="Fillet"||name=="Chamfer")
     {
-        painter.setBrush(solid); painter.drawPolygon(QPolygonF{QPointF(5,27),QPointF(5,7),QPointF(26,7),QPointF(26,27)});
-        painter.setBrush(Qt::NoBrush);
-        painter.drawLine(5,27,5,7);painter.drawLine(5,7,26,7);painter.drawLine(26,7,26,27);
-        if(name=="Fillet")painter.drawArc(QRectF(5,7,20,20),0,90*16);
-        else painter.drawLine(5,22,20,7);
+        painter.setBrush(solid);painter.drawPolygon(QPolygonF{QPointF(5,11),QPointF(20,5),QPointF(27,10),QPointF(12,17)});
+        painter.setBrush(side);painter.drawPolygon(QPolygonF{QPointF(12,17),QPointF(27,10),QPointF(27,24),QPointF(12,29)});
+        QPainterPath face(QPointF(5,24));face.lineTo(5,16);
+        if(name=="Fillet")face.quadTo(5,11,9,14);
+        else{face.lineTo(5,14);face.lineTo(9,14);}
+        face.lineTo(12,17);face.lineTo(12,29);face.closeSubpath();painter.setBrush(solid);painter.drawPath(face);
+        painter.setPen(QPen(themeColor(ThemeColor::Accent),1.3));painter.drawLine(9,14,24,8);
     }
     else if (name.contains("Swept"))
     {
         QPainterPath path(QPointF(6, 24));
         path.cubicTo(6, 13, 12, 7, 24, 7);
-        path.moveTo(12, 24);
-        path.cubicTo(12, 17, 16, 13, 24, 13);
+        path.lineTo(24,13);path.cubicTo(16,13,12,17,12,24);path.closeSubpath();
+        painter.setBrush(solid);
         painter.drawPath(path);
+        painter.setBrush(side);
         painter.drawEllipse(QRectF(21, 7, 6, 6));
         painter.drawEllipse(QRectF(6, 21, 6, 6));
         if (name.contains("Cut"))

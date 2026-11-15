@@ -1,5 +1,9 @@
 # 0052. Features CommandManager layout
 
+The visual layout and omission of unimplemented commands described here are
+superseded by the owner's supplied screenshot and
+[decision 0054](0054-features-toolbar-reference-layout.md).
+
 The owner requested the top Features tab to follow SolidWorks before starting
 assembly work. Use large Extruded/Revolved Boss/Base and Extruded Cut commands,
 stacked Sweep/Revolved Cut commands, compact separators, Fillet/Chamfer and

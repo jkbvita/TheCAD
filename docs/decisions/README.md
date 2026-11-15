@@ -91,6 +91,7 @@ approved scope do not need repeated approval.
 - [0051. Planar fit-point Spline](0051-planar-fit-point-spline.md)
 - [0052. Features CommandManager layout](0052-features-commandmanager.md)
 - [0053. Linked components and basic rigid-body mates](0053-assembly-foundation.md)
+- [0054. Features toolbar matched to the owner's reference](0054-features-toolbar-reference-layout.md)
 
 ## Pending owner decisions
 
