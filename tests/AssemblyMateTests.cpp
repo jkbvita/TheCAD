@@ -87,6 +87,37 @@ int main()
         }
         require(!validMateTypes(MateKind::Concentric, DatumKind::Plane, DatumKind::Axis),
                 "Unsupported reference pair accepted");
+        bodies[0].fixed = true;
+        for (int i = 0; i < 20; ++i)
+        {
+            gp_Trsf pose;
+            pose.SetTranslationPart({double(100 + i), 10, 5});
+            bodies.push_back({"unmated-" + std::to_string(i), pose, false});
+        }
+        result = solveMates(bodies, {distance});
+        require(result.degreesOfFreedom == 123, "Excluded unmated bodies lost their freedom");
+        for (std::size_t i = 2; i < bodies.size(); ++i)
+        {
+            require(!result.fullyConstrained[i],
+                    "Unmated component incorrectly reported constrained");
+            for (int r = 1; r <= 3; ++r)
+                for (int c = 1; c <= 4; ++c)
+                    require(result.placements[i].Value(r, c) == bodies[i].placement.Value(r, c),
+                            "Unmated component moved during mate solve");
+        }
+        bodies[1].fixed = true;
+        result = solveMates(bodies, {coincident});
+        require(result.degreesOfFreedom == 120, "Fixed-body mates consumed unrelated freedom");
+        rejected = false;
+        try
+        {
+            solveMates(bodies, {distance});
+        }
+        catch (const std::exception&)
+        {
+            rejected = true;
+        }
+        require(rejected, "Fixed-body conflict was skipped with inactive floating bodies");
         std::cout << "PASS: assembly rigid-body mates, freedom, fixed bodies, conflict rejection "
                      "and singular-angle seeds\n";
         return 0;

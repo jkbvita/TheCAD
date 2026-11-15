@@ -34,7 +34,10 @@ it or insert another component to move/rotate by dragging or precise placement
 fields. Tree checkboxes control visibility; right-click offers Fix/Float and
 Open Part.
 
-**Mate** opens a docked editor: pick two planar faces/planes or cylindrical
+Ctrl/Shift-select two faces or Ctrl-select two tree planes/axes, then click
+**Mate** to prefill them. Two planes suggest Coincident; two axes/cylindrical
+faces suggest Concentric. The mate type and parameters remain editable.
+Alternatively, **Mate** opens a docked editor: pick two planar faces/planes or cylindrical
 faces/axes, choose the compatible Coincident, Concentric, Distance or Angle mate,
 inspect its preview and confirm. Component datum planes/axes are available in
 the tree. Double-click a mate to edit it. Status shows remaining degrees of
@@ -46,6 +49,8 @@ persist. Rebuild (**Ctrl+B**) reloads changed source parts through their persist
 geometry names. Keep source parts with the assembly when moving folders. Assembly
 and part documents use separate windows. Ten-action undo/redo covers assembly
 edits. See [verification, manual checks and milestone limits](docs/verification/assembly-foundation.md).
+Reference lists and unchanged presentations are reused for responsive interaction;
+see the [preselection/performance checks](docs/decisions/0055-assembly-mate-preselection-performance.md).
 
 ## Measure
 

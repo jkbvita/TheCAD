@@ -11,9 +11,11 @@
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QFileInfo>
+#include <QElapsedTimer>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPushButton>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTreeWidget>
@@ -58,7 +60,8 @@ class AssemblyWorkflowTest final : public QObject
                 return *it;
         return nullptr;
     }
-    void reference(AssemblyWindow& window, const std::string& component, bool axis, int index)
+    void reference(AssemblyWindow& window, const std::string& component, bool axis, int index,
+                   bool add = false)
     {
         for (QTreeWidgetItemIterator it(window.m_tree); *it; ++it)
             if ((*it)->data(0, Qt::UserRole + 1).toString() == "reference")
@@ -71,7 +74,16 @@ class AssemblyWorkflowTest final : public QObject
                                                  : modeling::ReferenceSource::BasePlane) &&
                     ref.geometry.index == index)
                 {
-                    window.m_tree->setCurrentItem(*it);
+                    if (add)
+                    {
+                        (*it)->parent()->setExpanded(true);
+                        window.m_tree->scrollToItem(*it);
+                        QTest::mouseClick(window.m_tree->viewport(), Qt::LeftButton,
+                                          Qt::ControlModifier,
+                                          window.m_tree->visualItemRect(*it).center());
+                    }
+                    else
+                        window.m_tree->setCurrentItem(*it);
                     return;
                 }
             }
@@ -96,6 +108,167 @@ class AssemblyWorkflowTest final : public QObject
         QCOMPARE(expected->ProjectionType(), actual->ProjectionType());
     }
 private slots:
+    void preselectedFacesAndPlanes()
+    {
+        QTemporaryDir temp;
+        const auto path = temp.filePath("block.thepart");
+        document::PartDocument::createBox({20, 20, 20}).save(path);
+        document::AssemblyDocument doc;
+        const auto a = doc.insertComponent(path);
+        gp_Trsf pose;
+        pose.SetTranslationPart({35, 0, 0});
+        const auto b = doc.insertComponent(path, pose);
+        AssemblyTestWindow window;
+        window.m_session.commit(doc);
+        window.refresh();
+        window.showMaximized();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* viewport = window.m_viewport;
+        QTRY_VERIFY(viewport->isReady());
+        viewport->standardView(0);
+        viewport->fitAll();
+        QApplication::processEvents();
+        const Handle(Graphic3d_Camera) camera = new Graphic3d_Camera(viewport->camera());
+        const auto first = viewport->project({10, 10, 20}),
+                   second = viewport->project({45, 10, 20});
+        QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, first);
+        QTest::mouseClick(viewport, Qt::LeftButton, Qt::ControlModifier, second);
+        QCOMPARE(window.m_preselection.size(), std::size_t(2));
+        QCOMPARE(viewport->m_references.size(), std::size_t(2));
+        QVERIFY(viewport->m_referenceVisuals[0].filled && viewport->m_referenceVisuals[1].filled);
+        QVERIFY(!window.m_dragCandidate);
+        unchanged(camera, viewport);
+        QTest::mouseClick(viewport, Qt::LeftButton, Qt::ControlModifier, second);
+        QCOMPARE(window.m_preselection.size(), std::size_t(1));
+        QCOMPARE(viewport->m_selected, a);
+        QTest::mouseClick(viewport, Qt::LeftButton, Qt::ShiftModifier, second);
+        QCOMPARE(window.m_preselection.size(), std::size_t(2));
+        command(window, "actionMate");
+        QVERIFY(window.m_mate);
+        QCOMPARE(window.m_mate->references().size(), std::size_t(2));
+        QCOMPARE(window.m_mate->references()[0].componentId, a);
+        QCOMPARE(window.m_mate->references()[1].componentId, b);
+        auto* kind = window.m_mate->findChild<QComboBox*>("assemblyMateType");
+        QCOMPARE(kind->currentData().toInt(), int(document::AssemblyMateKind::Coincident));
+        QVERIFY(window.m_mate->candidate());
+        QVERIFY(window.document().mates().empty());
+        kind->setCurrentIndex(kind->findData(int(document::AssemblyMateKind::Distance)));
+        window.m_mate->findChild<QDoubleSpinBox*>("assemblyMateValue")->setValue(7);
+        confirmMate(window);
+        QCOMPARE(window.document().mates().size(), std::size_t(1));
+        QVERIFY(std::abs(window.document().component(b).placement.TranslationPart().Z() - 7) <
+                1e-5);
+        unchanged(camera, viewport);
+        command(window, "actionUndo");
+        QVERIFY(window.document().mates().empty());
+        command(window, "actionRedo");
+        QCOMPARE(window.document().mates().size(), std::size_t(1));
+        command(window, "actionUndo");
+        reference(window, a, false, 0);
+        reference(window, b, false, 0, true);
+        QCOMPARE(window.m_preselection.size(), std::size_t(2));
+        command(window, "actionMate");
+        QCOMPARE(window.m_mate->references()[0].geometry.source,
+                 modeling::ReferenceSource::BasePlane);
+        QCOMPARE(window.m_mate->references()[1].geometry.source,
+                 modeling::ReferenceSource::BasePlane);
+        QVERIFY(window.m_mate->candidate());
+        QTest::keyClick(viewport, Qt::Key_Escape);
+        QVERIFY(window.document().mates().empty());
+        reference(window, a, true, 2);
+        reference(window, b, true, 2, true);
+        command(window, "actionMate");
+        kind = window.m_mate->findChild<QComboBox*>("assemblyMateType");
+        QCOMPARE(kind->currentData().toInt(), int(document::AssemblyMateKind::Concentric));
+        QVERIFY(window.m_mate->candidate());
+        QTest::keyClick(viewport, Qt::Key_Escape);
+        QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, QPoint(5, 5));
+        QVERIFY(window.m_preselection.empty());
+        command(window, "actionMate");
+        QVERIFY(window.m_mate->references().empty());
+        QTest::keyClick(viewport, Qt::Key_Escape);
+        unchanged(camera, viewport);
+        QVERIFY2(window.errors.isEmpty(), qPrintable(window.errors.join('\n')));
+        QVERIFY(window.close());
+    }
+    void referenceAndPreviewPerformance()
+    {
+        QTemporaryDir temp;
+        const auto path = temp.filePath("curved-part.thepart");
+        auto part = document::PartDocument::createEmpty();
+        modeling::Sketch sketch;
+        std::vector<std::string> contours;
+        for (int i = 0; i < 8; ++i)
+        {
+            const auto id = "circle-" + std::to_string(i);
+            sketch.entities.push_back(
+                {modeling::EntityKind::Circle, {double(i * 14), 0}, {}, 4, id});
+            contours.push_back(id);
+        }
+        const auto profile = part.addSketch(sketch);
+        modeling::RegionReferences regions;
+        for (const auto& id : contours)
+            regions.push_back({id});
+        part.addExtrudeRegions(profile, regions, 15, modeling::Direction::Positive);
+        part.save(path);
+        document::AssemblyDocument document;
+        std::vector<std::string> ids;
+        for (int i = 0; i < 6; ++i)
+        {
+            gp_Trsf pose;
+            pose.SetTranslationPart({0, double(i * 25), 0});
+            ids.push_back(document.insertComponent(path, pose));
+        }
+        AssemblyTestWindow window;
+        window.m_session.commit(document);
+        window.refresh();
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        QTRY_VERIFY(window.m_viewport->isReady());
+        QElapsedTimer timer;
+        timer.start();
+        for (const auto& id : ids)
+            QVERIFY(!document.referenceOptions(id).empty());
+        const auto options = timer.nsecsElapsed();
+        timer.restart();
+        window.refresh();
+        const auto refresh = timer.nsecsElapsed();
+        timer.restart();
+        command(window, "actionMate");
+        const auto open = timer.nsecsElapsed();
+        reference(window, ids[0], false, 0);
+        reference(window, ids[1], false, 0);
+        auto* kind = window.m_mate->findChild<QComboBox*>("assemblyMateType");
+        kind->setCurrentIndex(kind->findData(int(document::AssemblyMateKind::Distance)));
+        auto* value = window.m_mate->findChild<QDoubleSpinBox*>("assemblyMateValue");
+        timer.restart();
+        for (int i = 11; i <= 15; ++i)
+            value->setValue(i);
+        const auto previews = timer.nsecsElapsed();
+        QVERIFY(window.m_mate->candidate());
+        const auto highlights = window.m_viewport->m_references;
+        const auto bodies = window.m_viewport->m_presentations;
+        QSignalSpy preview(window.m_mate, &AssemblyMateEditor::previewChanged);
+        window.m_mate->refreshPreview();
+        QCOMPARE(preview.count(), 0);
+        timer.restart();
+        for (int i = 0; i < 10; ++i)
+            window.render(*window.m_mate->candidate());
+        const auto render = timer.nsecsElapsed();
+        QCOMPARE(window.m_viewport->m_references.size(), highlights.size());
+        for (std::size_t i = 0; i < highlights.size(); ++i)
+            QVERIFY(highlights[i] == window.m_viewport->m_references[i]);
+        for (const auto& [id, item] : bodies)
+            QVERIFY(item == window.m_viewport->m_presentations.at(id));
+        qInfo().nospace() << "assembly fixture (6 instances, 8 cylinders/source), ms: options="
+                          << options / 1e6 << ", tree/scene=" << refresh / 1e6
+                          << ", open Mate=" << open / 1e6 << ", 5 value previews=" << previews / 1e6
+                          << ", 10 unchanged scenes=" << render / 1e6;
+        QTest::keyClick(window.m_viewport, Qt::Key_Escape);
+        QVERIFY(window.document().mates().empty());
+        QVERIFY2(window.errors.isEmpty(), qPrintable(window.errors.join('\n')));
+        QVERIFY(window.close());
+    }
     void insertPlaceMateHistoryAndReopen()
     {
         QTemporaryDir temp;
@@ -179,6 +352,7 @@ private slots:
         QTest::mouseRelease(viewport, Qt::LeftButton, Qt::NoModifier, end);
         QCOMPARE(window.document().stateKey(), beforeCancel);
         unchanged(camera, viewport);
+        window.selectComponent({});
         command(window, "actionMate");
         QVERIFY(window.m_mate);
         QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier,

@@ -68,6 +68,16 @@ AssemblyComponent AssemblyDocument::loadSource(const QString& source)
     box.Get(x0, y0, z0, x1, y1, z1);
     component.size = std::max(
         1.0, std::sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0) + (z1 - z0) * (z1 - z0)));
+    auto references = std::make_shared<std::vector<ReferenceOption>>();
+    for (auto option : component.part->referenceOptions(true))
+    {
+        if (option.geometry.kind == modeling::DatumKind::Point)
+            continue;
+        if (int(option.reference.source) < 6)
+            option.selectionShape = component.part->currentReferenceShape(option.reference);
+        references->push_back(std::move(option));
+    }
+    component.references = std::move(references);
     return component;
 }
 const AssemblyComponent& AssemblyDocument::component(const std::string& id) const
@@ -212,6 +222,7 @@ void AssemblyDocument::reloadSources()
         if (found == cache.end())
             found = cache.emplace(c.path.toCaseFolded(), loadSource(c.path)).first;
         c.part = found->second.part;
+        c.references = found->second.references;
         c.digest = found->second.digest;
         c.size = found->second.size;
     }
@@ -236,32 +247,27 @@ modeling::DatumGeometry AssemblyDocument::referenceGeometry(const AssemblyRefere
 }
 std::vector<AssemblyReferenceOption> AssemblyDocument::referenceOptions(const std::string& id) const
 {
-    const auto source = id.empty() ? PartDocument::createEmpty() : *component(id).part;
+    static const auto origin = []
+    {
+        const auto part = PartDocument::createEmpty();
+        auto options = part.referenceOptions();
+        for (auto& option : options)
+            option.selectionShape = part.currentReferenceShape(option.reference);
+        return options;
+    }();
+    const auto* instance = id.empty() ? nullptr : &component(id);
+    const auto& options = instance ? *instance->references : origin;
+    const auto prefix = QString::fromStdString(instance ? instance->name : "Assembly") + " / ";
     std::vector<AssemblyReferenceOption> result;
-    for (const auto& option : source.referenceOptions(true, true))
+    for (const auto& option : options)
     {
         if (id.empty() && option.reference.source != modeling::ReferenceSource::BasePlane &&
             option.reference.source != modeling::ReferenceSource::BaseAxis)
             continue;
-        try
-        {
-            const auto geometry = source.resolveCurrentReference(option.reference);
-            if (geometry.kind == modeling::DatumKind::Point)
-                continue;
-            const auto label =
-                QString::fromStdString(id.empty() ? "Assembly" : component(id).name) + " / " +
-                QString::fromStdString(option.label);
-            result.push_back({label,
-                              {id, option.reference},
-                              geometry,
-                              source.currentReferenceShape(option.reference)});
-        }
-        catch (const std::exception&)
-        {
-        }
-        catch (const Standard_Failure&)
-        {
-        }
+        if (option.geometry.kind == modeling::DatumKind::Point)
+            continue;
+        const auto label = prefix + QString::fromStdString(option.label);
+        result.push_back({label, {id, option.reference}, option.geometry, option.selectionShape});
     }
     return result;
 }

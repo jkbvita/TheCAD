@@ -57,6 +57,8 @@ int main(int argc, char** argv)
                 "First component should be fixed by default");
         require(assembly.component(first).part == assembly.component(second).part,
                 "Part instances do not share immutable source data");
+        require(assembly.component(first).references == assembly.component(second).references,
+                "Source instances duplicate their reference cache");
         require(assembly.solution().degreesOfFreedom == 6,
                 "Floating component must start with six degrees of freedom");
         document::AssemblyMate mate;
@@ -122,7 +124,11 @@ int main(int argc, char** argv)
         box.box.width = 50;
         part.replaceFeature(box);
         part.save(partPath);
+        const auto oldCache = named.component(a).references;
         named.reloadSources();
+        require(named.component(a).references != oldCache &&
+                    named.component(a).references == named.component(b).references,
+                "Source reload did not replace/share reference caches");
         require(
             std::abs(named.referenceGeometry(named.mates()[0].first, false).frame.Location().X() -
                      50) < 1e-6,

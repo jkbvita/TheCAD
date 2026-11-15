@@ -51,6 +51,15 @@ QString q(const std::string& text)
 {
     return QString::fromStdString(text);
 }
+bool sameReference(const document::AssemblyReference& a, const document::AssemblyReference& b)
+{
+    const auto& x = a.geometry;
+    const auto& y = b.geometry;
+    return a.componentId == b.componentId && x.source == y.source &&
+           (!x.topologyName.empty() ? x.topologyName == y.topologyName
+                                    : x.featureId == y.featureId && x.entityId == y.entityId &&
+                                          x.role == y.role && x.index == y.index);
+}
 } // namespace
 AssemblyWindow::AssemblyWindow(QWidget* parent) : QMainWindow(parent)
 {
@@ -227,6 +236,7 @@ void AssemblyWindow::buildCommands()
                        if (maybeSave())
                        {
                            m_session.reset();
+                           m_preselection.clear();
                            m_selected.clear();
                            refresh();
                        }
@@ -448,6 +458,7 @@ bool AssemblyWindow::openAssemblyFile(const QString& path)
     try
     {
         m_session.open(path);
+        m_preselection.clear();
         m_selected.clear();
         refresh();
         m_viewport->fitAll();
@@ -518,30 +529,45 @@ void AssemblyWindow::render(const document::AssemblyDocument& doc)
                            m_insertCandidate && c.id == m_insertId});
     m_viewport->setComponents(visuals);
     std::vector<AssemblyVisual> highlights;
+    std::vector<document::AssemblyReference> refs;
     if (m_mate)
-        for (const auto& ref : m_mate->references())
-        {
-            if (ref.componentId.empty())
+        refs = m_mate->references();
+    else if (m_preselection.size() > 1 ||
+             (m_preselection.size() == 1 &&
+              m_preselection[0].reference.geometry.source != modeling::ReferenceSource::BodyFace))
+        for (const auto& option : m_preselection)
+            refs.push_back(option.reference);
+    for (const auto& ref : refs)
+        for (const auto& option : doc.referenceOptions(ref.componentId))
+            if (sameReference(option.reference, ref))
             {
-                for (const auto& option : doc.referenceOptions({}))
-                    if (option.reference.geometry.source == ref.geometry.source &&
-                        option.reference.geometry.index == ref.geometry.index)
-                    {
-                        highlights.push_back({{}, option.shape, {}});
-                        break;
-                    }
+                AssemblyVisual visual;
+                visual.shape = option.shape;
+                if (!ref.componentId.empty())
+                    visual.placement = doc.component(ref.componentId).placement;
+                visual.filled = ref.geometry.source == modeling::ReferenceSource::BodyFace;
+                highlights.push_back(std::move(visual));
+                break;
             }
-            else
-            {
-                const auto& c = doc.component(ref.componentId);
-                highlights.push_back(
-                    {{}, c.part->currentReferenceShape(ref.geometry), c.placement});
-            }
-        }
     m_viewport->setReferenceHighlights(highlights);
 }
 void AssemblyWindow::refresh()
 {
+    std::vector<document::AssemblyReferenceOption> valid;
+    for (const auto& old : m_preselection)
+        try
+        {
+            for (const auto& option : document().referenceOptions(old.reference.componentId))
+                if (sameReference(old.reference, option.reference))
+                {
+                    valid.push_back(option);
+                    break;
+                }
+        }
+        catch (const std::exception&)
+        {
+        }
+    m_preselection = std::move(valid);
     render(document());
     refreshTree();
     const auto found = std::find_if(document().components().begin(), document().components().end(),
@@ -643,9 +669,20 @@ void AssemblyWindow::refreshTree()
         if (id == desired)
             m_tree->setCurrentItem(*it);
     }
+    for (QTreeWidgetItemIterator it(m_tree); *it; ++it)
+        if ((*it)->data(0, kindRole).toString() == "reference")
+        {
+            const auto& ref =
+                m_treeReferences.at(std::size_t((*it)->data(0, referenceRole).toInt())).reference;
+            if (std::any_of(m_preselection.begin(), m_preselection.end(), [&](const auto& option)
+                            { return sameReference(option.reference, ref); }))
+                (*it)->setSelected(true);
+        }
 }
 void AssemblyWindow::selectComponent(const std::string& id, int face)
 {
+    m_preselection.clear();
+    m_viewport->setReferenceHighlights({});
     m_selected = id;
     m_viewport->setSelected(id, face);
     {
@@ -676,6 +713,28 @@ void AssemblyWindow::selectTree()
     }
     if (draftActive())
         return;
+    std::vector<document::AssemblyReferenceOption> selected;
+    for (auto* selectedItem : m_tree->selectedItems())
+        if (selectedItem->data(0, kindRole).toString() == "reference")
+            selected.push_back(
+                m_treeReferences.at(std::size_t(selectedItem->data(0, referenceRole).toInt())));
+    // Keep the user's selection order when Ctrl/Shift adds a second reference.
+    std::vector<document::AssemblyReferenceOption> ordered;
+    for (const auto& old : m_preselection)
+    {
+        const auto found = std::find_if(selected.begin(), selected.end(), [&](const auto& option)
+                                        { return sameReference(old.reference, option.reference); });
+        if (found != selected.end())
+            ordered.push_back(*found);
+        else if ((QApplication::keyboardModifiers() & (Qt::ControlModifier | Qt::ShiftModifier)) &&
+                 old.reference.geometry.source == modeling::ReferenceSource::BodyFace)
+            ordered.push_back(old);
+    }
+    for (const auto& option : selected)
+        if (std::none_of(ordered.begin(), ordered.end(), [&](const auto& old)
+                         { return sameReference(old.reference, option.reference); }))
+            ordered.push_back(option);
+    m_preselection = std::move(ordered);
     if (item->data(0, kindRole).toString() == "component")
     {
         m_selected = item->data(0, Qt::UserRole).toString().toStdString();
@@ -688,6 +747,7 @@ void AssemblyWindow::selectTree()
         m_viewport->setSelected({});
         m_placement->setComponent(nullptr);
     }
+    render(document());
     updateActions();
 }
 document::AssemblyReferenceOption AssemblyWindow::faceReference(const std::string& id,
@@ -704,7 +764,7 @@ document::AssemblyReferenceOption AssemblyWindow::faceReference(const std::strin
     throw std::runtime_error(
         "Select a planar or cylindrical face, or choose a plane/axis in the component tree.");
 }
-void AssemblyWindow::picked(const QString& component, int face)
+void AssemblyWindow::picked(const QString& component, int face, Qt::KeyboardModifiers modifiers)
 {
     if (m_mate)
     {
@@ -720,7 +780,48 @@ void AssemblyWindow::picked(const QString& component, int face)
         return;
     }
     if (!draftActive())
-        selectComponent(component.toStdString(), face);
+    {
+        const bool additive = modifiers & (Qt::ControlModifier | Qt::ShiftModifier);
+        auto selected =
+            additive ? m_preselection : std::vector<document::AssemblyReferenceOption>{};
+        if (!component.isEmpty())
+            try
+            {
+                const auto option = faceReference(component.toStdString(), face);
+                const auto found =
+                    std::find_if(selected.begin(), selected.end(), [&](const auto& old)
+                                 { return sameReference(old.reference, option.reference); });
+                if (found != selected.end())
+                    selected.erase(found);
+                else
+                    selected.push_back(option);
+            }
+            catch (const std::exception&)
+            {
+            }
+        if (component.isEmpty())
+            selected.clear();
+        auto selectedId = component.toStdString();
+        int selectedFace = face;
+        if (additive && selected.empty())
+        {
+            selectedId.clear();
+            selectedFace = 0;
+        }
+        else if (additive && selected.size() == 1 &&
+                 selected[0].reference.geometry.source == modeling::ReferenceSource::BodyFace)
+        {
+            selectedId = selected[0].reference.componentId;
+            TopTools_IndexedMapOfShape faces;
+            TopExp::MapShapes(document().component(selectedId).part->shape(), TopAbs_FACE, faces);
+            selectedFace = faces.FindIndex(selected[0].shape);
+        }
+        selectComponent(selectedId, selectedFace);
+        m_preselection = std::move(selected);
+        if (m_preselection.size() > 1)
+            m_viewport->setSelected({});
+        render(document());
+    }
 }
 void AssemblyWindow::applyPlacement()
 {
@@ -738,6 +839,7 @@ bool AssemblyWindow::insertPartFile(const QString& path)
     {
         auto candidate = document();
         const auto id = candidate.insertComponent(path, {}, false);
+        m_preselection.clear();
         m_insertId = id;
         m_insertCandidate = std::move(candidate);
         m_insertPage = new PropertyManagerPage(
@@ -862,6 +964,13 @@ void AssemblyWindow::startMate(const std::optional<document::AssemblyMate>& edit
                 [this] { finishMate(true); });
         connect(m_mate->page()->buttons, &QDialogButtonBox::rejected, this,
                 [this] { finishMate(false); });
+        if (!editing)
+        {
+            std::vector<document::AssemblyReference> refs;
+            for (const auto& option : m_preselection)
+                refs.push_back(option.reference);
+            m_mate->preselect(refs);
+        }
         updateMatePreview();
         updateActions();
     }

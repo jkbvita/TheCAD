@@ -92,6 +92,7 @@ approved scope do not need repeated approval.
 - [0052. Features CommandManager layout](0052-features-commandmanager.md)
 - [0053. Linked components and basic rigid-body mates](0053-assembly-foundation.md)
 - [0054. Features toolbar matched to the owner's reference](0054-features-toolbar-reference-layout.md)
+- [0055. Assembly mate preselection and responsive reference handling](0055-assembly-mate-preselection-performance.md)
 
 ## Pending owner decisions
 

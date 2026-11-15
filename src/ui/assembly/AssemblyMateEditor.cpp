@@ -4,12 +4,15 @@
 #include <QCheckBox>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
+#include <QDataStream>
+#include <QIODevice>
 #include <QFormLayout>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QVBoxLayout>
 #include <Standard_Failure.hxx>
 #include <QUuid>
+#include <algorithm>
 
 namespace thecad::ui
 {
@@ -144,6 +147,36 @@ void AssemblyMateEditor::pick(const document::AssemblyReference& reference)
     if (m_active == 0 && m_second->currentIndex() == 0)
         activate(1);
 }
+void AssemblyMateEditor::preselect(const std::vector<document::AssemblyReference>& selected)
+{
+    if (selected.empty())
+        return;
+    if (selected.size() > 2)
+    {
+        m_page->setStatus(
+            "More than two references are selected. Choose the two references to mate.", true);
+        return;
+    }
+    m_initializing = true;
+    m_first->setCurrentIndex(0);
+    m_second->setCurrentIndex(0);
+    const std::size_t count = std::min<std::size_t>(2, selected.size());
+    for (std::size_t i = 0; i < count; ++i)
+        (i == 0 ? m_first : m_second)->setCurrentIndex(optionIndex(selected[i]) + 1);
+    if (references().size() == 2)
+    {
+        const auto a = m_source.referenceGeometry(selected[0]),
+                   b = m_source.referenceGeometry(selected[1]);
+        m_mate.kind = a.kind == modeling::DatumKind::Axis && b.kind == modeling::DatumKind::Axis
+                          ? AssemblyMateKind::Concentric
+                          : AssemblyMateKind::Coincident;
+        m_kind->setCurrentIndex(m_kind->findData(int(m_mate.kind)));
+        m_flip->setChecked(a.frame.Direction().Dot(b.frame.Direction()) < 0);
+    }
+    m_initializing = false;
+    activate(m_first->currentIndex() > 0 ? 1 : 0);
+    refreshPreview();
+}
 std::vector<document::AssemblyReference> AssemblyMateEditor::references() const
 {
     std::vector<document::AssemblyReference> refs;
@@ -157,11 +190,16 @@ void AssemblyMateEditor::refreshPreview()
     if (m_initializing || m_refreshing)
         return;
     m_refreshing = true;
+    auto previous = std::move(m_candidate);
     m_candidate.reset();
     m_page->buttons->button(QDialogButtonBox::Ok)->setEnabled(false);
     try
     {
         const auto refs = references();
+        const auto a =
+            refs.size() == 2 ? m_source.referenceGeometry(refs[0]) : modeling::DatumGeometry{};
+        const auto b =
+            refs.size() == 2 ? m_source.referenceGeometry(refs[1]) : modeling::DatumGeometry{};
         const QSignalBlocker block(m_kind);
         const auto wanted = m_kind->currentIndex() < 0
                                 ? m_mate.kind
@@ -172,9 +210,7 @@ void AssemblyMateEditor::refreshPreview()
         {
             bool valid = refs.size() < 2;
             if (refs.size() == 2)
-                valid = modeling::assembly::validMateTypes(
-                    kind, m_source.referenceGeometry(refs[0]).kind,
-                    m_source.referenceGeometry(refs[1]).kind);
+                valid = modeling::assembly::validMateTypes(kind, a.kind, b.kind);
             if (valid)
                 m_kind->addItem(modeling::assembly::mateName(kind), int(kind));
         }
@@ -204,12 +240,28 @@ void AssemblyMateEditor::refreshPreview()
             mate.second = refs[1];
             mate.value = numeric ? m_value->value() : 0;
             mate.alignment = m_flip->isChecked() ? -1 : 1;
-            auto candidate = m_source;
-            candidate.setMate(mate);
-            m_candidate = std::move(candidate);
+            QByteArray key;
+            QDataStream stream(&key, QIODevice::WriteOnly);
+            stream << m_first->currentIndex() << m_second->currentIndex() << int(kind) << mate.value
+                   << mate.alignment;
+            const bool reused = previous && key == m_previewKey;
+            if (reused)
+                m_candidate = std::move(previous);
+            else
+            {
+                auto candidate = m_source;
+                candidate.setMate(mate);
+                m_candidate = std::move(candidate);
+                m_previewKey = key;
+            }
             m_page->buttons->button(QDialogButtonBox::Ok)->setEnabled(true);
             m_page->setStatus(QString("Preview ready · %1 assembly degree(s) of freedom remain")
                                   .arg(m_candidate->solution().degreesOfFreedom));
+            if (reused)
+            {
+                m_refreshing = false;
+                return;
+            }
         }
     }
     catch (const Standard_Failure& failure)

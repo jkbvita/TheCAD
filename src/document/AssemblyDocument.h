@@ -11,6 +11,8 @@ struct AssemblyComponent
     std::string id, name;
     QString path, digest;
     std::shared_ptr<const PartDocument> part;
+    // Immutable local picking data shared by all instances of this source.
+    std::shared_ptr<const std::vector<ReferenceOption>> references;
     gp_Trsf placement;
     bool fixed = false, visible = true;
     double size = 100;

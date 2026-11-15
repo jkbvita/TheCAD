@@ -199,10 +199,9 @@ MateSolution solveMates(const std::vector<RigidBody>& bodies,
             throw std::runtime_error("Component size must be finite and positive.");
         validateRigidPlacement(bodies[i].placement);
         poses.push_back(bodies[i].placement);
-        if (!bodies[i].fixed)
-            free.push_back(int(i));
         scale = std::max({scale, bodies[i].size, bodies[i].placement.TranslationPart().Modulus()});
     }
+    std::vector<bool> participating(bodies.size(), false);
     for (const auto& mate : mates)
     {
         if (mate.first < -1 || mate.second < -1 || mate.first >= int(bodies.size()) ||
@@ -212,7 +211,22 @@ MateSolution solveMates(const std::vector<RigidBody>& bodies,
             (mate.kind == MateKind::Angle && (mate.value < 0 || mate.value > 180)) ||
             std::abs(mate.alignment) != 1)
             throw std::runtime_error("Invalid mate geometry, references or value.");
+        if (mate.first >= 0)
+            participating[std::size_t(mate.first)] = true;
+        if (mate.second >= 0)
+            participating[std::size_t(mate.second)] = true;
     }
+    // Unmated floating bodies contribute six free DOFs but no equations.
+    // Exclude their zero columns from the dense SVD, preserving their pose.
+    int inactiveFreedom = 0;
+    for (std::size_t i = 0; i < bodies.size(); ++i)
+        if (!bodies[i].fixed)
+        {
+            if (participating[i])
+                free.push_back(int(i));
+            else
+                inactiveFreedom += 6;
+        }
     const int columns = int(free.size()) * 6;
     if (!mates.empty())
     {
@@ -269,7 +283,7 @@ MateSolution solveMates(const std::vector<RigidBody>& bodies,
     }
     MateSolution result;
     result.placements = poses;
-    result.degreesOfFreedom = columns;
+    result.degreesOfFreedom = columns + inactiveFreedom;
     for (const auto& body : bodies)
         result.fullyConstrained.push_back(body.fixed);
     if (columns > 0 && !mates.empty())
@@ -294,7 +308,8 @@ MateSolution solveMates(const std::vector<RigidBody>& bodies,
                     diagonal += inverse(c, r) * j(r, c);
                 rank += diagonal;
             }
-            result.degreesOfFreedom = std::clamp(columns - int(std::lround(rank)), 0, columns);
+            result.degreesOfFreedom =
+                inactiveFreedom + std::clamp(columns - int(std::lround(rank)), 0, columns);
             for (std::size_t i = 0; i < free.size(); ++i)
             {
                 bool fixed = true;

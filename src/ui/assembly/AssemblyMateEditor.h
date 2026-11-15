@@ -20,6 +20,7 @@ public:
     const std::vector<document::AssemblyReferenceOption>& options() const { return m_options; }
     std::vector<document::AssemblyReference> references() const;
     void pick(const document::AssemblyReference& reference);
+    void preselect(const std::vector<document::AssemblyReference>& references);
     void refreshPreview();
 signals:
     void previewChanged();
@@ -29,6 +30,7 @@ private:
     document::AssemblyMate m_mate;
     std::vector<document::AssemblyReferenceOption> m_options;
     std::optional<document::AssemblyDocument> m_candidate;
+    QByteArray m_previewKey;
     PropertyManagerPage* m_page;
     QComboBox *m_first, *m_second, *m_kind;
     QDoubleSpinBox* m_value;

@@ -15,6 +15,7 @@ struct AssemblyVisual
     TopoDS_Shape shape;
     gp_Trsf placement;
     bool visible = true, fixed = false, preview = false;
+    bool filled = false; // Filled face selection versus datum outlines.
 };
 class AssemblyViewport final : public QWidget
 {
@@ -37,7 +38,7 @@ public:
     Handle(Graphic3d_Camera) camera() const;
     void applyTheme();
 signals:
-    void picked(const QString& component, int face);
+    void picked(const QString& component, int face, Qt::KeyboardModifiers modifiers);
     void dragStarted();
     void dragPlacement(const QString& component, const gp_Trsf& placement);
     void dragFinished(bool accepted);
@@ -71,6 +72,7 @@ private:
     std::map<std::string, Handle(AIS_Shape)> m_presentations;
     Handle(AIS_Shape) m_highlight, m_hover;
     std::vector<Handle(AIS_Shape)> m_references;
+    std::vector<AssemblyVisual> m_referenceVisuals;
     std::string m_selected, m_hovered, m_dragId;
     int m_selectedFace = 0, m_hoveredFace = 0;
     QPointF m_press;

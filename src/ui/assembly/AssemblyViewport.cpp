@@ -20,6 +20,17 @@
 
 namespace thecad::ui
 {
+namespace
+{
+bool samePose(const gp_Trsf& a, const gp_Trsf& b)
+{
+    for (int r = 1; r <= 3; ++r)
+        for (int c = 1; c <= 4; ++c)
+            if (std::abs(a.Value(r, c) - b.Value(r, c)) > 1e-12)
+                return false;
+    return true;
+}
+} // namespace
 AssemblyViewport::AssemblyViewport(QWidget* parent) : QWidget(parent)
 {
     setObjectName("assemblyViewport");
@@ -103,8 +114,19 @@ void AssemblyViewport::applyTheme()
 }
 void AssemblyViewport::setComponents(const std::vector<AssemblyVisual>& visuals)
 {
+    const bool unchanged = visuals.size() == m_visuals.size() &&
+                           std::equal(visuals.begin(), visuals.end(), m_visuals.begin(),
+                                      [](const auto& a, const auto& b)
+                                      {
+                                          return a.id == b.id && a.shape.IsSame(b.shape) &&
+                                                 a.visible == b.visible && a.fixed == b.fixed &&
+                                                 a.preview == b.preview &&
+                                                 samePose(a.placement, b.placement);
+                                      });
     m_visuals = visuals;
     if (!isReady())
+        return;
+    if (unchanged)
         return;
     const auto context = m_graphics.context();
     if (!m_hover.IsNull())
@@ -173,6 +195,8 @@ TopoDS_Shape AssemblyViewport::selectedShape(const std::string& id, int face) co
 }
 void AssemblyViewport::setSelected(const std::string& id, int face)
 {
+    if (m_selected == id && m_selectedFace == face)
+        return;
     m_selected = id;
     m_selectedFace = face;
     refreshSelection();
@@ -182,37 +206,85 @@ void AssemblyViewport::refreshSelection()
 {
     if (!isReady())
         return;
-    if (!m_highlight.IsNull())
-        m_graphics.context()->Remove(m_highlight, false);
-    m_highlight.Nullify();
     const auto shape = selectedShape(m_selected, m_selectedFace);
     if (shape.IsNull())
+    {
+        if (!m_highlight.IsNull())
+            m_graphics.context()->Remove(m_highlight, false);
+        m_highlight.Nullify();
         return;
-    m_highlight = presentation::makeSolidPresentation(shape);
-    presentation::styleSelectedShape(m_highlight, devicePixelRatioF());
+    }
+    const bool replaced = m_highlight.IsNull() || !m_highlight->Shape().IsSame(shape);
+    if (replaced)
+    {
+        if (!m_highlight.IsNull())
+            m_graphics.context()->Remove(m_highlight, false);
+        m_highlight = presentation::makeSolidPresentation(shape);
+        presentation::styleSelectedShape(m_highlight, devicePixelRatioF());
+    }
     const auto found = std::find_if(m_visuals.begin(), m_visuals.end(),
                                     [&](const auto& v) { return v.id == m_selected; });
-    m_highlight->SetLocalTransformation(found->placement);
-    m_graphics.context()->Display(m_highlight, AIS_Shaded, -1, false);
+    if (replaced)
+    {
+        m_highlight->SetLocalTransformation(found->placement);
+        m_graphics.context()->Display(m_highlight, AIS_Shaded, -1, false);
+    }
+    else if (!samePose(m_highlight->LocalTransformation(), found->placement))
+        m_graphics.context()->SetLocation(m_highlight, TopLoc_Location(found->placement));
 }
 void AssemblyViewport::setReferenceHighlights(const std::vector<AssemblyVisual>& references)
 {
     if (!isReady())
         return;
-    for (const auto& item : m_references)
-        m_graphics.context()->Remove(item, false);
-    m_references.clear();
+    std::vector<AssemblyVisual> valid;
     for (const auto& ref : references)
         if (!ref.shape.IsNull())
+            valid.push_back(ref);
+    const auto context = m_graphics.context();
+    bool changed = false;
+    while (m_references.size() > valid.size())
+    {
+        context->Remove(m_references.back(), false);
+        m_references.pop_back();
+        changed = true;
+    }
+    for (std::size_t i = 0; i < valid.size(); ++i)
+    {
+        const auto& ref = valid[i];
+        const bool replace = i >= m_references.size() ||
+                             !m_referenceVisuals[i].shape.IsSame(ref.shape) ||
+                             m_referenceVisuals[i].filled != ref.filled;
+        if (replace)
         {
-            Handle(AIS_Shape) item = new AIS_Shape(presentation::selectionOutline(ref.shape));
+            if (i < m_references.size())
+                context->Remove(m_references[i], false);
+            else
+                m_references.emplace_back();
+            auto& item = m_references[i];
+            if (ref.filled)
+            {
+                item = presentation::makeSolidPresentation(ref.shape);
+                presentation::styleSelectedShape(item, devicePixelRatioF());
+            }
+            else
+            {
+                item = new AIS_Shape(presentation::selectionOutline(ref.shape));
+                item->SetColor(presentation::selectionBlue());
+                item->SetWidth(2 * devicePixelRatioF());
+            }
             item->SetLocalTransformation(ref.placement);
-            item->SetColor(presentation::selectionBlue());
-            item->SetWidth(2 * devicePixelRatioF());
-            m_graphics.context()->Display(item, AIS_WireFrame, -1, false);
-            m_references.push_back(item);
+            context->Display(item, ref.filled ? AIS_Shaded : AIS_WireFrame, -1, false);
+            changed = true;
         }
-    update();
+        else if (!samePose(m_references[i]->LocalTransformation(), ref.placement))
+        {
+            context->SetLocation(m_references[i], TopLoc_Location(ref.placement));
+            changed = true;
+        }
+    }
+    m_referenceVisuals = std::move(valid);
+    if (changed)
+        update();
 }
 std::pair<std::string, int> AssemblyViewport::hit(const QPointF& point)
 {
@@ -343,8 +415,9 @@ void AssemblyViewport::mousePressEvent(QMouseEvent* event)
     auto visual = std::find_if(m_visuals.begin(), m_visuals.end(),
                                [&](const auto& v) { return v.id == pickedValue.first; });
     const auto value = visual == m_visuals.end() ? AssemblyVisual{} : *visual;
-    emit picked(QString::fromStdString(pickedValue.first), pickedValue.second);
-    if (!m_matePicking && !value.id.empty() && !value.fixed)
+    emit picked(QString::fromStdString(pickedValue.first), pickedValue.second, event->modifiers());
+    if (!m_matePicking && !value.id.empty() && !value.fixed &&
+        !(event->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier)))
     {
         m_dragId = value.id;
         m_press = event->position();

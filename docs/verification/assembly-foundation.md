@@ -58,6 +58,9 @@ local SolidWorks UI interaction was performed.
 3. Mate two planar faces Coincident/Distance. Mate cylindrical faces Concentric,
    then use planes/axes for Angle. Check Flip alignment, preview and remaining
    freedom. Cancel and try a conflicting mate; the document must stay intact.
+   Also Ctrl/Shift-select two faces or Ctrl-select two tree planes before clicking
+   Mate: both references should already be filled, with Coincident suggested for
+   planes or Concentric for axes. Change the suggestion before confirming.
 4. Double-click an existing mate, change its value/references and confirm. Delete
    it, undo, then select multiple components in the tree and press Delete. Read
    the dependent-mate list and test both Cancel and confirmed removal.

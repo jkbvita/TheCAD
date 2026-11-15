@@ -41,7 +41,7 @@ private:
     void refreshTree();
     void render(const document::AssemblyDocument& document);
     void selectTree();
-    void picked(const QString& component, int face);
+    void picked(const QString& component, int face, Qt::KeyboardModifiers modifiers);
     void selectComponent(const std::string& id, int face = 0);
     void startMate(const std::optional<document::AssemblyMate>& editing = {});
     void finishMate(bool accepted);
@@ -70,6 +70,7 @@ private:
     QCheckBox* m_insertFixed = nullptr;
     QDoubleSpinBox* m_insertCoordinates[3]{};
     std::vector<document::AssemblyReferenceOption> m_treeReferences;
+    std::vector<document::AssemblyReferenceOption> m_preselection;
     QAction *m_insertAction, *m_mateAction, *m_moveAction, *m_rotateAction, *m_undo, *m_redo,
         *m_delete, *m_fix, *m_hide, *m_save, *m_saveAs, *m_open, *m_new, *m_rebuild;
 };
