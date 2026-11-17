@@ -1,3 +1,4 @@
+#include "presentation/ViewportAppearance.h"
 #include "ui/assembly/AssemblyViewport.h"
 #include "ui/Theme.h"
 #include "presentation/SolidPresentation.h"
@@ -61,8 +62,6 @@ void AssemblyViewport::initialize()
     {
         m_graphics.initialize(reinterpret_cast<Aspect_Handle>(winId()));
         applyTheme();
-        m_graphics.view()->TriedronDisplay(Aspect_TOTP_LEFT_LOWER, Quantity_NOC_GRAY60, 0.08,
-                                           V3d_ZBUFFER);
         standardView(6);
         const auto visuals = m_visuals;
         m_visuals.clear();
@@ -107,12 +106,7 @@ void AssemblyViewport::applyTheme()
     if (!isReady())
         return;
     const bool dark = ThemeManager::instance().isDark();
-    m_graphics.view()->SetBgGradientColors(dark
-                                               ? Quantity_Color(0.13, 0.16, 0.20, Quantity_TOC_RGB)
-                                               : Quantity_Color(0.87, 0.90, 0.94, Quantity_TOC_RGB),
-                                           dark ? Quantity_Color(0.19, 0.24, 0.29, Quantity_TOC_RGB)
-                                                : Quantity_Color(0.98, 0.99, 1, Quantity_TOC_RGB),
-                                           Aspect_GFM_VER, Standard_False);
+    presentation::applyViewportAppearance(m_graphics.view(),dark);
     update();
 }
 void AssemblyViewport::setComponents(const std::vector<AssemblyVisual>& visuals)

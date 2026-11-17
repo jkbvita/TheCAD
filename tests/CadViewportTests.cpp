@@ -2,6 +2,8 @@
 #include "document/PartDocument.h"
 #include "presentation/SelectionAppearance.h"
 #include "ui/CadViewport.h"
+#include "ui/Theme.h"
+#include <Prs3d_TextAspect.hxx>
 
 #include <BRepAdaptor_Surface.hxx>
 #include <BRep_Tool.hxx>
@@ -74,6 +76,22 @@ private slots:
         QCOMPARE(failure.count(), 0);
     }
 
+    void workspaceAppearanceMatchesThemeWithoutMovingCamera()
+    {
+        auto& theme=ThemeManager::instance();const auto original=theme.mode();
+        const auto view=viewport->m_graphics.view();const Handle(Graphic3d_Camera) before=new Graphic3d_Camera(view->Camera());
+        for(const bool dark:{true,false}){
+            theme.setMode(dark?ThemeMode::Dark:ThemeMode::Light,false);
+            Quantity_Color top,bottom;view->GradientBackgroundColors(top,bottom);
+            const Quantity_Color expectedTop=dark?Quantity_Color(0.12549,0.15686,0.20,Quantity_TOC_sRGB):Quantity_Color(0.90,0.92,0.95,Quantity_TOC_RGB);
+            const Quantity_Color expectedBottom=dark?Quantity_Color(0.20784,0.26275,0.32549,Quantity_TOC_sRGB):Quantity_Color(0.99,0.99,0.99,Quantity_TOC_RGB);
+            QVERIFY(top.Distance(expectedTop)<1e-7);QVERIFY(bottom.Distance(expectedBottom)<1e-7);
+            QCOMPARE(view->Trihedron()->Scale(),0.08);
+            QVERIFY(view->Trihedron()->LabelAspect(V3d_X)->Aspect()->Color().Distance(Quantity_Color(dark?Quantity_NOC_GRAY80:Quantity_NOC_GRAY30))<1e-7);
+            QVERIFY(before->Eye().Distance(view->Camera()->Eye())<1e-10);QVERIFY(before->Center().Distance(view->Camera()->Center())<1e-10);QVERIFY(before->Up().IsEqual(view->Camera()->Up(),1e-10));QCOMPARE(before->Scale(),view->Camera()->Scale());QCOMPARE(before->ProjectionType(),view->Camera()->ProjectionType());
+        }
+        theme.setMode(original,false);
+    }
     void startupMaximizeRestoreResize()
     {
         QVERIFY(host->isMaximized());

@@ -1,3 +1,4 @@
+#include "presentation/ViewportAppearance.h"
 #include "presentation/SelectionAppearance.h"
 #include "presentation/SolidPresentation.h"
 #include "ui/Theme.h"
@@ -128,8 +129,7 @@ CadViewport::CadViewport(const TopoDS_Shape& shape, QWidget* parent)
 void CadViewport::applyTheme(){
     if(!isReady())return;
     const bool dark=ThemeManager::instance().isDark();
-    m_graphics.view()->SetBgGradientColors(dark?Quantity_Color(0.12549,0.15686,0.20,Quantity_TOC_sRGB):Quantity_Color(0.90,0.92,0.95,Quantity_TOC_RGB),dark?Quantity_Color(0.20784,0.26275,0.32549,Quantity_TOC_sRGB):Quantity_Color(0.99,0.99,0.99,Quantity_TOC_RGB),Aspect_GFM_VER);
-    m_graphics.view()->TriedronDisplay(Aspect_TOTP_LEFT_LOWER,dark?Quantity_NOC_GRAY80:Quantity_NOC_GRAY30,0.08,V3d_ZBUFFER);
+    presentation::applyViewportAppearance(m_graphics.view(),dark);
     updateSketchPresentation();updateReferencePlanes();setDatums(m_datums);
     if(!m_referenceCandidates.empty()){const auto candidates=m_referenceCandidates;setReferenceCandidates(candidates,m_referenceCandidateKind);}update();
 }
@@ -161,7 +161,7 @@ void CadViewport::initialize()
     try {
         m_graphics.initialize(reinterpret_cast<Aspect_Handle>(winId()));
         applyTheme();
-        m_graphics.view()->TriedronDisplay(Aspect_TOTP_LEFT_LOWER, Quantity_NOC_GRAY30, 0.08, V3d_ZBUFFER);
+
 
         m_graphics.context()->SetDisplayMode(AIS_Shaded, Standard_False);
         if (!setShape(m_shape)) {

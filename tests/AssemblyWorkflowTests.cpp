@@ -1,4 +1,7 @@
 #include "ui/assembly/AssemblyWindow.h"
+#include "ui/Theme.h"
+#include "presentation/SelectionAppearance.h"
+#include <Prs3d_TextAspect.hxx>
 #include "ui/assembly/AssemblyViewport.h"
 #include "ui/assembly/AssemblyMateEditor.h"
 #include "ui/assembly/AssemblyPropertyEditor.h"
@@ -122,6 +125,23 @@ class AssemblyWorkflowTest final : public QObject
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     }
 private slots:
+    void assemblyUsesPartWorkspaceAppearance()
+    {
+        QTemporaryDir folder;const auto path=folder.filePath("part.thepart");document::PartDocument::createBox({20,30,40}).save(path);
+        document::AssemblyDocument doc;const auto id=doc.insertComponent(path);AssemblyTestWindow window;window.m_session.commit(doc);window.refresh();window.show();QVERIFY(QTest::qWaitForWindowExposed(&window));auto* viewport=window.m_viewport;QTRY_VERIFY(viewport->isReady());
+        auto& theme=ThemeManager::instance();const auto original=theme.mode();const auto view=viewport->m_graphics.view();const Handle(Graphic3d_Camera) before=new Graphic3d_Camera(view->Camera());
+        for(const bool dark:{true,false}){
+            theme.setMode(dark?ThemeMode::Dark:ThemeMode::Light,false);
+            Quantity_Color top,bottom;view->GradientBackgroundColors(top,bottom);
+            const Quantity_Color expectedTop=dark?Quantity_Color(0.12549,0.15686,0.20,Quantity_TOC_sRGB):Quantity_Color(0.90,0.92,0.95,Quantity_TOC_RGB);
+            const Quantity_Color expectedBottom=dark?Quantity_Color(0.20784,0.26275,0.32549,Quantity_TOC_sRGB):Quantity_Color(0.99,0.99,0.99,Quantity_TOC_RGB);
+            QVERIFY(top.Distance(expectedTop)<1e-7);QVERIFY(bottom.Distance(expectedBottom)<1e-7);
+            QCOMPARE(view->Trihedron()->Scale(),0.08);QVERIFY(view->Trihedron()->LabelAspect(V3d_X)->Aspect()->Color().Distance(Quantity_Color(dark?Quantity_NOC_GRAY80:Quantity_NOC_GRAY30))<1e-7);
+            Quantity_Color color;viewport->m_presentations.at(id)->Color(color);QVERIFY(color.Distance(presentation::modelGray())<1e-7);QCOMPARE(viewport->m_presentations.at(id)->Transparency(),0.0);
+            unchanged(before,viewport);
+        }
+        theme.setMode(original,false);
+    }
     void visibilityCheckboxAndAutomaticDrag()
     {
         QTemporaryDir temp;

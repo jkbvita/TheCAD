@@ -99,6 +99,8 @@ approved scope do not need repeated approval.
 
 - [0058. Sketch and feature interaction fixes](0058-sketch-feature-interaction-fixes.md) — owner-requested dragging, tool handoff, previews, reference selection and close behavior.
 
+- [0059. Shared viewport appearance](0059-shared-viewport-appearance.md) — match assembly styling to the part workspace.
+
 ## Pending owner decisions
 
 - Resilient face references beyond the approved conservative planar-face strategy.
