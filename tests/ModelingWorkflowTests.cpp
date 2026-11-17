@@ -805,6 +805,16 @@ private slots:
         command(window,"actionReferencePlane");panel=window.findChild<QWidget*>("referenceGeometryPanel");auto* method=panel->findChild<QComboBox*>("datumMethod");QCOMPARE(method->currentData().toInt(),int(DatumMethod::PlaneOffset));QVERIFY(panel->findChild<QComboBox*>("datumReference1")->currentIndex()>=0);panel->findChild<QDoubleSpinBox*>("datumValue")->setValue(10);QTest::keyClick(viewport,Qt::Key_Escape);QCOMPARE(window.document().features().size(),std::size_t(1));
         command(window,"actionReferencePoint");panel=window.findChild<QWidget*>("referenceGeometryPanel");method=panel->findChild<QComboBox*>("datumMethod");method->setCurrentIndex(method->findData(int(DatumMethod::PointAxisPlane)));buttons=panel->findChild<QDialogButtonBox*>("referenceGeometryButtons");QVERIFY(!buttons->button(QDialogButtonBox::Ok)->isEnabled());QTest::keyClick(viewport,Qt::Key_Escape);QCOMPARE(window.document().features().size(),std::size_t(1));QVERIFY(window.errors.isEmpty());QVERIFY(window.close());
     }
+    void smartDimensionHandsOffToEverySolidCommand() {
+        QTemporaryDir folder;const auto path=folder.filePath("support.thepart");document::PartDocument::createBox({40,30,20}).save(path);
+        WorkflowWindow window;window.show();QVERIFY(QTest::qWaitForWindowExposed(&window));QVERIFY(window.openPartFile(path));auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
+        modeling::Sketch profile;profile.entities={{modeling::EntityKind::Circle,{10,10},{},3,"profile"}};viewport->sketchChanged(profile);
+        for(const auto* feature:{"actionExtrude","actionExtrudedCut","actionRevolve","actionRevolvedCut","actionSweep","actionSweptCut","actionFillet","actionChamfer","actionLinearPattern","actionCircularPattern","actionMirror"}) {
+            command(window,"actionSmartDimension");QVERIFY(viewport->smartDimensionActive());command(window,feature);QVERIFY(!viewport->smartDimensionActive());QVERIFY(!window.findChild<QAction*>("actionSmartDimension")->isChecked());
+            command(window,"actionCancelFeature");QVERIFY(viewport->m_sketchEditing);
+        }
+        QVERIFY2(window.errors.isEmpty(),qPrintable(window.errors.join('\n')));
+    }
     void featureDepthTypingContourFeedbackAndMaterialPreview() {
         WorkflowWindow window;window.show();QVERIFY(QTest::qWaitForWindowExposed(&window));
         auto* viewport=window.findChild<CadViewport*>();QTRY_VERIFY(viewport->isReady());createSketch(window);
@@ -813,6 +823,7 @@ private slots:
         command(window,"actionSmartDimension");
         auto* smartDimension = window.findChild<QAction*>("actionSmartDimension");
         QVERIFY(smartDimension->isChecked());
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{-25,-15}));QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,point(viewport,{-25,-30}));QVERIFY(window.findChild<QDialog*>("smartDimensionEditor"));
         command(window,"actionExtrude");auto* panel=window.findChild<QWidget*>("operationPanel");QVERIFY(panel);
         QVERIFY(!smartDimension->isChecked());
         QVERIFY(!viewport->smartDimensionActive());

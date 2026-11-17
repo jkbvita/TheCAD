@@ -3,6 +3,10 @@
 #include "presentation/SolidPresentation.h"
 #include "modeling/Selection.h"
 #include "modeling/PatternFeatures.h"
+#include "ui/widgets/PropertyManagerControls.h"
+#include "document/ReferenceGeometryData.h"
+#include <QDataStream>
+#include <QJsonDocument>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
@@ -35,16 +39,26 @@ QString title(document::FeatureKind kind)
     using K = document::FeatureKind;
     switch (kind)
     {
-    case K::Revolve: return "Revolved Boss/Base";
-    case K::RevolvedCut: return "Revolved Cut";
-    case K::Fillet: return "Fillet";
-    case K::Chamfer: return "Chamfer";
-    case K::LinearPattern: return "Linear Pattern";
-    case K::CircularPattern: return "Circular Pattern";
-    case K::Mirror: return "Mirror";
-    case K::Sweep: return "Swept Boss/Base";
-    case K::SweptCut: return "Swept Cut";
-    default: return "Solid Feature";
+    case K::Revolve:
+        return "Revolved Boss/Base";
+    case K::RevolvedCut:
+        return "Revolved Cut";
+    case K::Fillet:
+        return "Fillet";
+    case K::Chamfer:
+        return "Chamfer";
+    case K::LinearPattern:
+        return "Linear Pattern";
+    case K::CircularPattern:
+        return "Circular Pattern";
+    case K::Mirror:
+        return "Mirror";
+    case K::Sweep:
+        return "Swept Boss/Base";
+    case K::SweptCut:
+        return "Swept Cut";
+    default:
+        return "Solid Feature";
     }
 }
 QString description(document::FeatureKind kind)
@@ -54,7 +68,8 @@ QString description(document::FeatureKind kind)
         return "Select features or all bodies, then choose a straight direction. "
                "The instance count includes the original.";
     if (kind == K::CircularPattern)
-        return "Select features or all bodies, then pick an axis, circular edge, or cylindrical face. "
+        return "Select features or all bodies, then pick an axis, circular edge, or cylindrical "
+               "face. "
                "The instance count includes the original.";
     if (kind == K::Mirror)
         return "Select features or all bodies and a mirror plane or planar face.";
@@ -85,6 +100,7 @@ SolidFeaturePanel::SolidFeaturePanel(document::PartDocument source, document::Fe
     if (document::isPatternFeature(m_feature.kind))
     {
         buildPatternForm(form);
+        initializeEdgePreview();
         m_initializing = false;
         refreshPreview();
         return;
@@ -158,11 +174,14 @@ SolidFeaturePanel::SolidFeaturePanel(document::PartDocument source, document::Fe
         m_page->settings->addWidget(m_edges);
         rebuildOptions();
         initializeEdgePreview();
-        connect(m_edges, &QListWidget::itemSelectionChanged, this, [this] {
-            const bool hadPreview = m_candidate.has_value();
-            queueEdgePreview();
-            if (!hadPreview) emit previewChanged();
-        });
+        connect(m_edges, &QListWidget::itemSelectionChanged, this,
+                [this]
+                {
+                    const bool hadPreview = m_candidate.has_value();
+                    queueEdgePreview();
+                    if (!hadPreview)
+                        emit previewChanged();
+                });
     }
     connect(m_parameter, &QDoubleSpinBox::valueChanged, this, [this] { refreshPreview(); });
     connect(m_parameter->findChild<QLineEdit*>(), &QLineEdit::textChanged, this,
@@ -191,23 +210,33 @@ void SolidFeaturePanel::buildPatternForm(QFormLayout* form)
 {
     const bool mirror = pickingMirrorPlane();
     const bool circular = m_feature.kind == document::FeatureKind::CircularPattern;
-    m_patternReference = new QComboBox;
+    auto* reference = new PropertyReference;
+    m_patternReference = reference;
+    reference->pick = [this, reference]
+    {
+        m_referencePicking = true;
+        reference->setPicking(true);
+        emit pickingChanged();
+    };
     m_patternReference->setObjectName("patternReference");
-    m_patternReference->setPlaceholderText(mirror ? "Select a plane or face"
-                                                 : circular ? "Select an axis" : "Select a direction");
+    m_patternReference->setPlaceholderText(mirror     ? "Select a plane or face"
+                                           : circular ? "Select an axis"
+                                                      : "Select a direction");
     m_patternReference->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
     m_patternReference->setMinimumContentsLength(18);
+    m_patternReference->addItem("");
     int selectedReference = -1;
     for (const auto& option : m_support.referenceOptions(circular))
     {
         using S = modeling::ReferenceSource;
         const auto source = option.reference.source;
-        const bool supported = source == S::Datum ||
+        const bool supported =
+            source == S::Datum ||
             (mirror ? source == S::BasePlane || source == S::BodyFace
                     : source == S::BaseAxis || source == S::BodyEdge || source == S::SketchLine ||
                           (circular && (source == S::BodyFace || source == S::BodyCircleAxis)));
-        if (!supported || option.geometry.kind != (mirror ? modeling::DatumKind::Plane
-                                                           : modeling::DatumKind::Axis))
+        if (!supported || option.geometry.kind !=
+                              (mirror ? modeling::DatumKind::Plane : modeling::DatumKind::Axis))
             continue;
         if ((source == S::BodyEdge || source == S::BodyFace || source == S::BodyCircleAxis) &&
             option.reference.topologyName.empty())
@@ -215,10 +244,15 @@ void SolidFeaturePanel::buildPatternForm(QFormLayout* form)
         if (m_feature.pattern.reference && same(*m_feature.pattern.reference, option.reference))
             selectedReference = int(m_options.size());
         m_options.push_back(option);
-        m_patternReference->addItem(QString::fromStdString(option.label));
+        m_patternReference->addItem(QString::fromStdString(option.label),
+                                    int(m_options.size()) - 1);
     }
-    m_patternReference->setCurrentIndex(selectedReference);
-    form->addRow(mirror ? "Mirror Face/Plane" : circular ? "Pattern axis" : "Direction 1",
+    m_patternReference->setCurrentIndex(selectedReference + 1);
+    m_referencePicking = selectedReference < 0;
+    reference->setPicking(m_referencePicking);
+    form->addRow(mirror     ? "Mirror Face/Plane"
+                 : circular ? "Pattern axis"
+                            : "Direction 1",
                  m_patternReference);
     if (!mirror)
     {
@@ -235,12 +269,15 @@ void SolidFeaturePanel::buildPatternForm(QFormLayout* form)
             m_equalSpacing->setObjectName("patternEqualSpacing");
             m_equalSpacing->setChecked(m_feature.pattern.equalSpacing);
             form->addRow(m_equalSpacing);
-            auto* angleLabel = new QLabel(m_equalSpacing->isChecked() ? "Total angle" : "Angle between instances");
+            auto* angleLabel =
+                new QLabel(m_equalSpacing->isChecked() ? "Total angle" : "Angle between instances");
             form->addRow(angleLabel, m_parameter);
-            connect(m_equalSpacing, &QCheckBox::toggled, this, [this, angleLabel](bool equal) {
-                angleLabel->setText(equal ? "Total angle" : "Angle between instances");
-                refreshPreview();
-            });
+            connect(m_equalSpacing, &QCheckBox::toggled, this,
+                    [this, angleLabel](bool equal)
+                    {
+                        angleLabel->setText(equal ? "Total angle" : "Angle between instances");
+                        refreshPreview();
+                    });
         }
         else
             form->addRow("Spacing", m_parameter);
@@ -280,18 +317,26 @@ void SolidFeaturePanel::buildPatternForm(QFormLayout* form)
         auto* item = new QListWidgetItem(QString::fromStdString(seed.name), m_patternSeeds);
         item->setData(Qt::UserRole, QString::fromStdString(seed.id));
         item->setSelected(std::find(m_feature.pattern.seeds.begin(), m_feature.pattern.seeds.end(),
-                                   seed.id) != m_feature.pattern.seeds.end());
+                                    seed.id) != m_feature.pattern.seeds.end());
     }
     m_page->settings->addWidget(m_patternSeeds);
     m_page->settings->addStretch();
-    const auto updateScope = [this, seedLabel] {
+    const auto updateScope = [this, seedLabel]
+    {
         const bool show = m_patternScope->currentIndex() == 0;
         seedLabel->setVisible(show);
         m_patternSeeds->setVisible(show);
         refreshPreview();
     };
     connect(m_patternScope, &QComboBox::currentIndexChanged, this, updateScope);
-    connect(m_patternReference, &QComboBox::currentIndexChanged, this, [this] { refreshPreview(); });
+    connect(m_patternReference, &QComboBox::currentIndexChanged, this,
+            [this]
+            {
+                m_referencePicking = !m_patternReference->currentData().isValid();
+                static_cast<PropertyReference*>(m_patternReference)->setPicking(m_referencePicking);
+                refreshPreview();
+                emit pickingChanged();
+            });
     connect(m_patternSeeds, &QListWidget::itemSelectionChanged, this, [this] { refreshPreview(); });
     updateScope();
 }
@@ -300,11 +345,11 @@ document::Feature SolidFeaturePanel::readPattern() const
 {
     auto feature = m_feature;
     auto& pattern = feature.pattern;
-    if (m_patternReference->currentIndex() < 0)
+    if (!m_patternReference->currentData().isValid())
         throw std::runtime_error(pickingMirrorPlane() ? "Select a mirror plane or planar face."
-                                 : m_equalSpacing ? "Select a pattern axis."
-                                                  : "Select a straight pattern direction.");
-    pattern.reference = m_options[std::size_t(m_patternReference->currentIndex())].reference;
+                                 : m_equalSpacing     ? "Select a pattern axis."
+                                                      : "Select a straight pattern direction.");
+    pattern.reference = m_options[std::size_t(m_patternReference->currentData().toInt())].reference;
     pattern.wholePart = m_patternScope->currentIndex() == 1;
     pattern.seeds.clear();
     if (!pattern.wholePart)
@@ -370,25 +415,31 @@ void SolidFeaturePanel::rebuildOptions()
     else
     {
         m_options = m_support.edgeOptions(true);
-        const auto wasSelected = [&](const auto& option) {
-            return std::any_of(m_feature.edges.begin(), m_feature.edges.end(), [&](const auto& saved) {
-                return saved.featureId == option.reference.featureId && saved.index == option.reference.index;
-            });
+        const auto wasSelected = [&](const auto& option)
+        {
+            return std::any_of(m_feature.edges.begin(), m_feature.edges.end(),
+                               [&](const auto& saved)
+                               {
+                                   return saved.featureId == option.reference.featureId &&
+                                          saved.index == option.reference.index;
+                               });
         };
         // Regeneration already rebound the saved indices against this support.
         // Keep those picks when editing, including old topology aliases.
-        if (m_editing) {
+        if (m_editing)
+        {
             for (const auto& option : m_support.edgeOptions())
-                if (wasSelected(option) && std::none_of(m_options.begin(), m_options.end(), [&](const auto& candidate) {
-                        return candidate.reference.index == option.reference.index;
-                    })) m_options.push_back(option);
-            std::sort(m_options.begin(), m_options.end(), [](const auto& a, const auto& b) {
-                return a.reference.index < b.reference.index;
-            });
+                if (wasSelected(option) &&
+                    std::none_of(m_options.begin(), m_options.end(), [&](const auto& candidate)
+                                 { return candidate.reference.index == option.reference.index; }))
+                    m_options.push_back(option);
+            std::sort(m_options.begin(), m_options.end(), [](const auto& a, const auto& b)
+                      { return a.reference.index < b.reference.index; });
         }
         const QSignalBlocker blocker(m_edges);
         m_edges->clear();
-        for (const auto& option : m_options) {
+        for (const auto& option : m_options)
+        {
             auto* item = new QListWidgetItem(QString::fromStdString(option.label), m_edges);
             item->setSelected(wasSelected(option));
         }
@@ -452,7 +503,7 @@ std::vector<TopoDS_Face> SolidFeaturePanel::selectedFaces() const
 std::vector<TopoDS_Shape> SolidFeaturePanel::selectedReferences() const
 {
     std::vector<TopoDS_Shape> result;
-    if (m_patternReference && m_patternReference->currentIndex() >= 0)
+    if (m_patternReference && m_patternReference->currentData().isValid())
         result.push_back(m_options[std::size_t(m_patternReference->currentIndex())].selectionShape);
     if (m_pathSketch && m_pathSketch->currentIndex() >= 0)
     {
@@ -475,62 +526,113 @@ void SolidFeaturePanel::initializeEdgePreview()
     m_edgeTimer->setInterval(120);
     m_edgeWorker = new QFutureWatcher<EdgePreview>(this);
     connect(m_edgeTimer, &QTimer::timeout, this, &SolidFeaturePanel::startEdgePreview);
-    connect(m_edgeWorker, &QFutureWatcher<EdgePreview>::finished, this, &SolidFeaturePanel::finishEdgePreview);
+    connect(m_edgeWorker, &QFutureWatcher<EdgePreview>::finished, this,
+            &SolidFeaturePanel::finishEdgePreview);
 }
 
 void SolidFeaturePanel::queueEdgePreview()
 {
-    if (m_initializing || m_edgePreviewClosed) return;
+    if (m_initializing || m_edgePreviewClosed)
+        return;
+    auto feature = m_feature;
+    QByteArray key;
+    try
+    {
+        if (m_patternReference)
+            feature = readPattern();
+        else
+        {
+            if (m_edges->selectedItems().isEmpty())
+                throw std::runtime_error("Select one or more sharp edges.");
+            if (!m_parameter->hasAcceptableInput())
+                throw std::runtime_error("Enter a valid positive parameter.");
+            feature.size = m_parameter->locale().toDouble(m_parameter->cleanText());
+            feature.edges.clear();
+            for (auto* item : m_edges->selectedItems())
+                feature.edges.push_back(m_options[std::size_t(m_edges->row(item))].reference);
+        }
+        QDataStream stream(&key, QIODevice::WriteOnly);
+        stream << int(feature.kind) << feature.size;
+        if (m_patternReference)
+        {
+            const auto& p = feature.pattern;
+            stream << p.spacing << p.angle << p.instances << p.reverse << p.equalSpacing
+                   << p.wholePart
+                   << QJsonDocument(document::writeGeometryReference(*p.reference))
+                          .toJson(QJsonDocument::Compact);
+            for (const auto& id : p.seeds)
+                stream << QString::fromStdString(id);
+        }
+        else
+            for (const auto& ref : feature.edges)
+                stream << QJsonDocument(document::writeGeometryReference(ref))
+                              .toJson(QJsonDocument::Compact);
+        if (key == m_previewKey)
+            return;
+    }
+    catch (const std::exception& e)
+    {
+        ++m_edgeRevision;
+        m_edgeTimer->stop();
+        m_edgePending = false;
+        m_previewKey.clear();
+        m_queuedFeature.reset();
+        const bool had = m_candidate.has_value();
+        m_candidate.reset();
+        m_page->buttons->button(QDialogButtonBox::Ok)->setEnabled(false);
+        m_page->setStatus(e.what());
+        if (had)
+            emit previewChanged();
+        return;
+    }
+    m_previewKey = key;
+    m_queuedFeature = std::move(feature);
     ++m_edgeRevision;
     m_confirmEdgeWhenReady = false;
-    m_edgePending = false;
-    m_edgeTimer->stop();
-    const bool hadPreview = m_candidate.has_value();
+    m_edgePending = true;
+    const bool had = m_candidate.has_value();
     m_candidate.reset();
     m_page->buttons->button(QDialogButtonBox::Ok)->setEnabled(false);
-    if (hadPreview) emit previewChanged();
-    if (m_edges->selectedItems().isEmpty()) {
-        m_page->setStatus(m_options.empty() ? "This body has no available sharp edges." :
-                                             "Select one or more sharp edges.");
-        return;
-    }
-    if (!m_parameter->hasAcceptableInput()) {
-        m_page->setStatus("Enter a valid positive parameter.", true);
-        return;
-    }
+    if (had)
+        emit previewChanged();
     m_page->setStatus("Updating preview…");
-    m_edgePending = true;
     m_edgeTimer->start();
 }
 
 void SolidFeaturePanel::startEdgePreview()
 {
-    if (!m_edgePending || m_edgeInFlight) return;
+    if (!m_edgePending || m_edgeInFlight)
+        return;
     m_edgeInFlight = true;
     m_edgePending = false;
     m_activeEdgeRevision = m_edgeRevision;
-    auto feature = m_feature;
-    feature.size = m_parameter->locale().toDouble(m_parameter->cleanText());
-    feature.edges.clear();
-    for (auto* item : m_edges->selectedItems())
-        feature.edges.push_back(m_options[std::size_t(m_edges->row(item))].reference);
+    auto feature = *m_queuedFeature;
 
     QPromise<EdgePreview> promise;
     promise.start();
     m_edgeWorker->setFuture(promise.future());
     QThreadPool::globalInstance()->start(
         [source = m_source, feature = std::move(feature), editing = m_editing,
-         promise = std::move(promise)]() mutable {
+         promise = std::move(promise)]() mutable
+        {
             EdgePreview outcome;
-            try {
-                auto preview = application::FeatureOperation::preview(source, feature, {}, editing,
-                    application::PreviewHighlight::EdgeTreatmentFaces);
+            try
+            {
+                auto preview = application::FeatureOperation::preview(
+                    source, feature, {}, editing,
+                    document::isEdgeFeature(feature.kind)
+                        ? application::PreviewHighlight::EdgeTreatmentFaces
+                        : application::PreviewHighlight::MaterialVolumes);
                 // Highlight faces already share the result's triangulation.
                 presentation::prepareSolidTriangulation(preview.previewShape);
                 outcome.candidate = std::move(preview);
-            } catch (const std::exception& error) {
+            }
+            catch (const std::exception& error)
+            {
                 outcome.error = QString::fromUtf8(error.what());
-            } catch (const Standard_Failure& error) {
+            }
+            catch (const Standard_Failure& error)
+            {
                 outcome.error = QString::fromUtf8(error.GetMessageString());
             }
             promise.addResult(std::move(outcome));
@@ -542,25 +644,31 @@ void SolidFeaturePanel::finishEdgePreview()
 {
     auto result = m_edgeWorker->future().takeResult();
     m_edgeInFlight = false;
-    if (m_activeEdgeRevision == m_edgeRevision) {
+    if (m_activeEdgeRevision == m_edgeRevision)
+    {
         m_candidate = std::move(result.candidate);
-        if (m_candidate) m_page->setStatus("Preview ready. Enter confirms; Esc cancels.");
-        else m_page->setStatus(result.error, true);
+        if (m_candidate)
+            m_page->setStatus("Preview ready. Enter confirms; Esc cancels.");
+        else
+            m_page->setStatus(result.error, true);
         auto* confirm = m_page->buttons->button(QDialogButtonBox::Ok);
         confirm->setEnabled(m_candidate.has_value());
         emit previewChanged();
-        if (m_candidate && m_confirmEdgeWhenReady) {
+        if (m_candidate && m_confirmEdgeWhenReady)
+        {
             m_confirmEdgeWhenReady = false;
             confirm->click();
             return;
         }
     }
-    if (m_edgePending && !m_edgeTimer->isActive()) startEdgePreview();
+    if (m_edgePending && !m_edgeTimer->isActive())
+        startEdgePreview();
 }
 
 void SolidFeaturePanel::stopEdgePreview()
 {
-    if (!m_edgeTimer) return;
+    if (!m_edgeTimer)
+        return;
     m_edgePreviewClosed = true;
     m_edgeTimer->stop();
     m_edgePending = false;
@@ -570,9 +678,15 @@ void SolidFeaturePanel::stopEdgePreview()
 
 bool SolidFeaturePanel::readyToConfirm()
 {
-    if (!m_edges) refreshPreview();
-    else if (!m_candidate && (m_edgePending || m_edgeInFlight))
-        m_confirmEdgeWhenReady = true;
+    if (!m_edges && !m_patternReference)
+        refreshPreview();
+    else
+    {
+        if (m_patternReference)
+            queueEdgePreview();
+        if (!m_candidate && (m_edgePending || m_edgeInFlight))
+            m_confirmEdgeWhenReady = true;
+    }
     return m_candidate.has_value();
 }
 
@@ -580,7 +694,8 @@ void SolidFeaturePanel::refreshPreview()
 {
     if (m_initializing)
         return;
-    if (m_edges) {
+    if (m_edges || m_patternReference)
+    {
         queueEdgePreview();
         return;
     }
@@ -644,7 +759,14 @@ void SolidFeaturePanel::pickReference(int index)
     if (index < 0 || index >= int(m_options.size()))
         return;
     if (m_patternReference)
-        m_patternReference->setCurrentIndex(index);
+    {
+        if (!m_referencePicking)
+            return;
+        m_patternReference->setCurrentIndex(index + 1);
+        m_referencePicking = false;
+        static_cast<PropertyReference*>(m_patternReference)->setPicking(false);
+        emit pickingChanged();
+    }
     else if (m_pathSketch)
         m_pathSketch->setCurrentIndex(m_pathSketch->findData(
             QString::fromStdString(m_options[std::size_t(index)].reference.featureId)));
@@ -681,8 +803,9 @@ void SolidFeaturePanel::pickRegion(modeling::Point2 point)
     {
         auto* item = m_regions->item(hit);
         if (m_pathSketch)
-            m_regions->setCurrentItem(item, item->isSelected() ? QItemSelectionModel::Deselect
-                                                             : QItemSelectionModel::ClearAndSelect);
+            m_regions->setCurrentItem(item, item->isSelected()
+                                                ? QItemSelectionModel::Deselect
+                                                : QItemSelectionModel::ClearAndSelect);
         else
             item->setSelected(!item->isSelected());
         focusParameter();
@@ -696,7 +819,9 @@ void SolidFeaturePanel::pickTree(const QString& id)
         for (int i = 0; i < int(m_options.size()); ++i)
         {
             const auto& ref = m_options[std::size_t(i)].reference;
-            const auto origin = ref.index == 0 ? "origin:XY" : ref.index == 1 ? "origin:XZ" : "origin:YZ";
+            const auto origin = ref.index == 0   ? "origin:XY"
+                                : ref.index == 1 ? "origin:XZ"
+                                                 : "origin:YZ";
             if ((ref.source == S::Datum && id.toStdString() == ref.featureId) ||
                 (ref.source == S::BasePlane && id == origin))
             {
@@ -759,16 +884,18 @@ void SolidFeaturePanel::preselect(const std::vector<modeling::SelectionRef>& sel
             {
                 using K = modeling::SelectionKind;
                 using S = modeling::ReferenceSource;
-                const bool plane = (selected.kind == K::OriginPlane && ref.source == S::BasePlane &&
-                                    selected.index == ref.index) ||
-                                   (selected.kind == K::ReferencePlane && ref.source == S::Datum &&
-                                    selected.featureId == ref.featureId) ||
-                                   (selected.kind == K::Face && ref.source == S::BodyFace &&
-                                    selected.featureId == ref.featureId && selected.index == ref.index);
+                const bool plane =
+                    (selected.kind == K::OriginPlane && ref.source == S::BasePlane &&
+                     selected.index == ref.index) ||
+                    (selected.kind == K::ReferencePlane && ref.source == S::Datum &&
+                     selected.featureId == ref.featureId) ||
+                    (selected.kind == K::Face && ref.source == S::BodyFace &&
+                     selected.featureId == ref.featureId && selected.index == ref.index);
                 const bool circle = selected.kind == K::Edge && ref.source == S::BodyCircleAxis &&
-                                    selected.featureId == ref.featureId && selected.index == ref.index;
+                                    selected.featureId == ref.featureId &&
+                                    selected.index == ref.index;
                 if (edge || datum || plane || circle)
-                    m_patternReference->setCurrentIndex(i);
+                    pickReference(i);
             }
             else if (edge || datum)
             {

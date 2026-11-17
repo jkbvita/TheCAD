@@ -32,6 +32,9 @@ public:
     const std::vector<document::ReferenceOption>& options() const { return m_options; }
     bool pickingContours() const { return m_contourMode; }
     bool pickingMirrorPlane() const { return m_feature.kind == document::FeatureKind::Mirror; }
+    bool pickingPatternReference() const { return m_patternReference && m_referencePicking; }
+    bool referencePickingEnabled() const { return !m_patternReference || m_referencePicking; }
+    bool edgeTreatment() const { return m_edges != nullptr; }
     const modeling::Sketch* sketch() const;
     std::vector<TopoDS_Face> selectedFaces() const;
     std::vector<TopoDS_Shape> selectedReferences() const;
@@ -60,7 +63,8 @@ private:
     void queueEdgePreview();
     void startEdgePreview();
     void finishEdgePreview();
-    struct EdgePreview {
+    struct EdgePreview
+    {
         std::optional<application::FeatureOperationResult> candidate;
         QString error;
     };
@@ -72,6 +76,9 @@ private:
     bool m_edgeInFlight = false;
     bool m_edgePreviewClosed = false;
     bool m_confirmEdgeWhenReady = false;
+    std::optional<document::Feature> m_queuedFeature;
+    QByteArray m_previewKey;
+    bool m_referencePicking = true;
     document::PartDocument m_source, m_support;
     document::Feature m_feature;
     bool m_editing = false, m_contourMode = false, m_initializing = true;

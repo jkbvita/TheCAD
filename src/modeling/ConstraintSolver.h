@@ -13,10 +13,12 @@ struct SolverDiagnostics {
     double maximumResidual = 0;
 };
 struct PointTarget { SketchPointRef point; Point2 position; bool hard = false; };
+struct LineTarget { std::string entityId; double parameter=0.5; Point2 position; };
 struct SolveOptions {
     int maximumIterations = 100;
     double tolerance = 1e-8;
     std::vector<PointTarget> pointTargets;
+    std::vector<LineTarget> lineTargets;
     std::vector<std::pair<std::string,double>> radiusTargets;
 };
 struct SketchSolveResult {

@@ -63,6 +63,16 @@ class MainWindowTest final : public QObject {
     Q_OBJECT
 
 private slots:
+    void closeAutomaticallyHandlesFeaturePreview()
+    {
+        QTemporaryDir folder;const auto path=folder.filePath("source.thepart");document::PartDocument::createBox({20,30,40}).save(path);
+        for(const auto* command:{"actionFillet","actionReferencePlane"}){
+            TestWindow window;QVERIFY(window.openPartFile(path));window.show();QVERIFY(QTest::qWaitForWindowExposed(&window));window.trigger(command);
+            auto* panel=window.findChild<QWidget*>("operationPanel");if(!panel)panel=window.findChild<QWidget*>("referenceGeometryPanel");QVERIFY(panel);
+            window.choice=TestWindow::Choice::Cancel;QVERIFY(!window.close());QVERIFY(window.isVisible());QVERIFY(window.findChild<QWidget*>(panel->objectName())==panel);QCOMPARE(window.promptCount,1);QVERIFY(window.errors.isEmpty());
+            window.choice=TestWindow::Choice::Save;QVERIFY(window.close());QCOMPARE(window.promptCount,2);QVERIFY(window.errors.isEmpty());QCOMPARE(document::PartDocument::load(path).features().size(),std::size_t(1));
+        }
+    }
     void nativeSaveDialogConfigurationAndExtensions(){
         QTemporaryDir directory;QFileDialog dialog;NativeFileDialogs::configureSave(dialog,directory.filePath("old.tcpart"),true);
         QVERIFY(!dialog.testOption(QFileDialog::DontUseNativeDialog));QVERIFY(!dialog.testOption(QFileDialog::DontConfirmOverwrite));QVERIFY(!qApp->testAttribute(Qt::AA_DontUseNativeDialogs));QCOMPARE(dialog.acceptMode(),QFileDialog::AcceptSave);QCOMPARE(dialog.fileMode(),QFileDialog::AnyFile);QCOMPARE(dialog.defaultSuffix(),QString("thepart"));

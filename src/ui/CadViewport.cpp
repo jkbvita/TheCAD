@@ -208,6 +208,7 @@ void CadViewport::releaseViewer()
     m_hoveredEntityPresentation.Nullify();
     m_previewPresentation.Nullify();
     m_materialPreviewPresentations.clear();
+    m_ghostPreviewPresentations.clear();
     m_selectedContourPresentations.clear();
     m_sketchPresentation.Nullify();m_constructionPresentation.Nullify();
     m_sketchBatches.clear();m_selectedSolidFace=0;
@@ -573,7 +574,7 @@ void CadViewport::endContourSelection()
     updateSketchPresentation();
 }
 
-void CadViewport::previewShape(const TopoDS_Shape& shape,const modeling::MaterialChanges& changes)
+void CadViewport::previewShape(const TopoDS_Shape& shape,const modeling::MaterialChanges& changes,bool ghostTreatment)
 {
     if (!isReady() || shape.IsNull()) { return; }
     clearPreview();
@@ -597,6 +598,11 @@ void CadViewport::previewShape(const TopoDS_Shape& shape,const modeling::Materia
         presentation->SetZLayer(Graphic3d_ZLayerId_Top);
         m_graphics.context()->Display(presentation, AIS_Shaded, -1, false);
         m_materialPreviewPresentations.push_back(presentation);
+        if(ghostTreatment){
+            Handle(AIS_Shape) ghost=new AIS_Shape(material);ghost->Attributes()->SetAutoTriangulation(false);
+            ghost->SetColor(color);ghost->SetTransparency(0.60);ghost->SetZLayer(Graphic3d_ZLayerId_Topmost);
+            m_graphics.context()->Display(ghost,AIS_Shaded,-1,false);m_ghostPreviewPresentations.push_back(ghost);
+        }
     };
     displayChange(changes.added,Quantity_Color(1.0,0.74,0.20,Quantity_TOC_RGB));
     displayChange(changes.removed,removedMaterialYellow());
@@ -642,6 +648,8 @@ void CadViewport::setExtrusionDepthGrips(const std::vector<gp_Ax1>& grips)
 void CadViewport::clearPreview()
 {
     if (!isReady()) { return; }
+    for(auto& item:m_ghostPreviewPresentations)m_graphics.context()->Remove(item,Standard_False);
+    m_ghostPreviewPresentations.clear();
     for(auto& presentation:m_materialPreviewPresentations)m_graphics.context()->Remove(presentation,Standard_False);
     m_materialPreviewPresentations.clear();
     if (!m_previewPresentation.IsNull()) {
@@ -1147,7 +1155,7 @@ void CadViewport::updatePointDrag(const QPointF& position)
     m_hoveredPoint=drag.target; drag.error.clear();
     try {
         auto warm=drag.original;if(drag.candidate)warm.entities=drag.candidate->entities;
-        drag.candidate=modeling::moveSketchPoint(warm,drag.reference,destination,drag.target,drag.circleBody);
+        drag.candidate=drag.lineBody.empty()?modeling::moveSketchPoint(warm,drag.reference,destination,drag.target,drag.circleBody):modeling::moveSketchLine(warm,drag.lineBody,drag.lineParameter,destination);
         m_sketch=*drag.candidate;
     } catch(const std::exception& error) {
         drag.error=QString::fromUtf8(error.what()); drag.candidate.reset(); m_sketch=drag.original;
@@ -1405,13 +1413,16 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
             if (hit) { emit sketchPointSelected(QString::fromStdString(hit->reference.entityId), int(hit->reference.role)); }
             emit sketchSelectionChanged();
             std::optional<modeling::SketchPointRef> dragRef=hit?std::optional<modeling::SketchPointRef>(hit->reference):std::nullopt;
-            if(!hit && body && raw){const auto e=std::find_if(m_sketch->entities.begin(),m_sketch->entities.end(),[&](const auto& e){return e.id==*body;});if(e!=m_sketch->entities.end() && e->kind==modeling::EntityKind::Circle)dragRef=modeling::SketchPointRef{e->id,modeling::PointRole::Center};}
+            if(!hit && body && raw){const auto e=std::find_if(m_sketch->entities.begin(),m_sketch->entities.end(),[&](const auto& e){return e.id==*body;});if(e!=m_sketch->entities.end() && (e->kind==modeling::EntityKind::Circle||e->kind==modeling::EntityKind::Line))dragRef=modeling::SketchPointRef{e->id,e->kind==modeling::EntityKind::Circle?modeling::PointRole::Center:modeling::PointRole::First};}
             if(dragRef && !toggle && !m_sketchModifierPicking && dragRef->role!=modeling::PointRole::Origin &&
                !modeling::sketchProjection(*m_sketch, dragRef->entityId)) {
                 const auto entity=std::find_if(m_sketch->entities.begin(),m_sketch->entities.end(),[&](const auto& e){return e.id==dragRef->entityId;});
                 if(entity!=m_sketch->entities.end() && (entity->kind==modeling::EntityKind::Line || modeling::isCircular(entity->kind) || entity->kind==modeling::EntityKind::Point || entity->kind==modeling::EntityKind::Spline)) {
                     m_pointDrag=PointDrag{*m_sketch,*dragRef,event->position(),false,*m_sketch,{},{}};
-                    if(!hit && raw){m_pointDrag->circleBody=true;m_pointDrag->grabOffset={entity->first.x-raw->x,entity->first.y-raw->y};}
+                    if(!hit && raw){
+                        if(entity->kind==modeling::EntityKind::Line){auto& drag=*m_pointDrag;drag.lineBody=entity->id;const double dx=entity->second.x-entity->first.x,dy=entity->second.y-entity->first.y;drag.lineParameter=std::clamp(((raw->x-entity->first.x)*dx+(raw->y-entity->first.y)*dy)/(dx*dx+dy*dy),0.0,1.0);drag.grabOffset={entity->first.x+drag.lineParameter*dx-raw->x,entity->first.y+drag.lineParameter*dy-raw->y};}
+                        else {m_pointDrag->circleBody=true;m_pointDrag->grabOffset={entity->first.x-raw->x,entity->first.y-raw->y};}
+                    }
                     std::set<std::pair<std::string,int>> excluded;
                     for(const auto& ref:modeling::coincidentSketchPoints(*m_sketch,*dragRef)) excluded.insert({ref.entityId,int(ref.role)});
                     for(const auto& entry:modeling::sketchPoints(*m_sketch))

@@ -1041,15 +1041,14 @@ void MainWindow::updateActions()
             if (profile) break;
         }
     }
-    const bool startProfileFeature = profile && !m_constraints &&
-        !(m_smartDimension && m_smartDimension->editor);
+    const bool startProfileFeature = profile && !m_constraints;
     m_extrude->setEnabled(startProfileFeature);
     m_cut->setEnabled(startProfileFeature && !m_session.document().shape().IsNull());
     m_revolve->setEnabled(startProfileFeature);
     m_revolvedCut->setEnabled(m_revolve->isEnabled()&&!m_session.document().shape().IsNull());
     m_sweep->setEnabled(m_revolve->isEnabled());
     m_sweptCut->setEnabled(m_revolvedCut->isEnabled());
-    const bool edges=!operation&&!selecting&&!m_session.editingSketch()&&!m_session.document().shape().IsNull();
+    const bool edges=!operation&&!selecting&&!m_constraints&&!m_session.document().shape().IsNull();
     m_fillet->setEnabled(edges);m_chamfer->setEnabled(edges);
     m_linearPattern->setEnabled(edges);m_circularPattern->setEnabled(edges);m_mirror->setEnabled(edges);
 }
@@ -1283,8 +1282,8 @@ void MainWindow::extrude(bool cut)
 
 void MainWindow::startOperation(document::Feature feature, bool editing)
 {
-    if(featureDraftActive() || m_selectingPlane || m_constraints ||
-       (m_smartDimension && m_smartDimension->editor)) return;
+    if(featureDraftActive() || m_selectingPlane || m_constraints) return;
+    closeSmartDimension();
     m_selectedFace=0;m_viewport->setSelectedSolidFace(0);
     auto sourceDocument=m_session.document();
     if(m_session.editingSketch()) {
@@ -1747,14 +1746,29 @@ bool MainWindow::operationKeyEvent(QObject* watched,QEvent* event){
 }
 void MainWindow::closeEvent(QCloseEvent* event)
 {
-    if (featureDraftActive()) {
-        reportError("Confirm or cancel the feature preview before closing this part.");
-        event->ignore();
-        return;
+    const bool draft=featureDraftActive()||m_session.editingSketch().has_value()||bool(m_smartDimension);
+    const auto choice=(isWindowModified()||draft)?confirmUnsaved():UnsavedChoice::Discard;
+    if(choice==UnsavedChoice::Cancel){event->ignore();return;}
+    if(choice==UnsavedChoice::Save){
+        try{
+            auto snapshot=m_session.document();
+            if(m_session.editingSketch()){
+                const auto found=std::find_if(snapshot.features().begin(),snapshot.features().end(),[&](const auto& f){return f.id==m_session.editingSketchId();});
+                if(found!=snapshot.features().end()){auto feature=*found;feature.sketch=*m_session.editingSketch();snapshot.replaceFeature(feature);}
+            }
+            QString path=m_session.path();if(path.isEmpty()||legacyPath(path))path=chooseSavePath(false);
+            if(path.isEmpty()){event->ignore();return;}
+            if(!path.endsWith(".thepart",Qt::CaseInsensitive))path+=".thepart";snapshot.save(path);
+        }catch(const std::exception& e){reportError(QString::fromUtf8(e.what()));event->ignore();return;}
     }
-    if (m_selectingPlane) m_viewport->cancelPlaneSelection();
-    if (maybeSave()) { m_viewport->releaseGraphics(); event->accept(); }
-    else event->ignore();
+    // Unconfirmed feature previews never silently become modeling features.
+    if(m_sketchModifier)finishSketchModifier(false);
+    if(m_solidFeature)finishSolidFeature(false);
+    if(m_referenceDraft)finishReferenceGeometry(false);
+    if(m_operation)finishOperation(false);
+    closeConstraints();closeSmartDimension();
+    if(m_selectingPlane)m_viewport->cancelPlaneSelection();
+    setWindowModified(false);m_viewport->releaseGraphics();event->accept();
 }
 
 } // namespace thecad::ui

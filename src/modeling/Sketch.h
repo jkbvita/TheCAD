@@ -114,6 +114,7 @@ bool areSketchPointsCoincident(const Sketch& sketch, const SketchPointRef& first
 Sketch moveSketchPoint(const Sketch& sketch, const SketchPointRef& reference, Point2 position,
                       const std::optional<SketchPointRef>& target = {}, bool preserveCircleRadius = false);
 Sketch removeSketchEntity(const Sketch& sketch, const std::string& entityId);
+Sketch moveSketchLine(const Sketch& sketch,const std::string& entityId,double parameter,Point2 position);
 
 enum class Direction { Positive, Negative };
 // Region boundaries retain whole-entity IDs where possible, and versioned

@@ -1266,6 +1266,18 @@ Sketch moveSketchPoint(const Sketch& sketch, const SketchPointRef& reference, Po
     return candidate;
 }
 
+Sketch moveSketchLine(const Sketch& sketch,const std::string& entityId,double parameter,Point2 position)
+{
+    validate(sketch);
+    const auto& entity=referencedEntity(sketch,{entityId,PointRole::First});
+    if(entity.kind!=EntityKind::Line||sketchProjection(sketch,entityId))fail("Select an editable sketch line.");
+    auto candidate=sketch;
+    auto& seed=*std::find_if(candidate.entities.begin(),candidate.entities.end(),[&](const auto& e){return e.id==entityId;});
+    const Point2 delta{position.x-(seed.first.x+(seed.second.x-seed.first.x)*parameter),position.y-(seed.first.y+(seed.second.y-seed.first.y)*parameter)};
+    seed.first={seed.first.x+delta.x,seed.first.y+delta.y};seed.second={seed.second.x+delta.x,seed.second.y+delta.y};
+    SolveOptions options;options.lineTargets.push_back({entityId,parameter,position});
+    return requireSolvedSketch(solvePlanarSketch(candidate,options));
+}
 Sketch removeSketchEntity(const Sketch& sketch, const std::string& entityId)
 {
     auto candidate = sketch;

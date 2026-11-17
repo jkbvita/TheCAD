@@ -18,7 +18,23 @@ Sketch rectangle(SketchPlane plane){
     for(int i=0;i<4;++i){s.relations.push_back({"axis-"+std::to_string(i),i%2?RelationKind::Vertical:RelationKind::Horizontal,{s.entities[i].id,PointRole::First},{s.entities[i].id,PointRole::Second}});s.relations.push_back({"join-"+std::to_string(i),RelationKind::Coincident,{s.entities[i].id,PointRole::Second},{s.entities[(i+1)%4].id,PointRole::First}});}
     s.relations.push_back({"origin",RelationKind::Coincident,{"a",PointRole::First},{}});return s;
 }
-int main(){try{
+void midpointRectangleDragging(){
+    auto sketch=rectangle(SketchPlane::XY);
+    sketch.entities.push_back({EntityKind::Line,{-20,30},{-20,0},1,"center",true});
+    sketch.relations.push_back({"top-mid",RelationKind::Midpoint,{"center",PointRole::First},{"c",PointRole::First}});
+    sketch.relations.push_back({"bottom-mid",RelationKind::Midpoint,{"center",PointRole::Second},{"a",PointRole::First}});
+    sketch.relations.push_back({"center-vertical",RelationKind::Vertical,{"center",PointRole::First},{"center",PointRole::Second}});
+    validateSketchRelations(sketch);
+    const auto moved=moveSketchPoint(sketch,{"b",PointRole::Second},{-55,45});
+    validateSketchRelations(moved);
+    near(moved.entities[1].second.x,-55);near(moved.entities[1].second.y,45);
+    near(moved.entities[0].first.x,0);near(moved.entities[0].first.y,0);
+    const auto edge=moveSketchLine(sketch,"c",0.25,{-10,45});validateSketchRelations(edge);near(edge.entities[2].first.x*0.75+edge.entities[2].second.x*0.25,-10);near(edge.entities[2].first.y,45);near(edge.entities[0].first.x,0);
+    const auto defined=analyzeSketchDefinition(sketch);require(defined.valid&&defined.degreesOfFreedom==2,"Midpoint construction preserves the two rectangle size freedoms");
+}
+int main(){try{midpointRectangleDragging();
+    Sketch freeLine;freeLine.entities={{EntityKind::Line,{-10,0},{10,0},1,"line"}};
+    const auto translated=moveSketchLine(freeLine,"line",0.2,{4,8});near(translated.entities[0].first.x,0);near(translated.entities[0].first.y,8);near(translated.entities[0].second.x,20);near(translated.entities[0].second.y,8);
     for(const auto plane:{SketchPlane::XY,SketchPlane::XZ,SketchPlane::YZ}){
         const auto s=rectangle(plane);
         for(const auto& requested:std::vector<std::pair<SketchPointRef,Point2>>{{{"a",PointRole::Second},{-55,9}},{{"b",PointRole::Second},{-55,45}},{{"c",PointRole::Second},{9,45}}}){

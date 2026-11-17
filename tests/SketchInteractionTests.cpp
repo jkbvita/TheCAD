@@ -50,6 +50,16 @@ private slots:
         QVERIFY(QTest::qWaitForWindowExposed(host.get())); QTRY_VERIFY(viewport->isReady());
     }
     void init() { viewport->beginSketch({}); QApplication::processEvents(); }
+    void midpointRectangleCornersAndLineBodiesDrag()
+    {
+        using namespace modeling;Sketch sketch;
+        sketch.entities={{EntityKind::Line,{0,0},{-40,0},1,"bottom"},{EntityKind::Line,{-40,0},{-40,30},1,"left"},{EntityKind::Line,{-40,30},{0,30},1,"top"},{EntityKind::Line,{0,30},{0,0},1,"right"},{EntityKind::Line,{-20,0},{-20,30},1,"center",true}};
+        for(int i=0;i<4;++i){const auto& edge=sketch.entities[i];sketch.relations.push_back({"axis"+std::to_string(i),i%2?RelationKind::Vertical:RelationKind::Horizontal,{edge.id,PointRole::First},{edge.id,PointRole::Second}});sketch.relations.push_back({"join"+std::to_string(i),RelationKind::Coincident,{edge.id,PointRole::Second},{sketch.entities[(i+1)%4].id,PointRole::First}});}
+        sketch.relations.push_back({"origin",RelationKind::Coincident,{"bottom",PointRole::First},{}});sketch.relations.push_back({"mid-bottom",RelationKind::Midpoint,{"center",PointRole::First},{"bottom",PointRole::First}});sketch.relations.push_back({"mid-top",RelationKind::Midpoint,{"center",PointRole::Second},{"top",PointRole::First}});sketch.relations.push_back({"center-axis",RelationKind::Vertical,{"center",PointRole::First},{"center",PointRole::Second}});
+        const auto drag=[&](Point2 from,Point2 to){QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,pixel(from));QVERIFY(viewport->m_pointDrag);const auto end=pixel(to);QMouseEvent move(QEvent::MouseMove,end,viewport->mapToGlobal(end),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);QApplication::sendEvent(viewport,&move);QVERIFY2(viewport->m_pointDrag->candidate,qPrintable(viewport->m_pointDrag->error));QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,end);validateSketchRelations(*viewport->m_sketch);};
+        viewport->beginSketch(sketch);viewport->selectSketchTool();drag({-40,30},{-55,45});QVERIFY(viewport->m_sketch->entities[1].second.x<-50);QVERIFY(viewport->m_sketch->entities[1].second.y>40);QCOMPARE(viewport->m_sketch->relations.size(),sketch.relations.size());
+        viewport->beginSketch(sketch);viewport->selectSketchTool();drag({-30,30},{-30,45});QVERIFY(viewport->m_sketch->entities[2].first.y>40);QVERIFY(std::abs(viewport->m_sketch->entities[0].first.x)<1e-8);QVERIFY(std::abs(viewport->m_sketch->entities[0].first.y)<1e-8);QCOMPARE(viewport->m_sketch->relations.size(),sketch.relations.size());
+    }
     void independentlyDefinedGeometryColorsAndDragging() {
         using namespace modeling;
         Sketch sketch;sketch.entities={{EntityKind::Line,{-40,20},{20,20},1,"horizontal"},{EntityKind::Circle,{25,-25},{},8,"circle"},{EntityKind::Point,{-25,-25},{},1,"fixed"}};

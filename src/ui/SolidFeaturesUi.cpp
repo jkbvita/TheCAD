@@ -15,9 +15,9 @@ namespace thecad::ui
 {
 void MainWindow::startSolidFeature(document::FeatureKind kind, const document::Feature* editing)
 {
-    if (featureDraftActive() || m_selectingPlane || m_constraints ||
-        (m_smartDimension && m_smartDimension->editor))
+    if (featureDraftActive() || m_selectingPlane || m_constraints)
         return;
+    closeSmartDimension();
     try
     {
         document::Feature feature;
@@ -28,8 +28,6 @@ void MainWindow::startSolidFeature(document::FeatureKind kind, const document::F
         auto source = m_session.document();
         if (m_session.editingSketch())
         {
-            if (!document::isRevolveFeature(kind) && !document::isSweepFeature(kind))
-                return;
             auto found =
                 std::find_if(source.features().begin(), source.features().end(),
                              [this](const auto& f) { return f.id == m_session.editingSketchId(); });
@@ -38,7 +36,8 @@ void MainWindow::startSolidFeature(document::FeatureKind kind, const document::F
             auto sketch = *found;
             sketch.sketch = *m_session.editingSketch();
             source.replaceFeature(sketch);
-            feature.sketchId = sketch.id;
+            if (document::isRevolveFeature(kind) || document::isSweepFeature(kind))
+                feature.sketchId = sketch.id;
         }
         else if (!editing)
         {
@@ -79,8 +78,8 @@ void MainWindow::startSolidFeature(document::FeatureKind kind, const document::F
         if (kind == document::FeatureKind::Mirror)
             m_viewport->showReferencePlanes(true);
         const auto* profile = panel->sketch();
-        m_viewport->prepareFeatureView(profile
-            ? std::optional<gp_Ax3>(modeling::sketchAxes(*profile)) : std::nullopt);
+        m_viewport->prepareFeatureView(
+            profile ? std::optional<gp_Ax3>(modeling::sketchAxes(*profile)) : std::nullopt);
         connect(panel, &SolidFeaturePanel::pickingChanged, this,
                 &MainWindow::syncSolidFeaturePicking);
         connect(panel, &SolidFeaturePanel::previewChanged, this,
@@ -118,8 +117,9 @@ void MainWindow::syncSolidFeaturePicking()
     else
     {
         std::vector<ReferencePickItem> items;
-        for (const auto& option : m_solidFeature->options())
-            items.push_back({option.reference, option.geometry, option.selectionShape});
+        if (m_solidFeature->referencePickingEnabled())
+            for (const auto& option : m_solidFeature->options())
+                items.push_back({option.reference, option.geometry, option.selectionShape});
         m_viewport->setReferenceCandidates(items, {});
     }
     syncSolidFeaturePreview();
@@ -131,7 +131,8 @@ void MainWindow::syncSolidFeaturePreview()
     m_viewport->setSelectedContourFaces(m_solidFeature->selectedFaces());
     m_viewport->setFeatureReferenceShapes(m_solidFeature->selectedReferences());
     if (const auto& candidate = m_solidFeature->candidate())
-        m_viewport->previewShape(candidate->previewShape, candidate->changes);
+        m_viewport->previewShape(candidate->previewShape, candidate->changes,
+                                 m_solidFeature->edgeTreatment());
     else
         m_viewport->clearPreview();
 }

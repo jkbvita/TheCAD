@@ -10,6 +10,7 @@
 #include <set>
 #include <stdexcept>
 #include <utility>
+#include <functional>
 namespace thecad::modeling {
 namespace {
 constexpr double coordinateLimit=1e9;
@@ -106,6 +107,30 @@ public:
         // lines instead of satisfying a dot/cross product by collapsing a line.
         system.addConstraintL2LAngle(a,b,constant(angle),id);
     }
+    bool impliedAxisEquality(const SketchRelation& current,bool x) {
+        // Midpoint-to-midpoint construction lines often inherit their direction
+        // from the surrounding rectangle. Retain that relation in the sketch,
+        // but do not add a duplicate equation to the solver's drag subsystem.
+        std::map<double*,double*> parents;
+        const auto coordinate=[&](const SketchPointRef& ref){const auto& p=point(ref);return x?p.x:p.y;};
+        std::function<double*(double*)> root=[&](double* p)->double*{auto [it,inserted]=parents.emplace(p,p);if(it->second!=p)it->second=root(it->second);return it->second;};
+        bool earlier=true;
+        for(const auto& r:sketch.relations){if(r.id==current.id){earlier=false;continue;}
+            if(r.kind==RelationKind::Coincident||r.kind==RelationKind::Concentric||
+               (earlier&&r.kind==(x?RelationKind::Vertical:RelationKind::Horizontal)))
+                parents[root(coordinate(r.first))]=root(coordinate(r.second));}
+        std::map<double*,std::pair<double*,double*>> midpoints;
+        for(const auto& r:sketch.relations)if(r.kind==RelationKind::Midpoint){const auto& line=lines.at(r.second.entityId);midpoints.emplace(root(coordinate(r.first)),std::make_pair(root(x?line.p1.x:line.p1.y),root(x?line.p2.x:line.p2.y)));}
+        using Form=std::map<double*,double>;
+        std::function<Form(double*,std::set<double*>)> expand=[&](double* p,std::set<double*> visited)->Form{
+            p=root(p);const auto midpoint=midpoints.find(p);
+            if(midpoint==midpoints.end()||!visited.insert(p).second)return {{p,1}};
+            auto a=expand(midpoint->second.first,visited),b=expand(midpoint->second.second,visited);
+            for(auto& [key,value]:a)value*=0.5;for(const auto& [key,value]:b)a[key]+=value*0.5;return a;
+        };
+        if(root(coordinate(current.first))==root(coordinate(current.second)))return false;
+        return expand(coordinate(current.first),{})==expand(coordinate(current.second),{});
+    }
     void addRelations(GCS::System& system) {
         for (const auto& e : sketch.entities)
             if (e.kind == EntityKind::Arc) {
@@ -114,6 +139,9 @@ public:
                     system.addConstraintPointOnCircle(point({e.id, role}), circles.at(e.id), intrinsic);
             }
         for(const auto& relation:sketch.relations) {
+            if((relation.kind==RelationKind::Horizontal&&impliedAxisEquality(relation,false))||
+               (relation.kind==RelationKind::Vertical&&impliedAxisEquality(relation,true)))continue;
+            if(relation.kind==RelationKind::PointOnLine&&std::any_of(sketch.relations.begin(),sketch.relations.end(),[&](const auto& r){return r.kind==RelationKind::Midpoint&&r.second.entityId==relation.second.entityId&&areSketchPointsCoincident(sketch,r.first,relation.first);}))continue;
             const int id=tag(relation.id);auto& a=point(relation.first);auto& b=point(relation.second);
             switch(relation.kind) {
             case RelationKind::FixedEntity:addFixedEntity(system,relation,id);break;
@@ -139,11 +167,14 @@ public:
                 }break;
             case RelationKind::PointOnLine:system.addConstraintPointOnLine(a,lines.at(relation.second.entityId),id);break;
             case RelationKind::Midpoint:{
-                auto& line=lines.at(relation.second.entityId);GCS::Line first,second;
-                first.p1=line.p1;first.p2=a;second.p1=a;second.p2=line.p2;
-                const bool onLine=std::any_of(sketch.relations.begin(),sketch.relations.end(),[&](const auto& existing){return existing.kind==RelationKind::PointOnLine && existing.second.entityId==relation.second.entityId && areSketchPointsCoincident(sketch,existing.first,relation.first);});
-                if(!onLine)system.addConstraintPointOnLine(a,line,id);
-                system.addConstraintEqualLength(first,second,id);break;
+                auto& line=lines.at(relation.second.entityId);
+                // Equal coordinate differences express the midpoint exactly and
+                // keep its Jacobian linear during interactive size changes.
+                for(const bool x:{true,false}){
+                    auto* first=x?line.p1.x:line.p1.y;auto* middle=x?a.x:a.y;auto* last=x?line.p2.x:line.p2.y;
+                    auxiliaries.push_back((*last-*first)*0.5);auto* half=&auxiliaries.back();unknowns.push_back(half);
+                    system.addConstraintDifference(first,middle,half,id);system.addConstraintDifference(middle,last,half,id);
+                }break;
             }
             case RelationKind::PointOnCircle:system.addConstraintPointOnCircle(a,circles.at(relation.second.entityId),id);break;
             case RelationKind::Coincident:system.addConstraintP2PCoincident(a,b,id);break;
@@ -329,6 +360,22 @@ public:
         }
     }
     void addTargets(GCS::System& system,const SolveOptions& options) {
+        for(const auto& target:options.lineTargets){
+            finiteValue(target.parameter,"Line grab parameter");finiteValue(target.position.x,"Target X");finiteValue(target.position.y,"Target Y");
+            if(target.parameter<0||target.parameter>1||sketchProjection(sketch,target.entityId))throw std::runtime_error("Invalid line drag target.");
+            const auto& line=lines.at(target.entityId);const int id=tag("drag:"+target.entityId);
+            for(const bool x:{true,false}){
+                double* first=x?line.p1.x:line.p1.y;double* last=x?line.p2.x:line.p2.y;
+                const auto auxiliary=[&](double value){auxiliaries.push_back(value);unknowns.push_back(&auxiliaries.back());return &auxiliaries.back();};
+                auto* extent=auxiliary(*last-*first);auto* offset=auxiliary((*last-*first)*target.parameter);auto* position=auxiliary(*first+*offset);
+                system.addConstraintDifference(first,last,extent,id);system.addConstraintDifference(first,position,offset,id);
+                GCS::Point ratio(extent,offset),zero(constant(0),constant(0)),direction(constant(1),constant(target.parameter));
+                system.addConstraintPointOnLine(ratio,zero,direction,id);
+                GCS::Point grab(x?position:constant(0),x?constant(0):position);
+                if(x)system.addConstraintCoordinateX(grab,constant(target.position.x),-1);
+                else system.addConstraintCoordinateY(grab,constant(target.position.y),-1);
+            }
+        }
         for(const auto& target:options.pointTargets) {
             finiteValue(target.position.x,"Target X");finiteValue(target.position.y,"Target Y");
             if(target.point.role==PointRole::Origin||sketchProjection(sketch,target.point.entityId))

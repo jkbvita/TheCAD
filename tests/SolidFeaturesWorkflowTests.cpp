@@ -1,3 +1,4 @@
+#include "ui/widgets/PropertyManagerControls.h"
 #include "presentation/SelectionAppearance.h"
 #include "ui/MainWindow.h"
 #include "ui/CadViewport.h"
@@ -11,6 +12,7 @@
 #include <TopExp_Explorer.hxx>
 #include <QAction>
 #include <QCheckBox>
+#include <Graphic3d_ZLayerId.hxx>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
@@ -483,7 +485,8 @@ private slots:
         direction->setCurrentIndex(xAxis);
         panel->parameter()->setValue(20);
         panel->findChild<QSpinBox*>("patternInstances")->setValue(3);
-        QVERIFY(panel->candidate());
+        QTRY_VERIFY(panel->candidate());
+        const auto cachedId=panel->candidate()->featureId;panel->refreshPreview();QVERIFY(panel->candidate());QCOMPARE(panel->candidate()->featureId,cachedId);QVERIFY(panel->readyToConfirm());QCOMPARE(panel->candidate()->featureId,cachedId);
         const double holeVolume = std::acos(-1.0) * 90;
         const double patternedVolume = 32000 - 3 * holeVolume;
         QVERIFY(std::abs(volume(panel->candidate()->document.shape()) - patternedVolume) < 1e-5);
@@ -499,7 +502,7 @@ private slots:
         select(window, patternId);
         command(window, "actionEditFeature");
         panel = window.findChild<SolidFeaturePanel*>("solidFeaturePanel");
-        QVERIFY(panel && panel->candidate());
+        QVERIFY(panel);QTRY_VERIFY(panel->candidate());
         QCOMPARE(panel->parameter()->value(), 20.);
         command(window, "actionCancelFeature");
         QVERIFY(std::abs(volume(window.document().shape()) - patternedVolume) < 1e-5);
@@ -511,10 +514,11 @@ private slots:
         QVERIFY(viewport->referencePlanesVisible());
         panel->findChild<QComboBox*>("patternScope")->setCurrentIndex(1);
         select(window, "origin:YZ");
-        QVERIFY(panel->candidate());
+        QTRY_VERIFY(panel->candidate());
+        auto* reference=dynamic_cast<PropertyReference*>(panel->findChild<QComboBox*>("patternReference"));QVERIFY(reference);QVERIFY(!panel->pickingPatternReference());const auto plane=reference->currentText();select(window,"origin:XY");QCOMPARE(reference->currentText(),plane);reference->pick();QVERIFY(panel->pickingPatternReference());select(window,"origin:YZ");QVERIFY(!panel->pickingPatternReference());QTRY_VERIFY(panel->candidate());
         sameCamera(camera, viewport->m_graphics.view()->Camera());
         QTest::keyClick(viewport, Qt::Key_3);
-        QVERIFY(panel->candidate());
+        QTRY_VERIFY(panel->candidate());
         panel->page()->buttons->button(QDialogButtonBox::Ok)->click();
         QCOMPARE(viewport->referencePlanesVisible(), planesWereVisible);
         QCOMPARE(window.document().features().back().kind, document::FeatureKind::Mirror);
@@ -525,7 +529,7 @@ private slots:
         select(window, window.document().features().back().id);
         command(window, "actionEditFeature");
         panel = window.findChild<SolidFeaturePanel*>("solidFeaturePanel");
-        QVERIFY(panel && panel->candidate());
+        QVERIFY(panel);QTRY_VERIFY(panel->candidate());
         QCOMPARE(panel->findChild<QComboBox*>("patternReference")->currentText(),
                  QString("Right plane"));
         command(window, "actionCancelFeature");
@@ -586,7 +590,7 @@ private slots:
             }
         }
         QVERIFY(picked);
-        QVERIFY(panel->candidate());
+        QTRY_VERIFY(panel->candidate());
         const double expected = 10 * std::acos(-1.0) * (625 - 36);
         QVERIFY(std::abs(volume(panel->candidate()->document.shape()) - expected) < 1e-5);
         QCOMPARE(viewport->m_materialPreviewPresentations.size(), std::size_t(1));
@@ -609,10 +613,10 @@ private slots:
         select(window, patternId);
         command(window, "actionEditFeature");
         panel = window.findChild<SolidFeaturePanel*>("solidFeaturePanel");
-        QVERIFY(panel && panel->candidate());
+        QVERIFY(panel);QTRY_VERIFY(panel->candidate());
         QCOMPARE(panel->findChild<QSpinBox*>("patternInstances")->value(), 4);
         panel->findChild<QDoubleSpinBox*>("patternAngle")->setValue(180);
-        QVERIFY(panel->candidate());
+        QTRY_VERIFY(panel->candidate());
         command(window, "actionCancelFeature");
         QCOMPARE(window.document().features().back().pattern.angle, 360.0);
         QVERIFY2(window.errors.isEmpty(), qPrintable(window.errors.join('\n')));
@@ -690,6 +694,8 @@ private slots:
         Quantity_Color removed;
         viewport->m_materialPreviewPresentations.front()->Color(removed);
         QVERIFY(removed.Distance(presentation::removedMaterialYellow()) < 1e-8);
+        QVERIFY(!viewport->m_ghostPreviewPresentations.empty());
+        for(const auto& ghost:viewport->m_ghostPreviewPresentations){QCOMPARE(ghost->ZLayer(),Graphic3d_ZLayerId_Topmost);QVERIFY(ghost->Transparency()>0.4&&ghost->Transparency()<0.8);}
         const auto treatment = panel->candidate()->changes.removed;
         QVERIFY(TopExp_Explorer(treatment, TopAbs_FACE).More());
         QVERIFY(!TopExp_Explorer(treatment, TopAbs_SOLID).More());

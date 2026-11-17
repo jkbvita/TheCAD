@@ -82,7 +82,7 @@ public:
     void beginContourSelection(const modeling::Sketch& sketch);
     void endContourSelection();
     void setSelectedContourFaces(const std::vector<TopoDS_Face>& faces);
-    void previewShape(const TopoDS_Shape& shape,const modeling::MaterialChanges& changes={});
+    void previewShape(const TopoDS_Shape& shape,const modeling::MaterialChanges& changes={},bool ghostTreatment=false);
     void clearPreview();
     void setExtrusionDepthGrips(const std::vector<gp_Ax1>& grips);
     QPointF projectWorldPoint(const gp_Pnt& point) const;
@@ -355,6 +355,8 @@ private:
         std::vector<std::pair<modeling::SketchPointRef,modeling::Point2>> targets;
         modeling::Point2 grabOffset;
         bool circleBody=false;
+        std::string lineBody;
+        double lineParameter=0.5;
     };
     std::optional<PointDrag> m_pointDrag;
     Handle(AIS_TextLabel) m_interactionLabel;
@@ -375,6 +377,7 @@ private:
     Handle(AIS_Shape) m_previewPresentation;
     std::vector<Handle(AIS_Trihedron)> m_extrusionDepthGrips;
     std::vector<Handle(AIS_Shape)> m_materialPreviewPresentations;
+    std::vector<Handle(AIS_Shape)> m_ghostPreviewPresentations;
     std::vector<Handle(AIS_Shape)> m_selectedContourPresentations;
     std::array<Handle(AIS_Shape), 3> m_referencePlanes;
     std::array<Handle(AIS_TextLabel), 3> m_planeLabels;

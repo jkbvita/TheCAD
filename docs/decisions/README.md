@@ -97,6 +97,8 @@ approved scope do not need repeated approval.
 
 - [0057. Direct assembly dragging and compact panels](0057-assembly-direct-drag-ui.md) — owner-requested checkbox stability, point-driven movement and automatic gestures.
 
+- [0058. Sketch and feature interaction fixes](0058-sketch-feature-interaction-fixes.md) — owner-requested dragging, tool handoff, previews, reference selection and close behavior.
+
 ## Pending owner decisions
 
 - Resilient face references beyond the approved conservative planar-face strategy.
