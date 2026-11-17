@@ -15,6 +15,29 @@ namespace thecad::modeling {
 namespace {
 constexpr double coordinateLimit=1e9;
 void finiteValue(double value,const char* label){if(!std::isfinite(value)||std::abs(value)>coordinateLimit)throw std::runtime_error(std::string(label)+" must be finite and within the prototype limit.");}
+// A mirror's point pair can coincide on its axis. Its normal equation is
+// (source-target) dot (axis-end-axis-start) = 0, even at zero separation.
+// Normalize only by the axis length, keeping the equation and Jacobian finite.
+class MirrorNormal final : public GCS::Constraint {
+public:
+    MirrorNormal(GCS::Point& source,GCS::Point& target,GCS::Line& axis) {
+        pvec={source.x,source.y,target.x,target.y,axis.p1.x,axis.p1.y,axis.p2.x,axis.p2.y};
+        origpvec=pvec;rescale();
+    }
+    GCS::ConstraintType getTypeId() override{return GCS::Perpendicular;}
+    void rescale(double coefficient=1) override {
+        scale=coefficient/std::hypot(*pvec[6]-*pvec[4],*pvec[7]-*pvec[5]);
+    }
+    double error() override {
+        return scale*((*pvec[0]-*pvec[2])*(*pvec[6]-*pvec[4])+(*pvec[1]-*pvec[3])*(*pvec[7]-*pvec[5]));
+    }
+    double grad(double* parameter) override {
+        const double dx=*pvec[6]-*pvec[4],dy=*pvec[7]-*pvec[5],x=*pvec[0]-*pvec[2],y=*pvec[1]-*pvec[3];
+        const double derivatives[]={dx,dy,-dx,-dy,-x,-y,x,y};double result=0;
+        for(std::size_t i=0;i<pvec.size();++i)if(parameter==pvec[i])result+=derivatives[i];
+        return scale*result;
+    }
+};
 class WorkingSketch {
 public:
     Sketch sketch;
@@ -264,7 +287,13 @@ public:
                 auto& seed = point({copy.source, role});
                 auto& target = point({copy.target, role});
                 if (!copy.mirrorLine.empty()) {
-                    system.addConstraintP2PSymmetric(seed, target, lines.at(copy.mirrorLine), id);
+                    auto axis=lines.at(copy.mirrorLine);
+                    // Symmetric points may coincide on the axis. Normalize the
+                    // perpendicular equation by the nondegenerate axis only,
+                    // rather than the zero-length segment between those points.
+                    auto* normal=new MirrorNormal(seed,target,axis);
+                    normal->setTag(id);normal->setDriving(true);system.addConstraint(normal);
+                    system.addConstraintMidpointOnLine(seed,target,axis.p1,axis.p2,id);
                 } else if (copy.angle == 0) {
                     system.addConstraintDifference(seed.x, target.x, constant(copy.offset.x), id);
                     system.addConstraintDifference(seed.y, target.y, constant(copy.offset.y), id);
@@ -359,6 +388,32 @@ public:
             }
         }
     }
+    void holdLines(GCS::System& system,const SolveOptions& options) {
+        if(options.stationaryLines.empty())return;
+        // Redundancy diagnosis can solve trial geometry. Preserve the edit seed
+        // while choosing independent anchors, including partially fixed axes.
+        const auto diagnose=[&] {
+            std::vector<double> seed;for(auto* value:unknowns)seed.push_back(*value);
+            system.initSolution();
+            for(std::size_t i=0;i<unknowns.size();++i)*unknowns[i]=seed[i];
+        };
+        system.declareUnknowns(unknowns);diagnose();
+        int freedom=system.dofsNumber();
+        for(const auto& entity:options.stationaryLines) {
+            const auto& line=lines.at(entity);
+            for(auto p:{line.p1,line.p2})for(const bool x:{true,false}) {
+                const int id=tag("hold:"+entity);
+                if(x)system.addConstraintCoordinateX(p,constant(*p.x),id);
+                else system.addConstraintCoordinateY(p,constant(*p.y),id);
+                diagnose();const int remaining=system.dofsNumber();
+                // H/V, fixed-point and dimensional relations may already
+                // determine this coordinate; do not add a duplicate equation.
+                if(remaining>=freedom){system.clearByTag(id);tags.erase(id);}
+                else freedom=remaining;
+            }
+        }
+        system.invalidatedDiagnosis();
+    }
     void addTargets(GCS::System& system,const SolveOptions& options) {
         for(const auto& target:options.lineTargets){
             finiteValue(target.parameter,"Line grab parameter");finiteValue(target.position.x,"Target X");finiteValue(target.position.y,"Target Y");
@@ -410,7 +465,7 @@ SketchSolveResult solvePlanarSketch(const Sketch& input,const SolveOptions& opti
         system.maxIter=options.maximumIterations;system.maxIterRedundant=options.maximumIterations;
         system.convergence=options.tolerance;system.debugMode=GCS::NoDebug;
         work.addRelations(system);work.addPolygons(system);work.addReplications(system);work.addOffsets(system);
-        work.addDimensions(system);work.addTargets(system,options);
+        work.addDimensions(system);work.holdLines(system,options);work.addTargets(system,options);
         system.declareUnknowns(work.unknowns);solving=true;system.initSolution();
         const auto status=system.solve();
         if(status==GCS::SolveStatus::Success || status==GCS::SolveStatus::Converged)system.applySolution();
@@ -431,6 +486,12 @@ SketchSolveResult solvePlanarSketch(const Sketch& input,const SolveOptions& opti
         }
         std::vector<std::pair<SketchPointRef,Point2>> anchors;
         for(const auto& target:options.pointTargets)if(target.hard)anchors.push_back({target.point,target.position});
+        for(const auto& entity:options.stationaryLines)for(const auto role:{PointRole::First,PointRole::Second}) {
+            const auto expected=sketchPointValue(input,{entity,role}),actual=sketchPointValue(work.sketch,{entity,role});
+            if(std::hypot(actual.x-expected.x,actual.y-expected.y)>std::max(1e-7,options.tolerance*10))
+                throw std::runtime_error("This edit conflicts with keeping the mirror axis stationary.");
+            anchors.push_back({{entity,role},expected});
+        }
         auto candidate=canonicalizeSketchEqualities(work.sketch,anchors);
         validateSketchOffsetGeometry(candidate);
         for(auto& d:candidate.dimensions)if(!d.driving)d.value=dimensionMeasurement(candidate,d);

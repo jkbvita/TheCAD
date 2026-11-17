@@ -35,6 +35,8 @@ class CadViewport;
 class FeatureTreePresenter;
 class SolidFeaturePanel;
 class PropertyManagerPage;
+class PropertyReference;
+class PropertySelectionList;
 
 class MainWindow : public QMainWindow {
 public:
@@ -166,6 +168,7 @@ private:
     bool finishSketch();
     void startSketchModifier(modeling::SketchModifier kind);
     void refreshSketchModifier(bool viewportSelection = false);
+    void pickSketchMirrorEntity(const QString& id);
     void updateSketchLineEdit(const QString& id, modeling::Point2 point, bool apply);
     void finishSketchModifier(bool accepted);
     bool sketchModifierEvent(QObject* watched, QEvent* event);
@@ -173,8 +176,9 @@ private:
         modeling::SketchModifier kind = modeling::SketchModifier::Convert;
         PropertyManagerPage* page = nullptr;
         QLabel* selection = nullptr;
-        QComboBox* axis = nullptr;
-        QPushButton* pickAxis = nullptr;
+        PropertyReference* axis = nullptr;
+        PropertySelectionList* mirrorEntities = nullptr;
+        bool pickingAxis = false;
         QDoubleSpinBox *spacing = nullptr, *angle = nullptr, *centerX = nullptr, *centerY = nullptr;
         QSpinBox* count = nullptr;
         QCheckBox *reverse = nullptr, *innerLoops = nullptr, *construction = nullptr;

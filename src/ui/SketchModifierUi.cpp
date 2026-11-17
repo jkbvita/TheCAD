@@ -1,6 +1,7 @@
 #include "ui/MainWindow.h"
 #include "ui/CadViewport.h"
 #include "ui/PropertyManagerPage.h"
+#include "ui/widgets/PropertyManagerControls.h"
 #include "modeling/SketchContourEdits.h"
 #include "modeling/SketchOffset.h"
 #include <QCheckBox>
@@ -67,6 +68,7 @@ void MainWindow::startSketchModifier(Modifier kind)
     draft.page = new PropertyManagerPage(modifierTitle(kind),
         convert ? "Pick a planar face or edges in the viewport. Ctrl-click adds to the selection."
                 : lineEdit ? "Hover over a straight line to preview. Each click applies one edit. Esc exits."
+                : kind == Modifier::Mirror ? "First pick the line to mirror about, then pick entities to mirror. Click an entity again to remove it."
                 : kind == Modifier::Offset ? "Select a circle or connected line chain. Set a distance and confirm the preview."
                 : "Select seed geometry in the viewport. Ctrl-click adds or removes a seed.",
         m_managerStack);
@@ -120,26 +122,51 @@ void MainWindow::startSketchModifier(Modifier kind)
     }
     else if (kind == Modifier::Mirror)
     {
-        draft.axis = new QComboBox;
+        draft.pickingAxis = true;
+        draft.axis = new PropertyReference;
         draft.axis->setObjectName("mirrorSketchAxis");
-        draft.axis->setPlaceholderText("Select a line");
+        draft.axis->addItem("Select a sketch line");
         const auto& entities = m_session.editingSketch()->entities;
         for (std::size_t i = 0; i < entities.size(); ++i)
             if (entities[i].kind == modeling::EntityKind::Line)
                 draft.axis->addItem(QString("Line %1%2").arg(i + 1).arg(
                     entities[i].construction ? " (construction)" : ""),
                     QString::fromStdString(entities[i].id));
-        draft.axis->setCurrentIndex(-1);
         form->addRow("Mirror about", draft.axis);
-        draft.pickAxis = new QPushButton("Pick mirror line in viewport");
-        draft.pickAxis->setObjectName("pickMirrorSketchAxis");
-        draft.pickAxis->setCheckable(true);
-        form->addRow(draft.pickAxis);
-        connect(draft.pickAxis, &QPushButton::toggled, this, [this](bool checked) {
-            if (checked) m_viewport->setFocus();
+        draft.axis->pick = [this] {
+            m_sketchModifier->pickingAxis = true;
+            m_viewport->setFocus();
+            refreshSketchModifier();
+        };
+        draft.mirrorEntities = new PropertySelectionList;
+        draft.mirrorEntities->setObjectName("mirrorSketchEntities");
+        draft.mirrorEntities->placeholder = "Select entities in the sketch";
+        for (std::size_t i = 0; i < entities.size(); ++i)
+        {
+            auto* member = new QListWidgetItem(QString("Entity %1").arg(i + 1), draft.mirrorEntities);
+            member->setData(Qt::UserRole, QString::fromStdString(entities[i].id));
+            member->setSelected(std::find(draft.seeds.begin(), draft.seeds.end(), entities[i].id) != draft.seeds.end());
+        }
+        draft.mirrorEntities->refreshMembers();
+        form->addRow("Entities to mirror", draft.mirrorEntities);
+        draft.mirrorEntities->pick = [this] {
+            m_sketchModifier->pickingAxis = m_sketchModifier->axis->currentIndex() == 0;
+            m_viewport->setFocus();
+            refreshSketchModifier();
+        };
+        connect(draft.mirrorEntities, &QListWidget::itemSelectionChanged, this, [this] {
+            if (!m_sketchModifier) return;
+            auto& current = *m_sketchModifier;
+            current.seeds.clear();
+            for (const auto* item : current.mirrorEntities->selectedItems())
+                current.seeds.push_back(item->data(Qt::UserRole).toString().toStdString());
             refreshSketchModifier();
         });
-        connect(draft.axis, &QComboBox::currentIndexChanged, this, [this] { refreshSketchModifier(); });
+        connect(draft.axis, &QComboBox::currentIndexChanged, this, [this] {
+            if (!m_sketchModifier) return;
+            m_sketchModifier->pickingAxis = m_sketchModifier->axis->currentIndex() == 0;
+            refreshSketchModifier();
+        });
     }
     else
     {
@@ -184,6 +211,8 @@ void MainWindow::refreshSketchModifier(bool viewportSelection)
     if (!m_sketchModifier || !m_session.editingSketch())
         return;
     auto& draft = *m_sketchModifier;
+    if (viewportSelection && draft.kind == Modifier::Mirror)
+        return; // Mirror consumes the explicit pick, including Ctrl-removal.
     if (modeling::isSketchLineEdit(draft.kind))
         return;
     const auto& sketch = *m_session.editingSketch();
@@ -215,29 +244,21 @@ void MainWindow::refreshSketchModifier(bool viewportSelection)
         }
         else
         {
-            if (viewportSelection)
-            {
-                if (draft.pickAxis && draft.pickAxis->isChecked())
-                {
-                    const int index = draft.axis->findData(QString::fromStdString(m_viewport->selectedSketchEntity()));
-                    if (index >= 0)
-                    {
-                        const QSignalBlocker blockAxis(draft.axis), blockButton(draft.pickAxis);
-                        draft.axis->setCurrentIndex(index);
-                        draft.pickAxis->setChecked(false);
-                    }
-                }
-                else
-                    draft.seeds = m_viewport->selectedSketchEntities();
-            }
+            if (viewportSelection && !draft.axis)
+                draft.seeds = m_viewport->selectedSketchEntities();
             draft.selection->setText(QString("%1 seed entities selected").arg(draft.seeds.size()));
             modeling::SketchPattern parameters;
             parameters.kind = draft.kind;
             if (draft.axis)
             {
-                if (draft.pickAxis->isChecked())
+                draft.axis->setPicking(draft.pickingAxis);
+                auto highlighted = draft.seeds;
+                if (draft.axis->currentIndex() > 0)
+                    highlighted.push_back(draft.axis->currentData().toString().toStdString());
+                m_viewport->setDimensionSelection(highlighted, {});
+                if (draft.pickingAxis)
                     throw std::runtime_error("Click a sketch line to set the mirror axis.");
-                if (draft.axis->currentIndex() < 0)
+                if (draft.axis->currentIndex() <= 0)
                     throw std::runtime_error("Select a sketch line to mirror about.");
                 parameters.mirrorLine = draft.axis->currentData().toString().toStdString();
             }
@@ -263,6 +284,43 @@ void MainWindow::refreshSketchModifier(bool viewportSelection)
         m_viewport->setSketchModifierPreview(nullptr);
     }
     draft.page->buttons->button(QDialogButtonBox::Ok)->setEnabled(draft.candidate.has_value());
+}
+
+void MainWindow::pickSketchMirrorEntity(const QString& id)
+{
+    if (!m_sketchModifier || m_sketchModifier->kind != Modifier::Mirror)
+        return;
+    auto& draft = *m_sketchModifier;
+    if (draft.pickingAxis)
+    {
+        const int index = draft.axis->findData(id);
+        if (index <= 0)
+        {
+            draft.page->setStatus("The mirror reference must be a straight sketch line.", true);
+            return;
+        }
+        const QSignalBlocker block(draft.axis);
+        draft.axis->setCurrentIndex(index);
+        draft.pickingAxis = false;
+        draft.seeds.erase(std::remove(draft.seeds.begin(), draft.seeds.end(), id.toStdString()), draft.seeds.end());
+    }
+    else if (id != draft.axis->currentData().toString())
+    {
+        const auto found = std::find(draft.seeds.begin(), draft.seeds.end(), id.toStdString());
+        if (found == draft.seeds.end()) draft.seeds.push_back(id.toStdString());
+        else draft.seeds.erase(found);
+    }
+    {
+        const QSignalBlocker block(draft.mirrorEntities);
+        for (int i = 0; i < draft.mirrorEntities->count(); ++i)
+        {
+            auto* member = draft.mirrorEntities->item(i);
+            member->setSelected(std::find(draft.seeds.begin(), draft.seeds.end(),
+                member->data(Qt::UserRole).toString().toStdString()) != draft.seeds.end());
+        }
+        draft.mirrorEntities->refreshMembers();
+    }
+    refreshSketchModifier();
 }
 
 void MainWindow::updateSketchLineEdit(const QString& id, modeling::Point2 point, bool apply)
@@ -349,6 +407,7 @@ void MainWindow::finishSketchModifier(bool accepted)
     const auto title = modifierTitle(m_sketchModifier->kind);
     m_sketchModifier.reset();
     m_viewport->setSketchModifierPicking(false);
+    m_viewport->setDimensionSelection({}, {});
     m_viewport->setSketchModifierPreview(nullptr);
     m_viewport->clearSelection();
     m_managerStack->setCurrentIndex(0);

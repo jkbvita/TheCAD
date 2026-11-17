@@ -796,6 +796,7 @@ void CadViewport::selectSketchEntity(const QString& id)
     m_selectedEntity=id.toStdString();m_selectedEntities.clear();m_selectedDimensions.clear();m_selectedPoint.reset();
     if(!m_selectedEntity.empty())m_selectedEntities.push_back(m_selectedEntity);
     m_deleteSequence.invalidate();updatePointPresentation();updateConstraintPresentation();emit sketchSelectionChanged();
+    if(m_sketchModifierPicking && !id.isEmpty())emit sketchModifierEntityPicked(id);
 }
 void CadViewport::selectDimension(const std::string& id,bool toggle)
 {
@@ -1412,6 +1413,8 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
             m_selectedPoint = hit ? std::optional<modeling::SketchPointRef>(hit->reference) : std::nullopt;
             if (hit) { emit sketchPointSelected(QString::fromStdString(hit->reference.entityId), int(hit->reference.role)); }
             emit sketchSelectionChanged();
+            if(m_sketchModifierPicking && body && !body->empty())
+                emit sketchModifierEntityPicked(QString::fromStdString(*body));
             std::optional<modeling::SketchPointRef> dragRef=hit?std::optional<modeling::SketchPointRef>(hit->reference):std::nullopt;
             if(!hit && body && raw){const auto e=std::find_if(m_sketch->entities.begin(),m_sketch->entities.end(),[&](const auto& e){return e.id==*body;});if(e!=m_sketch->entities.end() && (e->kind==modeling::EntityKind::Circle||e->kind==modeling::EntityKind::Line))dragRef=modeling::SketchPointRef{e->id,e->kind==modeling::EntityKind::Circle?modeling::PointRole::Center:modeling::PointRole::First};}
             if(dragRef && !toggle && !m_sketchModifierPicking && dragRef->role!=modeling::PointRole::Origin &&

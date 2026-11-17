@@ -536,6 +536,7 @@ MainWindow::MainWindow(QWidget* parent)
         statusBar()->showMessage(pointName + " selected. Snapping uses exact sketch coordinates.");
     });
     connect(m_viewport,&CadViewport::sketchSelectionChanged,this,[this]{hideRelationsContext();updateActions();if(m_constraints && m_viewport->selectedSketchRelation().empty())updateConstraintDraft();if(m_sketchModifier)refreshSketchModifier(true);});
+    connect(m_viewport,&CadViewport::sketchModifierEntityPicked,this,&MainWindow::pickSketchMirrorEntity);
     connect(m_viewport, &CadViewport::sketchLineEditPointed, this, &MainWindow::updateSketchLineEdit);
     connect(m_viewport,&CadViewport::relationsContextRequested,this,&MainWindow::showRelationsContext);
     qApp->installEventFilter(this);

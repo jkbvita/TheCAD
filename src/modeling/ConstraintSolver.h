@@ -20,6 +20,8 @@ struct SolveOptions {
     std::vector<PointTarget> pointTargets;
     std::vector<LineTarget> lineTargets;
     std::vector<std::pair<std::string,double>> radiusTargets;
+    // Transient edit anchors; never persisted as geometric relations.
+    std::vector<std::string> stationaryLines;
 };
 struct SketchSolveResult {
     bool success = false;

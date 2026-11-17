@@ -1,5 +1,6 @@
 #include "ui/MainWindow.h"
 #include "ui/CadViewport.h"
+#include "ui/widgets/PropertyManagerControls.h"
 #include "modeling/SketchTools.h"
 #include "modeling/DimensionAnnotation.h"
 #include <BRepAdaptor_Surface.hxx>
@@ -226,7 +227,7 @@ private slots:
         v->selectSketchTool();
         v->selectSketchEntity("seed");
         command(window, "actionMirrorEntities");
-        window.findChild<QPushButton*>("pickMirrorSketchAxis")->click();
+        QVERIFY(window.findChild<QComboBox*>("mirrorSketchAxis")->property("picking").toBool());
         QTest::mouseClick(v, Qt::LeftButton, Qt::NoModifier, v->screenPoint({0, 18}).toPoint());
         auto* buttons = window.findChild<QDialogButtonBox*>("sketchModifierButtons");
         QVERIFY(buttons && buttons->button(QDialogButtonBox::Ok)->isEnabled());
@@ -263,6 +264,61 @@ private slots:
         QCOMPARE(document::PartDocument::load(window.path).features().back().sketch.replications.size(),
                  std::size_t(6));
         QVERIFY2(window.errors.isEmpty(), qPrintable(window.errors.join('\n')));
+    }
+
+    void sketchMirrorPicksAxisThenEntities()
+    {
+        using namespace modeling;
+        QTemporaryDir temp;
+        auto part = document::PartDocument::createEmpty();
+        Sketch sketch;
+        sketch.entities = {{EntityKind::Line, {0,-30}, {0,35}, 1, "axis", true},
+                           {EntityKind::Line, {40,-30}, {40,35}, 1, "other-axis", true},
+                           {EntityKind::Line, {10,-15}, {25,-5}, 1, "line"},
+                           {EntityKind::Circle, {20,18}, {}, 4, "circle"}};
+        const auto id = part.addSketch(sketch);
+        SelectionWindow window; window.path = temp.filePath("mirror-picking.thepart");
+        part.save(window.path); window.showMaximized();
+        QVERIFY(QTest::qWaitForWindowExposed(&window)); QVERIFY(window.openPartFile(window.path));
+        auto* v = window.findChild<CadViewport*>(); QTRY_VERIFY(v->isReady());
+        treeSelect(window,id); command(window,"actionEditFeature"); v->selectSketchTool();
+        command(window,"actionMirrorEntities");
+        auto* axis = dynamic_cast<PropertyReference*>(window.findChild<QComboBox*>("mirrorSketchAxis"));
+        auto* members = window.findChild<QListWidget*>("mirrorSketchEntities");
+        auto* buttons = window.findChild<QDialogButtonBox*>("sketchModifierButtons");
+        QVERIFY(axis && members && buttons); QCOMPARE(axis->currentIndex(),0);
+        QVERIFY(axis->property("picking").toBool()); QVERIFY(!buttons->button(QDialogButtonBox::Ok)->isEnabled());
+        const auto pick = [&](Point2 p) {QTest::mouseClick(v,Qt::LeftButton,Qt::NoModifier,v->screenPoint(p).toPoint());};
+        pick({24,18}); // A circle cannot silently become the mirror axis.
+        QCOMPARE(axis->currentIndex(),0); QVERIFY(members->selectedItems().empty());
+        pick({0,20}); QCOMPARE(axis->currentData().toString(),QString("axis"));
+        QVERIFY(!axis->property("picking").toBool()); QVERIFY(!buttons->button(QDialogButtonBox::Ok)->isEnabled());
+        pick({17.5,-10}); QCOMPARE(members->selectedItems().size(),1);
+        QVERIFY(buttons->button(QDialogButtonBox::Ok)->isEnabled());
+        pick({24,18}); QCOMPARE(members->selectedItems().size(),2);
+        pick({17.5,-10}); QCOMPARE(members->selectedItems().size(),1);
+        pick({17.5,-10}); QCOMPARE(members->selectedItems().size(),2);
+        QCOMPARE(axis->currentData().toString(),QString("axis")); // Entity picks keep the axis locked.
+        QTest::mouseClick(axis,Qt::LeftButton);
+        QVERIFY(axis->property("picking").toBool()); QVERIFY(!axis->view()->isVisible());
+        pick({40,20}); QCOMPARE(axis->currentData().toString(),QString("other-axis"));
+        QCOMPARE(members->selectedItems().size(),2);
+        // Removing membership must not delete sketch geometry.
+        members->setCurrentItem(members->selectedItems().front(),QItemSelectionModel::NoUpdate);
+        QTest::keyClick(members,Qt::Key_Delete); QCOMPARE(members->selectedItems().size(),1);
+        QCOMPARE(v->m_sketch->entities.size(),std::size_t(4));
+        QTest::mouseClick(axis,Qt::LeftButton); QTest::keyClick(axis,Qt::Key_Delete);
+        QCOMPARE(axis->currentIndex(),0); QVERIFY(axis->property("picking").toBool());
+        pick({0,20}); buttons->button(QDialogButtonBox::Ok)->click();
+        QCOMPARE(v->m_sketch->replications.size(),std::size_t(1));
+        QCOMPARE(v->m_sketch->replications.front().mirrorLine,std::string("axis"));
+        command(window,"actionUndo"); QVERIFY(v->m_sketch->replications.empty());
+        command(window,"actionRedo"); QCOMPARE(v->m_sketch->replications.size(),std::size_t(1));
+        command(window,"actionMirrorEntities"); QTest::keyClick(v,Qt::Key_Escape);
+        QCOMPARE(v->m_sketch->replications.size(),std::size_t(1));
+        command(window,"actionFinishSketch"); command(window,"actionSave");
+        QCOMPARE(document::PartDocument::load(window.path).features().front().sketch.replications.size(),std::size_t(1));
+        QVERIFY2(window.errors.isEmpty(),qPrintable(window.errors.join('\n')));
     }
 
     void overlappingOriginPlanesAndAnnotations(){

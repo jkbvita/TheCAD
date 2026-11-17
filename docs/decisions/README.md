@@ -101,6 +101,8 @@ approved scope do not need repeated approval.
 
 - [0059. Shared viewport appearance](0059-shared-viewport-appearance.md) — match assembly styling to the part workspace.
 
+- [0060. Sketch Mirror axis and selection](0060-sketch-mirror-axis-and-selection.md) — stationary axes during mirrored drags and axis-first selection fields.
+
 ## Pending owner decisions
 
 - Resilient face references beyond the approved conservative planar-face strategy.

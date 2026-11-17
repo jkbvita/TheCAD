@@ -1126,6 +1126,24 @@ void validateSketchRelations(const Sketch& sketch)
     }
 }
 
+namespace {
+void holdMirrorAxes(const Sketch& sketch,const std::string& edited,SolveOptions& options)
+{
+    std::set<std::string> connected{edited};
+    bool added=true;
+    while(added){added=false;for(const auto& copy:sketch.replications)
+        if(connected.count(copy.source)||connected.count(copy.target)){
+            added=connected.insert(copy.source).second||added;
+            added=connected.insert(copy.target).second||added;
+        }}
+    std::set<std::string> axes;
+    for(const auto& copy:sketch.replications)
+        if(!copy.mirrorLine.empty()&&copy.mirrorLine!=edited&&
+           (connected.count(copy.source)||connected.count(copy.target)))axes.insert(copy.mirrorLine);
+    options.stationaryLines.assign(axes.begin(),axes.end());
+}
+}
+
 Sketch editSketchEntity(const Sketch& sketch, const SketchEntity& replacement)
 {
     validate(sketch);
@@ -1137,6 +1155,7 @@ Sketch editSketchEntity(const Sketch& sketch, const SketchEntity& replacement)
         [](const auto& e){return e.kind==EntityKind::Arc || e.kind==EntityKind::Spline;}) || !sketch.offsets.empty() || !sketch.projections.empty() || !sketch.replications.empty() || !sketch.polygons.empty() || !sketch.dimensions.empty() || std::any_of(sketch.relations.begin(),sketch.relations.end(),[](const auto& r){return int(r.kind)>=int(RelationKind::FixedPoint);});
     if(solverConstraints) {
         SolveOptions options;
+        holdMirrorAxes(sketch,replacement.id,options);
         const auto target=[&](PointRole role,Point2 before,Point2 after){if(before.x!=after.x || before.y!=after.y)options.pointTargets.push_back({{replacement.id,role},after,true});};
         target(old->kind==EntityKind::Circle?PointRole::Center:PointRole::First,old->first,replacement.first);
         if(isCircular(old->kind) && old->radius!=replacement.radius)
@@ -1226,6 +1245,7 @@ Sketch moveSketchPoint(const Sketch& sketch, const SketchPointRef& reference, Po
             candidate.relations.push_back({"connection-"+std::to_string(n),midpointTarget?RelationKind::Midpoint:RelationKind::Coincident,reference,destination});
         }
         SolveOptions options;options.pointTargets.push_back({reference,position,false});
+        holdMirrorAxes(sketch,reference.entityId,options);
         const auto& entity=referencedEntity(sketch,reference);
         if(preserveCircleRadius && isCircular(entity.kind)){
             const bool driven=std::any_of(candidate.dimensions.begin(),candidate.dimensions.end(),[&](const auto& d){return d.driving && d.first.entityId==entity.id && (d.kind==DimensionKind::CircleRadius || d.kind==DimensionKind::CircleDiameter);}) || std::any_of(candidate.relations.begin(),candidate.relations.end(),[&](const auto& r){return r.kind==RelationKind::FixedEntity && r.first.entityId==entity.id;});
@@ -1276,6 +1296,7 @@ Sketch moveSketchLine(const Sketch& sketch,const std::string& entityId,double pa
     const Point2 delta{position.x-(seed.first.x+(seed.second.x-seed.first.x)*parameter),position.y-(seed.first.y+(seed.second.y-seed.first.y)*parameter)};
     seed.first={seed.first.x+delta.x,seed.first.y+delta.y};seed.second={seed.second.x+delta.x,seed.second.y+delta.y};
     SolveOptions options;options.lineTargets.push_back({entityId,parameter,position});
+    holdMirrorAxes(sketch,entityId,options);
     return requireSolvedSketch(solvePlanarSketch(candidate,options));
 }
 Sketch removeSketchEntity(const Sketch& sketch, const std::string& entityId)

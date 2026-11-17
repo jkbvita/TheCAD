@@ -1,4 +1,5 @@
 #include "modeling/SketchTools.h"
+#include "modeling/SketchModifiers.h"
 #include "modeling/DimensionAnnotation.h"
 #include "modeling/DimensionInference.h"
 #include "modeling/ConstraintSolver.h"
@@ -27,6 +28,7 @@
 #include <QTest>
 #include <QWheelEvent>
 #include <cmath>
+#include <algorithm>
 #include <memory>
 
 namespace thecad::ui {
@@ -50,6 +52,46 @@ private slots:
         QVERIFY(QTest::qWaitForWindowExposed(host.get())); QTRY_VERIFY(viewport->isReady());
     }
     void init() { viewport->beginSketch({}); QApplication::processEvents(); }
+    void mirroredLineDragKeepsAxisStationary()
+    {
+        using namespace modeling;
+        Sketch source;
+        source.entities={{EntityKind::Line,{0,-40},{0,40},1,"axis",true},
+                         {EntityKind::Line,{15,-15},{30,20},1,"seed"}};
+        SketchPattern mirror;mirror.kind=SketchModifier::Mirror;mirror.mirrorLine="axis";
+        const auto original=replicateSketchEntities(source,{"seed"},mirror);
+        const auto image=original.replications.front().target;
+        for(const auto& id:{std::string("seed"),image})for(const bool body:{false,true}) {
+            viewport->beginSketch(original);viewport->selectSketchTool();
+            const auto entity=original.entities[id=="seed"?1:2];
+            const Point2 grab=body?Point2{(entity.first.x+entity.second.x)/2,(entity.first.y+entity.second.y)/2}:entity.second;
+            QSignalSpy changes(viewport,&CadViewport::sketchChanged);
+            QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,pixel(grab));
+            QVERIFY(viewport->m_pointDrag);
+            for(const Point2 delta: {Point2{4,3},Point2{8,6}}) {
+                const auto target=pixel({grab.x+delta.x,grab.y+delta.y});
+                QMouseEvent move(QEvent::MouseMove,target,viewport->mapToGlobal(target),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);
+                QApplication::sendEvent(viewport,&move);
+                QVERIFY2(viewport->m_pointDrag->candidate.has_value(),qPrintable(viewport->m_pointDrag->error));
+                const auto& axis=viewport->m_pointDrag->candidate->entities[0];
+                QCOMPARE(axis.first.x,0.0);QCOMPARE(axis.first.y,-40.0);
+                QCOMPARE(axis.second.x,0.0);QCOMPARE(axis.second.y,40.0);
+                QCOMPARE(changes.count(),0); // Verify the live candidate before mouse release.
+            }
+            QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,pixel({grab.x+8,grab.y+6}));
+            QCOMPARE(changes.count(),1);QVERIFY(!viewport->m_pointDrag);
+            const auto changed=std::find_if(viewport->m_sketch->entities.begin(),viewport->m_sketch->entities.end(),[&](const auto& e){return e.id==id;});
+            const auto actual=body?Point2{(changed->first.x+changed->second.x)/2,(changed->first.y+changed->second.y)/2}:changed->second;
+            QVERIFY(std::hypot(actual.x-grab.x-8,actual.y-grab.y-6)<1);
+        }
+        viewport->beginSketch(original);viewport->selectSketchTool();
+        QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,pixel({22.5,2.5}));
+        const auto target=pixel({28,8});
+        QMouseEvent move(QEvent::MouseMove,target,viewport->mapToGlobal(target),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);
+        QApplication::sendEvent(viewport,&move);QTest::keyClick(viewport,Qt::Key_Escape);
+        QCOMPARE(viewport->m_sketch->entities[1].first.x,15.0);
+        QCOMPARE(viewport->m_sketch->entities[0].first.x,0.0);
+    }
     void midpointRectangleCornersAndLineBodiesDrag()
     {
         using namespace modeling;Sketch sketch;

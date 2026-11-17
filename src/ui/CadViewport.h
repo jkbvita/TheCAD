@@ -154,6 +154,7 @@ signals:
     void sketchInteractionError(const QString& message);
     void sketchChanged(const thecad::modeling::Sketch& sketch);
     void sketchEntitySelected(const QString& id);
+    void sketchModifierEntityPicked(const QString& id);
     void sketchPointSelected(const QString& entityId, int role);
     void sketchEntityCreated(const thecad::modeling::SketchEntity& entity);
     void sketchRegionClicked(thecad::modeling::Point2 point);

@@ -98,6 +98,96 @@ void copies()
             "Deleting a seed must release its existing copies.");
 }
 
+void stationaryMirrorAxis()
+{
+    for (int variant = 0; variant < 5; ++variant)
+    {
+        Sketch source;
+        source.entities = {{EntityKind::Line, {0, -20}, {0, 30}, 1, "axis", true},
+                           {EntityKind::Line, {10, 5}, {22, 18}, 1, "seed"}};
+        if (variant == 1)
+            source.relations.push_back({"vertical", RelationKind::Vertical,
+                {"axis", PointRole::First}, {"axis", PointRole::Second}});
+        if (variant == 2)
+        {
+            source.relations.push_back({"anchor", RelationKind::FixedPoint,
+                {"axis", PointRole::First}, {}, {0, -20}});
+            SketchDimension length;
+            length.id = "axis-length"; length.kind = DimensionKind::LineLength;
+            length.first = {"axis", PointRole::First}; length.second = {"axis", PointRole::Second};
+            length.value = 50; source.dimensions.push_back(length);
+        }
+        if (variant == 3) source.entities[0].second = {20, 30};
+        if (variant == 4) { source.entities[0].first={-30,-20}; source.entities[0].second={40,-20}; }
+        SketchPattern parameters;
+        parameters.kind = SketchModifier::Mirror; parameters.mirrorLine = "axis";
+        const auto original = replicateSketchEntities(source, {"seed"}, parameters);
+        const auto image = original.replications.front().target;
+        const auto check = [&](const Sketch& moved) {
+            near(item(moved, "axis").first, item(original, "axis").first, "Mirror axis start moved during a drag.");
+            near(item(moved, "axis").second, item(original, "axis").second, "Mirror axis end moved during a drag.");
+            require(moved.relations.size() == original.relations.size(), "Drag anchors must not persist as relations.");
+            require(solvePlanarSketch(moved).success, "A mirrored drag must retain valid solver geometry.");
+            for (const auto role : {PointRole::First, PointRole::Second})
+            {
+                const auto a = sketchPointValue(moved, {"seed", role});
+                const auto b = sketchPointValue(moved, {image, role});
+                const auto axis = item(moved, "axis");
+                const double dx = axis.second.x-axis.first.x, dy = axis.second.y-axis.first.y;
+                require(std::abs(((a.x+b.x)/2-axis.first.x)*dy-((a.y+b.y)/2-axis.first.y)*dx)<1e-5,
+                    "Mirror midpoint must remain on the axis.");
+                require(std::abs((a.x-b.x)*dx+(a.y-b.y)*dy)<1e-5,
+                    "Mirrored points must remain symmetric.");
+            }
+        };
+        for (const auto& id : {std::string("seed"), image})
+        {
+            const auto start = item(original, id).first;
+            auto moved = moveSketchPoint(original, {id, PointRole::First}, {start.x+3, start.y+4});
+            near(item(moved, id).first, {start.x+3, start.y+4}, "A mirrored endpoint must reach the cursor.");
+            check(moved);
+            const auto line = item(original, id);
+            const Point2 target{(line.first.x+line.second.x)/2+4, (line.first.y+line.second.y)/2+3};
+            moved = moveSketchLine(original, id, .5, target);
+            check(moved);
+            near({(item(moved,id).first.x+item(moved,id).second.x)/2,
+                  (item(moved,id).first.y+item(moved,id).second.y)/2}, target, "Mirrored line drag must reach the cursor.");
+            moved = moveSketchPoint(moved, {id, PointRole::Second}, {item(moved,id).second.x+1, item(moved,id).second.y+2});
+            check(moved);
+        }
+        if (variant == 0)
+        {
+            const auto moved = moveSketchLine(original, "axis", .5, {5, 7});
+            require(std::abs(item(moved,"axis").first.x)>1, "The mirror axis must remain directly editable.");
+            auto replacement = item(original,"seed"); replacement.first={15,8}; replacement.second={27,21};
+            check(editSketchEntity(original,replacement));
+            SketchPattern linear;linear.count=2;linear.spacing=30;
+            const auto chain=replicateSketchEntities(original,{image},linear);
+            check(moveSketchPoint(chain,{chain.entities.back().id,PointRole::First},{12,9}));
+            QTemporaryDir temp;
+            auto part = PartDocument::createEmpty(); part.addSketch(original);
+            const auto path = temp.filePath("free-mirror.thepart"); part.save(path);
+            const auto reopened = PartDocument::load(path).features().front().sketch;
+            check(moveSketchLine(reopened,"seed",.5,{20,15}));
+        }
+    }
+    for(const auto kind:{EntityKind::Circle,EntityKind::Point}) {
+        Sketch source;
+        source.entities={{EntityKind::Line,{0,-20},{0,30},1,"axis",true},{kind,{10,8},{},3,"seed"}};
+        SketchPattern mirror;mirror.kind=SketchModifier::Mirror;mirror.mirrorLine="axis";
+        const auto original=replicateSketchEntities(source,{"seed"},mirror);
+        for(const auto& id:{std::string("seed"),original.replications.front().target}) {
+            const auto before=item(original,id).first;
+            const auto moved=moveSketchPoint(original,{id,kind==EntityKind::Circle?PointRole::Center:PointRole::First},
+                {before.x+4,before.y+3},{},kind==EntityKind::Circle);
+            near(item(moved,"axis").first,{0,-20},"Moving a mirrored circle/point moved the axis.");
+            near(item(moved,"axis").second,{0,30},"Moving a mirrored circle/point rotated the axis.");
+            near(item(moved,id).first,{before.x+4,before.y+3},"The mirrored circle/point did not reach its target.");
+            if(kind==EntityKind::Circle)require(std::abs(item(moved,id).radius-3)<1e-7,"Circle dragging changed its radius.");
+        }
+    }
+}
+
 void projectedBoundary()
 {
     auto part = PartDocument::createBox({40, 25, 10});
@@ -203,6 +293,7 @@ int main()
     try
     {
         copies();
+        stationaryMirrorAxis();
         projectedBoundary();
         innerLoopAndDimension();
         return 0;
