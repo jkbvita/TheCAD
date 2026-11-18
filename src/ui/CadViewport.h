@@ -1,4 +1,5 @@
 #pragma once
+#include "ui/input/TouchpadNavigation.h"
 
 #include "modeling/Sketch.h"
 #include "modeling/SketchModifiers.h"
@@ -178,6 +179,7 @@ protected:
     void contextMenuEvent(QContextMenuEvent* event) override;
 
 private:
+    friend class TouchpadNavigationTest;
     friend class CadViewportTest;
     friend class SketchInteractionTest;
     friend class ModelingWorkflowTest;
@@ -222,6 +224,8 @@ private:
     void zoomToward(const QPointF&,double);
     gp_Pnt navigationPivot(const QPointF&);
     viewport::CameraNavigation m_camera;
+    TouchpadNavigation m_touchpad;
+    void touchpadZoom(QPointF position, double factor);
     void initialize();
     void releaseViewer();
     void synchronizeSurface();

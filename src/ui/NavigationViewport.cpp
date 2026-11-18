@@ -45,6 +45,10 @@ void CadViewport::zoomToward(const QPointF& position,double factor){
     }
     viewport::CameraNavigation::zoom(m_graphics.view(),nativePosition(position),factor,depth);
 }
+void CadViewport::touchpadZoom(QPointF position,double factor){
+    if(factor>1)zoomToward(position,factor);
+    else viewport::CameraNavigation::zoomCentered(m_graphics.view(),factor);
+}
 void CadViewport::updateCameraAnnotations(){
     if(!m_cameraAnnotationsDirty||!isReady())return;
     m_cameraAnnotationsDirty=false;

@@ -1,6 +1,8 @@
 #include "presentation/ViewportAppearance.h"
 #include "ui/assembly/AssemblyViewport.h"
 #include "ui/Theme.h"
+#include "ui/input/NavigationInputSettings.h"
+#include <QNativeGestureEvent>
 #include "presentation/SolidPresentation.h"
 #include "presentation/SelectionAppearance.h"
 #include <AIS_Shape.hxx>
@@ -46,6 +48,8 @@ AssemblyViewport::AssemblyViewport(QWidget* parent) : QWidget(parent)
     setFocusPolicy(Qt::StrongFocus);
     setMinimumSize(320, 240);
     connect(&ThemeManager::instance(), &ThemeManager::changed, this, &AssemblyViewport::applyTheme);
+    connect(&NavigationInputSettings::instance(), &NavigationInputSettings::changed, this,
+            [this]{m_touchpad.reset();});
 }
 QPoint AssemblyViewport::native(const QPointF& point) const
 {
@@ -413,6 +417,7 @@ void AssemblyViewport::standardView(int index)
 }
 void AssemblyViewport::mousePressEvent(QMouseEvent* event)
 {
+    m_touchpad.reset();
     if (!isReady())
         return;
     setFocus(Qt::MouseFocusReason);
@@ -484,6 +489,11 @@ void AssemblyViewport::mouseMoveEvent(QMouseEvent* event)
                           {});
         update();
         return;
+    }
+    if (m_touchpad.move(event,m_graphics.view(),size(),devicePixelRatioF(),
+        isActiveWindow() && m_dragId.empty(),[this,event]{return navigationPivot(event->position());}))
+    {
+        update();return;
     }
     if (m_inserting)
     {
@@ -605,8 +615,13 @@ void AssemblyViewport::mouseReleaseEvent(QMouseEvent* event)
 }
 void AssemblyViewport::wheelEvent(QWheelEvent* event)
 {
-    if (!isReady() || !event->angleDelta().y())
+    if (!isReady())
         return;
+    if (m_touchpad.wheel(event,m_graphics.view(),size(),devicePixelRatioF(),
+        [this,event]{return navigationPivot(event->position());},
+        [this](QPointF point,double factor){touchpadZoom(point,factor);}))
+    { update();return; }
+    if (!event->angleDelta().y()) return;
     const double factor = std::pow(1.15, -event->angleDelta().y() / 120.0);
     if (factor > 1)
         viewport::CameraNavigation::zoom(m_graphics.view(), native(event->position()), factor,
@@ -615,6 +630,31 @@ void AssemblyViewport::wheelEvent(QWheelEvent* event)
         viewport::CameraNavigation::zoomCentered(m_graphics.view(), factor);
     update();
     event->accept();
+}
+gp_Pnt AssemblyViewport::navigationPivot(const QPointF& position)
+{
+    (void)hit(position);
+    const auto selector = m_graphics.context()->MainSelector();
+    return selector->NbPicked() ? selector->PickedPoint(1) : camera()->Center();
+}
+void AssemblyViewport::touchpadZoom(QPointF position,double factor)
+{
+    if (factor>1) viewport::CameraNavigation::zoom(m_graphics.view(),native(position),factor,cursorPoint(position));
+    else viewport::CameraNavigation::zoomCentered(m_graphics.view(),factor);
+}
+bool AssemblyViewport::event(QEvent* event)
+{
+    if (event->type()==QEvent::NativeGesture && isReady() && m_dragId.empty() &&
+        m_navigation.mode()==viewport::CameraNavigation::Mode::None &&
+        m_touchpad.gesture(static_cast<QNativeGestureEvent*>(event),m_graphics.view(),devicePixelRatioF(),
+            [this](QPointF point,double factor){touchpadZoom(point,factor);}))
+    {update();return true;}
+    if (event->type()==QEvent::Leave || event->type()==QEvent::FocusOut ||
+        event->type()==QEvent::WindowDeactivate || event->type()==QEvent::UngrabMouse ||
+        event->type()==QEvent::DevicePixelRatioChange || event->type()==QEvent::ScreenChangeInternal ||
+        event->type()==QEvent::KeyRelease || event->type()==QEvent::KeyPress)
+        m_touchpad.reset();
+    return QWidget::event(event);
 }
 void AssemblyViewport::keyPressEvent(QKeyEvent* event)
 {

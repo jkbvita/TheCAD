@@ -103,6 +103,8 @@ approved scope do not need repeated approval.
 
 - [0060. Sketch Mirror axis and selection](0060-sketch-mirror-axis-and-selection.md) — stationary axes during mirrored drags and axis-first selection fields.
 
+- [0061. Touchpad camera controls](0061-touchpad-camera-controls.md) — automatic mouse detection, modifier-only navigation and shared input preferences.
+
 ## Pending owner decisions
 
 - Resilient face references beyond the approved conservative planar-face strategy.

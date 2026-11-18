@@ -7,6 +7,7 @@
 #include "ui/MainWindow.h"
 #include "ui/PropertyManagerPage.h"
 #include "ui/Theme.h"
+#include "ui/PreferencesDialog.h"
 #include "ui/widgets/CommandBar.h"
 #include "ui/widgets/FeatureCommandBar.h"
 #include "ui/widgets/PropertyManagerControls.h"
@@ -388,26 +389,8 @@ void AssemblyWindow::buildCommands()
                });
     edit->addAction(m_hide);
     auto* preferences = edit->addAction("Preferences...");
-    connect(preferences, &QAction::triggered, this,
-            [this]
-            {
-                QDialog dialog(this);
-                dialog.setWindowTitle("Preferences");
-                auto* layout = new QFormLayout(&dialog);
-                auto* theme = new QComboBox;
-                theme->addItem("Dark", int(ThemeMode::Dark));
-                theme->addItem("Light", int(ThemeMode::Light));
-                theme->addItem("Follow system", int(ThemeMode::System));
-                theme->setCurrentIndex(theme->findData(int(ThemeManager::instance().mode())));
-                layout->addRow("Theme", theme);
-                connect(
-                    theme, &QComboBox::currentIndexChanged, &dialog, [theme]
-                    { ThemeManager::instance().setMode(ThemeMode(theme->currentData().toInt())); });
-                auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close);
-                layout->addRow(buttons);
-                connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-                dialog.exec();
-            });
+    preferences->setObjectName("actionPreferences");
+    connect(preferences, &QAction::triggered, this, [this] { showPreferences(this); });
     auto* insert = menuBar()->addMenu("&Insert");
     m_insertAction = action("actionInsertComponent", "Insert Components",
                             [this]

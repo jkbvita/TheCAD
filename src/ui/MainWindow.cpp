@@ -1,4 +1,5 @@
 #include "ui/Theme.h"
+#include "ui/PreferencesDialog.h"
 #include <QDialogButtonBox>
 #include "modeling/SketchTools.h"
 #include "modeling/DimensionAnnotation.h"
@@ -183,7 +184,7 @@ MainWindow::MainWindow(QWidget* parent)
 
     auto* editMenu = menuBar()->addMenu("&Edit");
     auto* viewMenu = menuBar()->addMenu("&View");
-    auto* preferences=editMenu->addAction("Preferences…");preferences->setObjectName("actionPreferences");connect(preferences,&QAction::triggered,this,[this]{QDialog dialog(this);dialog.setWindowTitle("Preferences");auto* layout=new QFormLayout(&dialog);auto* theme=new QComboBox;theme->setObjectName("appearanceTheme");theme->addItem("Dark",int(ThemeMode::Dark));theme->addItem("Light",int(ThemeMode::Light));theme->addItem("Follow system",int(ThemeMode::System));theme->setCurrentIndex(theme->findData(int(ThemeManager::instance().mode())));layout->addRow("Application theme",theme);connect(theme,&QComboBox::currentIndexChanged,&dialog,[theme]{ThemeManager::instance().setMode(ThemeMode(theme->currentData().toInt()));});auto* buttons=new QDialogButtonBox(QDialogButtonBox::Close);layout->addRow(buttons);connect(buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);dialog.exec();});
+    auto* preferences=editMenu->addAction("Preferences…");preferences->setObjectName("actionPreferences");connect(preferences,&QAction::triggered,this,[this]{showPreferences(this);});
     connect(&ThemeManager::instance(),&ThemeManager::changed,this,[this]{hideRelationsContext();for(auto* a:findChildren<QAction*>())if(!a->icon().isNull()&&a->objectName().startsWith("action")&&!a->objectName().contains("Preferences"))a->setIcon(commandIcon(a->text().remove('&')));});
     m_undo=editMenu->addAction("Undo");m_undo->setObjectName("actionUndo");m_undo->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Z));
     m_redo=editMenu->addAction("Redo");m_redo->setObjectName("actionRedo");m_redo->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Y));

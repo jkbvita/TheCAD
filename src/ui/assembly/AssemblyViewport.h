@@ -1,6 +1,7 @@
 #pragma once
 #include "viewport/GraphicsScene.h"
 #include "viewport/CameraNavigation.h"
+#include "ui/input/TouchpadNavigation.h"
 #include <QWidget>
 #include <AIS_Shape.hxx>
 #include <gp_Trsf.hxx>
@@ -67,8 +68,10 @@ protected:
     void mouseReleaseEvent(QMouseEvent*) override;
     void wheelEvent(QWheelEvent*) override;
     void keyPressEvent(QKeyEvent*) override;
+    bool event(QEvent*) override;
 
 private:
+    friend class TouchpadNavigationTest;
     friend class AssemblyWorkflowTest;
     void initialize();
     QPoint native(const QPointF& point) const;
@@ -80,6 +83,9 @@ private:
     void hover(const QPointF& point);
     viewport::GraphicsScene m_graphics;
     viewport::CameraNavigation m_navigation;
+    TouchpadNavigation m_touchpad;
+    gp_Pnt navigationPivot(const QPointF& position);
+    void touchpadZoom(QPointF position, double factor);
     std::vector<AssemblyVisual> m_visuals;
     std::map<std::string, Handle(AIS_Shape)> m_presentations;
     Handle(AIS_Shape) m_highlight, m_hover;

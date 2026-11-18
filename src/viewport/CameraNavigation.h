@@ -20,6 +20,7 @@ public:
     static Mode modeFor(Qt::KeyboardModifiers modifiers);
     void begin(Qt::KeyboardModifiers modifiers, QPointF logical, QPoint physical, gp_Pnt pivot,
                gp_Pnt zoomDepth);
+    void begin(Mode mode, QPointF logical, QPoint physical, gp_Pnt pivot, gp_Pnt zoomDepth);
     void move(const Handle(V3d_View) & view, QPointF logical, QPoint physical, QSize viewport,
               std::optional<gp_Pnt> zoomDepth = {});
     static void zoom(const Handle(V3d_View) & view, QPoint pixel, double factor, gp_Pnt depth);

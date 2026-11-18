@@ -1,11 +1,15 @@
 add_library(thecad_widgets STATIC
-    Theme.cpp Theme.h PropertyManagerPage.cpp RelationIcons.cpp
+    Theme.cpp Theme.h PreferencesDialog.cpp PropertyManagerPage.cpp RelationIcons.cpp
+    input/PointerDevices.cpp input/NavigationInputSettings.cpp input/NavigationInputSettings.h
     widgets/CommandBar.cpp widgets/FeatureCommandBar.cpp widgets/FeatureTreePresenter.cpp widgets/PropertyManagerControls.cpp)
 target_include_directories(thecad_widgets PUBLIC "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(thecad_widgets PUBLIC Qt6::Widgets thecad_document)
+if(WIN32)
+    target_link_libraries(thecad_widgets PRIVATE setupapi cfgmgr32)
+endif()
 
 add_library(thecad_viewport_widget STATIC
-    CadViewport.cpp CadViewport.h NavigationViewport.cpp
+    CadViewport.cpp CadViewport.h NavigationViewport.cpp input/TouchpadNavigation.cpp
     ReferenceGeometryViewport.cpp SelectionViewport.cpp SketchReferenceViewport.cpp ArcSlotViewport.cpp SplineViewport.cpp MeasureViewport.cpp RelationSymbols.cpp
     assembly/AssemblyViewport.cpp assembly/AssemblyViewport.h)
 target_include_directories(thecad_viewport_widget PUBLIC "${PROJECT_SOURCE_DIR}/src")

@@ -14,7 +14,12 @@ CameraNavigation::Mode CameraNavigation::modeFor(Qt::KeyboardModifiers modifiers
 void CameraNavigation::begin(Qt::KeyboardModifiers modifiers, QPointF logical, QPoint physical,
                              gp_Pnt pivot, gp_Pnt zoomDepth)
 {
-    m_mode = modeFor(modifiers);
+    begin(modeFor(modifiers), logical, physical, pivot, zoomDepth);
+}
+void CameraNavigation::begin(Mode mode, QPointF logical, QPoint physical, gp_Pnt pivot,
+                             gp_Pnt zoomDepth)
+{
+    m_mode = mode;
     m_position = logical;
     m_physical = physical;
     m_pivot = pivot;
