@@ -1,4 +1,5 @@
 #include "ui/Theme.h"
+#include "ui/MeasurePanel.h"
 #include <QPainter>
 #include <QUuid>
 #include "ui/MainWindow.h"
@@ -51,7 +52,7 @@ bool MainWindow::eventFilter(QObject* watched,QEvent* event){
     if (ourWindow && event->type() == QEvent::KeyPress && m_measure && m_measure->isChecked() &&
         static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape)
     {
-        setMeasureActive(false);
+        if(!m_measurePanel->pinned())setMeasureActive(false);
         event->accept();
         return true;
     }

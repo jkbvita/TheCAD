@@ -30,6 +30,8 @@ excluded except for the corresponding solver/Eigen source bundle described below
 The root [LICENSE](../LICENSE) is unchanged. Dependency license information does
 not select or change TheCAD's application license.
 
+Measure uses the geometric hidden-line projection module TKHLR from the existing OCCT 7.9.3 package. The same OCCT license and runtime notice inventory cover this module.
+
 Touchpad device detection links Windows SetupAPI and CfgMgr32 system import
 libraries from the existing Microsoft Windows SDK. These operating-system APIs
 add no third-party package or redistributed SDK component. Background scans and

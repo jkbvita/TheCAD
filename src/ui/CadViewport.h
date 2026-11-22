@@ -1,5 +1,6 @@
 #pragma once
 #include "ui/input/TouchpadNavigation.h"
+#include "ui/MeasurePresentation.h"
 
 #include "modeling/Sketch.h"
 #include "modeling/SketchModifiers.h"
@@ -122,9 +123,16 @@ public:
     void setFeatureReferenceShapes(const std::vector<TopoDS_Shape>&);
     int referenceCandidateAt(const QPointF& position);
     std::vector<modeling::SelectionRef> selection() const;
-    void setMeasurePicking(bool active) { m_measurePicking = active; }
-    std::vector<std::pair<modeling::SelectionRef, TopoDS_Shape>> measurementSelection();
-    void showMeasurement(const QString& text = {}, const modeling::Measurement* result = nullptr);
+    void setMeasurePicking(bool active);
+    bool measuring() const { return m_measurePicking; }
+    void setMeasurePointMode(bool active);
+    void requestMeasurePlane(bool pick) { m_measurePlanePicking = pick; }
+    void measureTreeItem(const QString& id, bool solid);
+    void removeMeasurePick(int row);
+    void clearMeasurePicks();
+    const auto& measurementSelection() const { return m_measurePicks; }
+    gp_Pln measureScreenPlane() const;
+    void showMeasurement(std::vector<MeasureGraphic> graphics = {});
     const modeling::SelectionPolicy& selectionPolicy() const {return m_selectionPolicy;}
     void setSelectionFilters(std::uint32_t filters,bool enabled=true);
     void showSelectOther(const QPoint& position);
@@ -133,6 +141,10 @@ public:
     void setSelectionFeatureIds(std::string body,std::string sketch){m_bodyFeatureId=std::move(body);m_sketchFeatureId=std::move(sketch);}
 
 signals:
+    void measureChanged();
+    void measurePlanePicked(gp_Pln plane, QString label);
+    void measureViewChanged();
+    void measurePickMessage(QString message);
     void constructionContextRequested(QMenu* menu);
     void selectionChanged();
     void datumSelected(const QString& id);
@@ -207,7 +219,22 @@ private:
     std::string m_bodyFeatureId,m_sketchFeatureId;
     std::vector<PickCandidate> m_nativeSelections;
     Handle(AIS_Shape) m_selectionHover;
-    bool m_measurePicking = false;
+    bool m_measurePicking = false, m_measurePointMode = false, m_measurePlanePicking = false;
+    std::vector<MeasurePick> m_measurePicks;
+    std::optional<MeasurePick> resolveMeasurePick(const modeling::SelectionRef&);
+    void pickMeasurement(const PickCandidate&, const std::optional<QPointF>& cursor = {});
+    void acceptMeasurePick(MeasurePick);
+    void refreshMeasureHighlights();
+    void renderMeasurement();
+    void measureCameraUpdate();
+    std::vector<MeasureGraphic> m_measureGraphics;
+    std::vector<Handle(AIS_InteractiveObject)> m_measureDecorations, m_measureHighlights;
+    std::vector<QRectF> m_measureLabelBounds;
+    std::vector<QPointF> m_measureOffsets;
+    int m_dragMeasureLabel = -1;
+    QPointF m_measureDragStart;
+    Standard_Size m_measureViewStamp=0, m_measureProjectionStamp=0;
+    QSize m_measureViewSize;
     Handle(AIS_Shape) m_measureSpan;
     Handle(AIS_TextLabel) m_measureLabel;
     std::vector<Handle(AIS_Shape)> m_featureReferenceShapes;

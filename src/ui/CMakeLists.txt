@@ -10,7 +10,7 @@ endif()
 
 add_library(thecad_viewport_widget STATIC
     CadViewport.cpp CadViewport.h NavigationViewport.cpp input/TouchpadNavigation.cpp
-    ReferenceGeometryViewport.cpp SelectionViewport.cpp SketchReferenceViewport.cpp ArcSlotViewport.cpp SplineViewport.cpp MeasureViewport.cpp RelationSymbols.cpp
+    ReferenceGeometryViewport.cpp SelectionViewport.cpp SketchReferenceViewport.cpp ArcSlotViewport.cpp SplineViewport.cpp MeasureViewport.cpp MeasureOverlay.cpp RelationSymbols.cpp
     assembly/AssemblyViewport.cpp assembly/AssemblyViewport.h)
 target_include_directories(thecad_viewport_widget PUBLIC "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(thecad_viewport_widget PUBLIC Qt6::Widgets thecad_application thecad_graphics thecad_widgets)
@@ -18,7 +18,7 @@ target_link_libraries(thecad_viewport_widget PUBLIC Qt6::Widgets thecad_applicat
 add_library(thecad_ui STATIC
     MainWindow.cpp MainWindow.h EditHistory.cpp files/NativeFileDialogs.cpp
     features/ExtrusionOptionsPanel.cpp features/SplineParametersDialog.cpp features/SolidFeaturePanel.cpp features/SolidFeaturePanel.h features/SweepFeatureForm.cpp SolidFeaturesUi.cpp
-    SelectionUi.cpp MeasureUi.cpp ReferenceGeometryUi.cpp SketchConstraintsUi.cpp
+    SelectionUi.cpp MeasureUi.cpp MeasurePanel.cpp MeasurePanel.h MeasureIcons.cpp ReferenceGeometryUi.cpp SketchConstraintsUi.cpp
     SmartDimensionUi.cpp SketchToolsUi.cpp SketchModifierUi.cpp RelationsContextUi.cpp
     assembly/AssemblyWindow.cpp assembly/AssemblyWindow.h assembly/AssemblyMateEditor.cpp assembly/AssemblyMateEditor.h
     assembly/AssemblyMateParameters.cpp assembly/AssemblyMateParameters.h

@@ -31,6 +31,7 @@ class QMenu;
 
 namespace thecad::ui {
 
+class MeasurePanel;
 class CadViewport;
 class FeatureTreePresenter;
 class SolidFeaturePanel;
@@ -140,18 +141,14 @@ private:
     void updateDocumentUi();
     void updateActions();
     void updateSketchToolActions();
-    QWidget* createMeasurePanel(QWidget* parent);
+    void createMeasurePanel();
+    void measureSelectionChanged();
+    void measureTreeSelection();
     void setMeasureActive(bool active);
     void updateMeasureAction();
     void refreshMeasurement();
     QAction* m_measure = nullptr;
-    QWidget* m_measurePanel = nullptr;
-    QLabel* m_measureReadout = nullptr;
-    QLabel* m_measureSelection = nullptr;
-    QComboBox* m_measureUnits = nullptr;
-    QComboBox* m_measureCircleMode = nullptr;
-    QSpinBox* m_measurePrecision = nullptr;
-    QCheckBox* m_measureXYZ = nullptr;
+    MeasurePanel* m_measurePanel = nullptr;
     void updateEntityList();
     void updateEntityProperties();
     void applySketchEntityEdit(const modeling::SketchEntity& entity);

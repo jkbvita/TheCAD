@@ -105,6 +105,8 @@ approved scope do not need repeated approval.
 
 - [0061. Touchpad camera controls](0061-touchpad-camera-controls.md) — automatic mouse detection, modifier-only navigation and shared input preferences.
 
+- [0062. Measure in parts and active sketches](0062-part-measure.md) — reference inspection, parity checklist, analytic fixtures and manual acceptance.
+
 ## Pending owner decisions
 
 - Resilient face references beyond the approved conservative planar-face strategy.

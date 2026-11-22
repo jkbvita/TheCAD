@@ -33,7 +33,7 @@ using modeling::SelectionRef;
 namespace {
 bool isMeasurementKind(SelectionKind kind)
 {
-    return kind == SelectionKind::Face || kind == SelectionKind::Edge || kind == SelectionKind::Vertex;
+    return kind != SelectionKind::Dimension && kind != SelectionKind::Relation;
 }
 
 SelectionKind datumSelectionKind(modeling::DatumKind kind){return kind==modeling::DatumKind::Point?SelectionKind::ReferencePoint:kind==modeling::DatumKind::Axis?SelectionKind::ReferenceAxis:SelectionKind::ReferencePlane;}
@@ -84,6 +84,7 @@ std::optional<EdgeHit> closestDisplayedEdgePoint(const TopoDS_Edge& edge,
 }
 }
 std::vector<SelectionRef> CadViewport::selection() const {
+    if(m_measurePicking){std::vector<SelectionRef> refs;for(const auto& pick:m_measurePicks)refs.push_back(pick.ref);return refs;}
     if(!m_sketchEditing){
         auto result=m_selection.items();if(!result.empty())return result;
         if(!m_selectedDatum.empty()){const auto d=std::find_if(m_datums.begin(),m_datums.end(),[&](const auto& d){return d.id==m_selectedDatum;});if(d!=m_datums.end())result.push_back({datumSelectionKind(d->geometry.kind),d->id});}
@@ -172,7 +173,7 @@ std::vector<CadViewport::PickCandidate> CadViewport::selectionCandidates(const Q
                 if(owner.IsNull()||owner->Selectable()!=m_presentation||!owner->HasShape())continue;
                 const auto shape=owner->Shape();SelectionKind kind;TopAbs_ShapeEnum type=shape.ShapeType();
                 if(type==TopAbs_VERTEX)kind=SelectionKind::Vertex;else if(type==TopAbs_EDGE)kind=SelectionKind::Edge;else if(type==TopAbs_FACE)kind=SelectionKind::Face;else if(type==TopAbs_SOLID)kind=SelectionKind::Body;else continue;
-                if (m_sketchEditing && kind != SelectionKind::Edge && kind != SelectionKind::Face)
+                if (m_sketchEditing && !m_measurePicking && kind != SelectionKind::Edge && kind != SelectionKind::Face)
                     continue;
                 const auto& map=type==TopAbs_FACE?m_selectionFaces:type==TopAbs_EDGE?m_selectionEdges:type==TopAbs_VERTEX?m_selectionVertices:m_selectionBodies;const int index=map.FindIndex(shape);if(index<=0)continue;
                 if((type==TopAbs_EDGE&&m_seamEdges.count(index))||(type==TopAbs_VERTEX&&m_artificialVertices.count(index)))continue;
@@ -198,7 +199,7 @@ std::vector<CadViewport::PickCandidate> CadViewport::selectionCandidates(const Q
             const double slack=std::max(1e-6,m_graphics.view()->Camera()->Scale()/std::max(1,height())*2.0);
             for(auto& candidate:candidates)candidate.value.occluded=candidate.value.depth>frontDepth+slack;
         }
-        if(!m_sketchEditing && !m_referenceCandidateKind){
+        if((!m_sketchEditing || m_measurePicking) && !m_referenceCandidateKind){
             const auto datumIds=datumIdsAt(position);
             for(const auto& datum:m_datums){
                 // Reuse the existing exact datum geometry hit tests, one stable
@@ -216,6 +217,11 @@ std::vector<CadViewport::PickCandidate> CadViewport::selectionCandidates(const Q
         }
     }
     auto policy=m_selectionPolicy;
+    if(m_measurePicking && m_measurePlanePicking)
+        candidates.erase(std::remove_if(candidates.begin(),candidates.end(),[](const auto& c){
+            auto k=c.value.reference.kind;return k!=SelectionKind::ReferencePlane && k!=SelectionKind::OriginPlane &&
+                !(k==SelectionKind::Face && BRepAdaptor_Surface(TopoDS::Face(c.shape)).GetType()==GeomAbs_Plane);
+        }),candidates.end());
     if (m_measurePicking)
         candidates.erase(std::remove_if(candidates.begin(), candidates.end(), [](const auto& candidate) {
             return !isMeasurementKind(candidate.value.reference.kind);
@@ -297,10 +303,7 @@ void CadViewport::selectCandidate(const PickCandidate& item,bool toggle,bool dir
     m_treeBodySelected=false; m_treeFeatureFaces.clear();
     if (m_measurePicking)
     {
-        if (!isMeasurementKind(ref.kind))
-            return;
-        const auto& items = m_selection.items();
-        toggle = items.size() < 2 || std::find(items.begin(), items.end(), ref) != items.end();
+        pickMeasurement(item);return;
     }
     if(m_sketchEditing && !modeling::isTopology(ref.kind)){
         if(ref.kind==SelectionKind::Dimension)selectDimension(ref.entityId,toggle);
@@ -368,7 +371,7 @@ void CadViewport::contextMenuEvent(QContextMenuEvent* event){
         if(!alreadySelected)selectCandidate(candidates.front());
     }}
     auto* other=menu->addAction("Select Other…");other->setEnabled(!selectionCandidates(position,true).empty());connect(other,&QAction::triggered,this,[this,position]{showSelectOther(position);});
-    emit constructionContextRequested(menu);
+    if(!m_measurePicking)emit constructionContextRequested(menu);
     menu->popup(mapToGlobal(position));event->accept();
 }
 }

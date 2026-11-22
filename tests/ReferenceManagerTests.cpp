@@ -1,6 +1,9 @@
 #include "ui/MainWindow.h"
 #include "ui/CadViewport.h"
 #include "ui/Theme.h"
+#include "ui/MeasurePanel.h"
+#include <QListWidget>
+#include <QClipboard>
 #include <Graphic3d_Camera.hxx>
 #include <QAction>
 #include <QApplication>
@@ -80,7 +83,7 @@ private slots:
         QCOMPARE(viewport->selection().front().kind, SelectionKind::Edge);
         const CameraState camera(viewport);
         auto* measure = window.findChild<QAction*>("actionMeasure");
-        auto* readout = window.findChild<QLabel*>("measureReadout");
+        auto* readout = window.findChild<MeasurePanel*>("measurePanel");
         QVERIFY(measure && measure->isEnabled() && readout && readout->isHidden());
         auto* tabs = window.findChild<QTabWidget*>("modelingTabs");
         tabs->setCurrentIndex(2);
@@ -92,28 +95,29 @@ private slots:
         QTest::mouseClick(button, Qt::LeftButton);
         QVERIFY(measure->isChecked() && readout->isVisible());
         const auto number = [](double value) { return QLocale().toString(value, 'f', 3); };
-        QVERIFY(readout->text().contains("Length  " + number(60)));
+        QVERIFY(readout->readingText().contains("Length  " + number(60)));
         QVERIFY(!viewport->m_measureLabel.IsNull());
 
         QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, project(viewport, {60, 25, 20}));
         QCOMPARE(viewport->selection().size(), std::size_t(2));
-        QVERIFY(readout->text().contains("Angle  " + number(90)));
-        QVERIFY(readout->text().contains("Minimum distance  " + number(0)));
+        QVERIFY(readout->readingText().contains("Angle  " + number(90)));
+        QVERIFY(readout->readingText().contains("Minimum distance  " + number(0)));
         QVERIFY(viewport->m_measureSpan.IsNull());
 
+        QTest::mouseClick(viewport,Qt::LeftButton,Qt::NoModifier,{5,5});
         viewport->setSelectionFilters(FilterVertices);
         const auto left = project(viewport, {0, 0, 20});
         const auto right = project(viewport, {60, 0, 20});
         QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, left);
         QCOMPARE(viewport->selection().size(), std::size_t(1));
-        QVERIFY(readout->text().contains("Z  " + number(20)));
+        QVERIFY(readout->readingText().contains("Z  " + number(20)));
         QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, right);
-        QVERIFY(readout->text().contains("Minimum distance  " + number(60)));
+        QVERIFY(readout->readingText().contains("Minimum distance  " + number(60)));
         QVERIFY(!viewport->m_measureSpan.IsNull());
         window.findChild<QCheckBox*>("measureXYZ")->setChecked(true);
         window.findChild<QComboBox*>("measureUnits")->setCurrentText("cm");
-        QVERIFY(readout->text().contains(QString(QChar(0x0394)) + "X  " + number(6) + " cm"));
-        QVERIFY(window.findChild<QLabel*>("measureSelection")->text().contains("Vertex"));
+        QVERIFY(readout->readingText().contains(QString(QChar(0x0394)) + "X  " + number(6) + " cm"));
+        QVERIFY(window.findChild<QListWidget*>("measureSelection")->item(0)->text().contains("Vertex"));
         window.findChild<QComboBox*>("measureUnits")->setCurrentText("mm");
         QVERIFY(camera.unchanged(viewport));
 
@@ -129,15 +133,102 @@ private slots:
         QCOMPARE(viewport->selection().front().kind, SelectionKind::Face);
         QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, project(viewport, {30, 0, 10}));
         QCOMPARE(viewport->selection().size(), std::size_t(2));
-        QVERIFY(readout->text().contains("Angle  " + number(90)));
+        QVERIFY(readout->readingText().contains("Angle  " + number(90)));
         QVERIFY(!viewport->m_measureLabel.IsNull());
+        auto* projectMode=window.findChild<QComboBox*>("measureProjection");
+        projectMode->setCurrentIndex(2);
+        auto* tree = window.findChild<QTreeWidget*>("featureTree");
+        auto* planeItem = item(window, "origin:XY");
+        QVERIFY(planeItem);
+        const auto treePlane = tree->visualItemRect(planeItem).center();
+        QTest::mouseClick(tree->viewport(), Qt::LeftButton, Qt::NoModifier, treePlane);
+        QVERIFY(readout->readingText().contains("Projection"));
+        QCOMPARE(viewport->selection().size(), std::size_t(2));
+        QTest::mouseClick(tree->viewport(), Qt::LeftButton, Qt::NoModifier, treePlane);
+        QCOMPARE(viewport->selection().size(), std::size_t(3));
+        QTest::mouseClick(tree->viewport(), Qt::LeftButton, Qt::NoModifier, treePlane);
+        QCOMPARE(viewport->selection().size(), std::size_t(2));
+        auto* pointMode = window.findChild<QToolButton*>("measurePointMode");
+        pointMode->click();
+        QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier,
+                          project(viewport, {20, 20, 20}));
+        QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier,
+                          project(viewport, {30, 25, 20}));
+        QCOMPARE(viewport->measurementSelection().size(), std::size_t(2));
+        QVERIFY(viewport->measurementSelection().front().location);
+        const auto before = viewport->m_measureLabelBounds;
+        viewport->setStandardView(CadViewport::StandardView::Front);
+        viewport->measureCameraUpdate();
+        QVERIFY(before != viewport->m_measureLabelBounds);
+        const CameraState afterViewCommand(viewport);
+        const auto theme = ThemeManager::instance().mode();
+        ThemeManager::instance().setMode(ThemeMode::Light,false);
+        QVERIFY(!viewport->m_measureLabel.IsNull());
+        ThemeManager::instance().setMode(ThemeMode::Dark,false);
+        QVERIFY(!viewport->m_measureLabel.IsNull());
+        ThemeManager::instance().setMode(theme,false);
         QTest::keyClick(viewport, Qt::Key_Escape);
         QVERIFY(!measure->isChecked() && readout->isHidden());
         QVERIFY(viewport->m_measureLabel.IsNull());
-        QVERIFY(camera.unchanged(viewport));
+        QVERIFY(afterViewCommand.unchanged(viewport));
         QVERIFY(!window.isWindowModified());
         QCOMPARE(window.document().features().size(), std::size_t(1));
         QVERIFY(window.errors.isEmpty());
+    }
+
+    void sketchMeasureIsReadOnly()
+    {
+        QTemporaryDir dir;
+        auto doc = PartDocument::createEmpty();
+        Sketch sk;
+        sk.entities = {{EntityKind::Line, {0, 0}, {30, 0}, 1, "line"},
+                       {EntityKind::Circle, {40, 10}, {}, 4, "circle"}};
+        auto id = doc.addSketch(sk);
+        auto path = dir.filePath("measure-sketch.thepart");
+        doc.save(path);
+        ReferenceWindow w;
+        auto* v = show(w);
+        QVERIFY(v);
+        QVERIFY(w.openPartFile(path));
+        select(w, id);
+        command(w, "actionEditFeature");
+        command(w, "actionMeasure");
+        auto* panel = w.findChild<MeasurePanel*>();
+        QVERIFY(panel && panel->isVisible());
+        QTest::mouseClick(v, Qt::LeftButton, Qt::NoModifier, project(v, {15, 0, 0}));
+        QVERIFY(panel->readingText().contains("Length"));
+        auto before = v->m_sketch->entities;
+        QTest::mousePress(v, Qt::LeftButton, Qt::NoModifier, project(v, {0, 0, 0}));
+        QTest::mouseMove(v, project(v, {4, 6, 0}));
+        QTest::mouseRelease(v, Qt::LeftButton, Qt::NoModifier, project(v, {4, 6, 0}));
+        QTest::keyClick(v, Qt::Key_Delete);
+        QCOMPARE(v->m_sketch->entities.size(), before.size());
+        QCOMPARE(v->m_sketch->entities.front().first.x, 0.);
+        panel->close();
+        QVERIFY(!v->measuring());
+        QVERIFY(v->m_measureDecorations.empty());
+        QVERIFY(v->m_measureHighlights.empty());
+        command(w, "actionFinishSketch");
+        QVERIFY(w.errors.isEmpty());
+    }
+
+    void measurementFormatting()
+    {
+        MeasureUnits units;
+        units.length = "in";
+        units.secondary = "mm";
+        units.decimals = 2;
+        units.angle = "rad";
+        units.angleDecimals = 4;
+        auto distance = units.format("Length", 25.4);
+        QCOMPARE(distance.number, QLocale().toString(1., 'f', 2));
+        QVERIFY(distance.display.contains("in"));
+        QVERIFY(distance.display.contains("mm"));
+        units.fractionDenominator = 16;
+        QCOMPARE(units.format("Length", 25.4 * 1.375).number, QString("1 3/8"));
+        QCOMPARE(units.format("Area", 25.4 * 25.4, 2).number, QLocale().toString(1., 'f', 2));
+        QCOMPARE(units.format("Angle", 90., -1).number,
+                 QLocale().toString(std::acos(-1.) / 2., 'f', 4));
     }
 
     void referenceCommandsKeepBasePlaneVisibility()

@@ -206,6 +206,7 @@ void CadViewport::releaseViewer()
     m_interactionLabel.Nullify();
     m_measureLabel.Nullify();
     m_measureSpan.Nullify();
+    m_measureDecorations.clear();m_measureHighlights.clear();
     m_inferenceGuides.clear();
     m_selectedEntityPresentation.Nullify();
     m_hoveredEntityPresentation.Nullify();
@@ -235,6 +236,7 @@ void CadViewport::paintEvent(QPaintEvent*)
     if (isReady()) {
         synchronizeSurface();
         updateCameraAnnotations();
+        if(m_measurePicking) measureCameraUpdate();
         m_graphics.view()->Redraw();
     }
 }
@@ -721,6 +723,7 @@ void CadViewport::setDimensionSelection(const std::vector<std::string>& entities
 void CadViewport::setConstraintErrors(const std::vector<std::string>& ids){m_constraintErrors=ids;updateConstraintPresentation();update();}
 void CadViewport::setConstraintPicking(bool enabled) {selectSketchTool();m_tools.relations(enabled);emit sketchToolChanged();}
 void CadViewport::mouseDoubleClickEvent(QMouseEvent* event) {
+    if(m_measurePicking){event->accept();return;}
     if(event->button()==Qt::LeftButton && m_sketchEditing && m_tools.drawing()==modeling::EntityKind::Spline) {
         finishSpline(); event->accept(); return;
     }
@@ -1299,6 +1302,14 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
     if (!isReady() || m_camera.mode() != Navigation::None) {
         return;
     }
+    if (event->button()==Qt::LeftButton && m_measurePicking) {
+        setFocus(Qt::MouseFocusReason);
+        for (int i=0;i<int(m_measureLabelBounds.size());++i)
+            if(m_measureLabelBounds[i].contains(event->position())){
+                m_dragMeasureLabel=i;m_measureDragStart=event->position();grabMouse();event->accept();return;
+            }
+        m_planeClickCandidate=true;m_planePressPosition=event->position();event->accept();return;
+    }
     if (event->button() == Qt::LeftButton && m_sketchLineEditPicking) {
         setFocus(Qt::MouseFocusReason);
         pointAtSketchLineEdit(event->position(), true);
@@ -1459,6 +1470,16 @@ void CadViewport::mouseMoveEvent(QMouseEvent* event)
         m_cameraAnnotationsDirty=true;update();return;
     }
     if((event->position()-m_contextPress).manhattanLength()>QApplication::startDragDistance())m_contextClick=false;
+    if(m_measurePicking) {
+        if(m_dragMeasureLabel>=0){
+            m_measureOffsets[m_dragMeasureLabel]+=event->position()-m_measureDragStart;
+            m_measureDragStart=event->position();renderMeasurement();update();
+        }else{
+            if((event->position()-m_planePressPosition).manhattanLength()>QApplication::startDragDistance())m_planeClickCandidate=false;
+            updateSelectionHover(event->position());
+        }
+        event->accept();return;
+    }
     if(m_shiftSelectionChanged)m_selectionCursor=event->position().toPoint();
     if(m_dimensionDrag){updateDimensionDrag(event->position());event->accept();return;}
     if(m_tools.dimensionPicking() && m_camera.mode()==Navigation::None){
@@ -1518,6 +1539,15 @@ void CadViewport::mouseMoveEvent(QMouseEvent* event)
 
 void CadViewport::mouseReleaseEvent(QMouseEvent* event)
 {
+    if(m_measurePicking && event->button()==Qt::LeftButton){
+        if(m_dragMeasureLabel>=0){m_dragMeasureLabel=-1;if(QWidget::mouseGrabber()==this)releaseMouse();}
+        else if(m_planeClickCandidate && (event->position()-m_planePressPosition).manhattanLength()<=QApplication::startDragDistance()){
+            auto candidates=selectionCandidates(event->position());
+            if(!candidates.empty())pickMeasurement(candidates.front(),event->position());
+            else if(!m_measurePlanePicking)clearMeasurePicks();
+        }
+        m_planeClickCandidate=false;event->accept();return;
+    }
     if(event->button()==Qt::LeftButton && m_dimensionDrag) {
         updateDimensionDrag(event->position());const bool moved=m_dimensionDrag->moved;m_dimensionDrag.reset();
         if(QWidget::mouseGrabber()==this)releaseMouse();
@@ -1621,6 +1651,7 @@ void CadViewport::wheelEvent(QWheelEvent* event)
 
 void CadViewport::keyPressEvent(QKeyEvent* event)
 {
+    if(m_measurePicking && (event->key()==Qt::Key_Delete||event->key()==Qt::Key_D)){event->accept();return;}
     if(m_sketchEditing && m_tools.drawing()==modeling::EntityKind::Spline &&
        (event->key()==Qt::Key_Return || event->key()==Qt::Key_Enter)) {
         finishSpline(); event->accept(); return;

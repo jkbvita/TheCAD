@@ -223,6 +223,8 @@ MainWindow::MainWindow(QWidget* parent)
         result->setObjectName(name);
         if(QStringList{"actionSmartDimension","actionSelectSketchEntity","actionLine","actionRectangle","actionCircle","actionArc","actionSpline","actionStraightSlot","actionPoint","actionCenterline","actionPolygon"}.contains(name))result->setCheckable(true);
         result->setToolTip(text);
+        if(QString::fromLatin1(name)!="actionMeasure")
+            connect(result,&QAction::triggered,this,[this]{if(m_measure && m_measure->isChecked())setMeasureActive(false);});
         connect(result, &QAction::triggered, this, callback);
         return result;
     };
@@ -241,6 +243,8 @@ MainWindow::MainWindow(QWidget* parent)
         button->setDefaultAction(result);
         button->setToolButtonStyle(Qt::ToolButtonTextOnly);
         layout->addWidget(button);
+        if(QString::fromLatin1(name)!="actionMeasure")
+            connect(result,&QAction::triggered,this,[this]{if(m_measure && m_measure->isChecked())setMeasureActive(false);});
         connect(result, &QAction::triggered, this, callback);
         return result;
     };
@@ -480,8 +484,7 @@ MainWindow::MainWindow(QWidget* parent)
     historySplitter->setStretchFactor(0, 2);
     historySplitter->setStretchFactor(1, 1);
     historyLayout->addWidget(historySplitter);
-    historyLayout->addWidget(createMeasurePanel(history));
-    connect(m_viewport, &CadViewport::selectionChanged, this, &MainWindow::refreshMeasurement);
+    createMeasurePanel();
     connect(&ThemeManager::instance(), &ThemeManager::changed, this, &MainWindow::refreshMeasurement);
     m_managerStack = new QStackedWidget;
     m_managerStack->setObjectName("managerStack");
@@ -496,9 +499,14 @@ MainWindow::MainWindow(QWidget* parent)
     initializeSelectionUi(viewMenu);
     editMenu->addAction(m_deleteFeatures);
     connect(m_tree, &QTreeWidget::itemSelectionChanged, this, [this] { selectionChanged(); });
-    connect(m_tree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem*, int) { editSelectedFeature(); });
+    connect(m_tree, &QTreeWidget::itemClicked, this, [this] {
+        if (m_measure->isChecked()) measureTreeSelection();
+    });
+    connect(m_tree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem*, int) { if(!m_measure->isChecked())editSelectedFeature(); });
     connect(m_editFeature, &QAction::triggered, this, [this] { editSelectedFeature(); });
-    connect(m_entities, &QListWidget::itemDoubleClicked, this, [this] { editSketchEntity(); });
+    connect(m_entities, &QListWidget::itemDoubleClicked, this, [this] {
+        if (!m_measure->isChecked()) editSketchEntity();
+    });
     connect(m_entities, &QListWidget::itemSelectionChanged, this, [this] {
         updateActions();
         updateEntityProperties();
@@ -809,6 +817,7 @@ bool MainWindow::replaceDocument(document::PartDocument candidate, const QString
         reportError("The part could not be displayed. The current document has been retained.");
         return false;
     }
+    const bool resumeMeasure=m_viewport->measuring();
     setMeasureActive(false);
     m_viewport->clearSelection();
     m_selectingPlane = false;
@@ -828,6 +837,7 @@ bool MainWindow::replaceDocument(document::PartDocument candidate, const QString
     updateDocumentUi();
     m_viewport->showReferencePlanes(m_session.document().features().empty());
     m_viewport->resetView(); // Opening a different document frames it once.
+    if(resumeMeasure && m_measure->isEnabled())setMeasureActive(true);
     statusBar()->showMessage("Orbit: middle drag | Pan: Ctrl + middle | Zoom: wheel | Normal To: Ctrl+8 | Fit: F");
     return true;
 }
@@ -869,6 +879,9 @@ void MainWindow::selectFeature(const std::string& id)
 
 void MainWindow::selectionChanged()
 {
+    // Measure accepts tree clicks, including a second click on the same row.
+    // Selection notifications also occur during tree rebuilds and deselection.
+    if (m_measure && m_measure->isChecked()) return;
     if(m_solidFeature){const auto* item=m_tree->currentItem();if(item)m_solidFeature->pickTree(item->data(0,Qt::UserRole).toString());return;}
     if(m_referenceDraft){const auto* item=m_tree->currentItem();if(item)referenceGeometryTreePicked(item->data(0,Qt::UserRole).toString());return;}
     if (m_operation && m_operation->pickingSketch) {
@@ -991,7 +1004,7 @@ void MainWindow::updateActions()
     findChild<QAction*>("actionDisplayDeleteRelations")->setEnabled(editing && !operation);
     const bool selecting = m_selectingPlane;
     if (m_deleteFeatures)
-        m_deleteFeatures->setEnabled(!m_session.editingSketch() && !operation &&
+        m_deleteFeatures->setEnabled(!m_measure->isChecked() && !m_session.editingSketch() && !operation &&
                                      !selecting && !selectedFeatureIds().empty());
     const std::array modifierNames{"actionConvertEntities", "actionMirrorEntities",
                                    "actionLinearSketchPattern", "actionCircularSketchPattern",
@@ -1009,7 +1022,7 @@ void MainWindow::updateActions()
     for(auto* reference:{m_referencePoint,m_referenceAxis,m_referencePlane})reference->setEnabled(!operation&&!m_session.editingSketch()&&!selecting);
     m_tabs->setEnabled(!operation);
     findChild<QAction*>("actionCancelFeature")->setEnabled(operation);
-    m_tree->setEnabled((!operation || m_solidFeature || m_referenceDraft) && !editing && !selecting);
+    m_tree->setEnabled((!operation || m_solidFeature || m_referenceDraft) && (!editing || m_measure->isChecked()) && !selecting);
     for (const auto* name : {"actionNew", "actionOpen", "actionSave", "actionSaveAs"}) {
         if (auto* action = findChild<QAction*>(name)) action->setEnabled(!operation && !selecting && !m_constraints);
     }
@@ -1031,7 +1044,7 @@ void MainWindow::updateActions()
     const auto* selected = selectedFeature();
     m_editFeature->setEnabled(!m_session.editingSketch() && !operation && !selecting && selected);
     m_editEntity->setEnabled(editing && !operation && m_entities->currentRow() >= 0);
-    m_deleteEntity->setEnabled(editing && !operation && (m_entities->currentRow()>=0 || !m_viewport->selectedSketchDimensions().empty() || !m_viewport->selectedSketchEntities().empty()));
+    m_deleteEntity->setEnabled(!m_measure->isChecked() && editing && !operation && (m_entities->currentRow()>=0 || !m_viewport->selectedSketchDimensions().empty() || !m_viewport->selectedSketchEntities().empty()));
     m_applyProperties->setEnabled(editing && !operation && m_entities->currentRow() >= 0);
     updateEntityProperties();
     bool profile = editing && !operation;
