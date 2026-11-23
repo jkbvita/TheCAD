@@ -8,8 +8,10 @@
 #include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
-#include <QDialogButtonBox>
+#include <QDialog>
 #include <QFormLayout>
+#include <QGridLayout>
+#include <QScrollArea>
 #include <QHeaderView>
 #include <QLabel>
 #include <QListWidget>
@@ -45,7 +47,7 @@ QStringList& history()
     static QStringList readings;
     return readings;
 }
-QToolButton* tool(QBoxLayout* bar, QString caption, QString help, bool toggle = false)
+QToolButton* tool(QString caption, QString help, bool toggle = false)
 {
     auto* b = new QToolButton;
     b->setText(caption);
@@ -53,7 +55,6 @@ QToolButton* tool(QBoxLayout* bar, QString caption, QString help, bool toggle = 
     b->setToolTip(help);
     b->setAutoRaise(true);
     b->setCheckable(toggle);
-    bar->addWidget(b);
     return b;
 }
 QFormLayout* settings(QToolButton* button)
@@ -116,28 +117,47 @@ MeasureValue MeasureUnits::format(QString name, double value, int power) const
         result.display += "  [" + one(secondary).display + "]";
     return result;
 }
-MeasurePanel::MeasurePanel(QWidget* parent) : QDialog(parent, Qt::Tool)
+MeasurePanel::MeasurePanel(QWidget* parent) : QDockWidget("Measure", parent)
 {
-    setAttribute(Qt::WA_ShowWithoutActivating);
     setObjectName("measurePanel");
-    setWindowTitle("Measure");
-    setModal(false);
-    setSizeGripEnabled(true);
-    auto* layout = new QVBoxLayout(this);
+    setAllowedAreas(Qt::LeftDockWidgetArea);
+    setFeatures(QDockWidget::DockWidgetClosable);
+    auto* scroll = new QScrollArea;
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    auto* content = new QWidget;
+    scroll->setWidget(content);
+    auto* layout = new QVBoxLayout(content);
     layout->setContentsMargins(6, 4, 6, 5);
     layout->setSpacing(4);
-    auto* top = new QHBoxLayout;
+    m_controlsToggle = tool("Measurement controls", "Show or hide measurement controls", true);
+    m_controlsToggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_controlsToggle->setArrowType(Qt::RightArrow);
+    layout->addWidget(m_controlsToggle, 0, Qt::AlignLeft);
+    m_commands = new QWidget;
+    auto* top = new QGridLayout(m_commands);
+    top->setContentsMargins(0, 0, 0, 0);
     top->setSpacing(2);
-    layout->addLayout(top);
-    auto iconButton = [&](MeasureIcon kind, QString name, bool toggle = false)
+    top->setColumnStretch(0, 1);
+    top->setColumnStretch(1, 1);
+    layout->addWidget(m_commands);
+    connect(m_controlsToggle, &QToolButton::toggled, this, [this](bool open) {
+        m_controlsToggle->setArrowType(open ? Qt::DownArrow : Qt::RightArrow);
+        m_commands->setVisible(open || m_controlsToggle->isHidden());
+    });
+    auto iconButton = [&](int row, int column, MeasureIcon kind, QString caption, QString help,
+                          bool toggle = false)
     {
-        auto* b = tool(top, name, name, toggle);
+        auto* b = tool(caption, help, toggle);
         b->setIcon(measureIcon(kind));
         b->setIconSize({20, 20});
-        b->setToolButtonStyle(Qt::ToolButtonIconOnly);
+        b->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        top->addWidget(b, row, column);
         return b;
     };
-    auto* arcTool = iconButton(MeasureIcon::Circular, "Arc and circle measurements");
+    auto* arcTool = iconButton(0, 1, MeasureIcon::Circular, "Arc distance",
+                               "Choose how to measure between circular edges");
     auto* arcs = settings(arcTool);
     circle = new QComboBox;
     circle->setObjectName("measureCircleMode");
@@ -153,7 +173,8 @@ MeasurePanel::MeasurePanel(QWidget* parent) : QDialog(parent, Qt::Tool)
     };
     firstCondition = condition("First arc");
     secondCondition = condition("Second arc");
-    auto* unitsTool = iconButton(MeasureIcon::Units, "Units and precision");
+    auto* unitsTool =
+        iconButton(2, 0, MeasureIcon::Units, "Units", "Set measurement units and precision");
     auto* form = settings(unitsTool);
     m_unit = new QComboBox;
     m_unit->setObjectName("measureUnits");
@@ -203,26 +224,31 @@ MeasurePanel::MeasurePanel(QWidget* parent) : QDialog(parent, Qt::Tool)
         connect(c, &QComboBox::currentIndexChanged, this, syncUnits);
     connect(m_scientific, &QCheckBox::toggled, this, syncUnits);
     syncUnits();
-    m_xyz = new QCheckBox("XYZ");
+    m_xyz = new QCheckBox("Show XYZ");
     m_xyz->setObjectName("measureXYZ");
     m_xyz->setToolTip("Show XYZ measurements");
     m_xyz->setChecked(true);
-    top->addWidget(m_xyz);
-    m_point = iconButton(MeasureIcon::Points, "Point-to-point", true);
+    top->addWidget(m_xyz, 3, 1, Qt::AlignCenter);
+    m_point = iconButton(0, 0, MeasureIcon::Points, "Point to point",
+                         "Measure between two picked locations", true);
     m_point->setObjectName("measurePointMode");
-    auto* rel = settings(iconButton(MeasureIcon::Frame, "XYZ relative to"));
+    auto* rel = settings(iconButton(1, 0, MeasureIcon::Frame, "Coordinates",
+                                    "Choose the coordinate frame for XYZ measurements"));
     m_frame = new QComboBox;
     m_frame->addItem("Part origin");
     rel->addRow(m_frame);
-    auto* proj = settings(iconButton(MeasureIcon::Project, "Projected on"));
+    auto* proj = settings(iconButton(1, 1, MeasureIcon::Project, "Project onto",
+                                     "Project onto the screen, a planar face or a plane"));
     projection = new QComboBox;
     projection->setObjectName("measureProjection");
     projection->addItems({"None", "Screen", "Selected face/plane"});
     proj->addRow(projection);
     m_pickPlane = new QPushButton("Pick face or plane");
     proj->addRow(m_pickPlane);
-    auto* showHistory = iconButton(MeasureIcon::History, "Measurement history");
-    auto* options = settings(tool(top, "⋯", "Measure display options"));
+    auto* showHistory =
+        iconButton(3, 0, MeasureIcon::History, "History", "View or copy earlier measurements");
+    auto* options = settings(iconButton(2, 1, MeasureIcon::Display, "Display",
+                                        "Set callout visibility, copying and panel options"));
     m_visible = new QCheckBox("Show callouts");
     m_visible->setChecked(true);
     options->addRow(m_visible);
@@ -234,33 +260,46 @@ MeasurePanel::MeasurePanel(QWidget* parent) : QDialog(parent, Qt::Tool)
     sensor->setEnabled(false);
     sensor->setToolTip("Requires persistent document sensors.");
     options->addRow(sensor);
-    top->addStretch();
-    m_pin = iconButton(MeasureIcon::Pin, "Keep Measure open when pressing Esc", true);
-    m_expand = tool(top, "▾", "Expand or collapse the results", true);
+    m_pin = new QCheckBox("Keep open on Esc");
+    options->addRow(m_pin);
+    m_expand = new QCheckBox("Show selection and results");
+    options->addRow(m_expand);
     m_expand->setChecked(true);
     m_details = new QWidget;
     auto* body = new QVBoxLayout(m_details);
     body->setContentsMargins(0, 0, 0, 0);
     body->setSpacing(3);
-    layout->addWidget(m_details);
+    layout->addWidget(m_details, 1);
     m_selection = new QListWidget;
     m_selection->setObjectName("measureSelection");
     m_selection->setAccessibleName("Measured entities");
     m_selection->setStyleSheet("QListWidget#measureSelection {border: 1px solid "
                                "palette(highlight); background: palette(alternate-base);}");
-    m_selection->setMaximumHeight(91);
-    body->addWidget(m_selection);
+    m_selection->setMinimumHeight(40);
+    m_selection->setMaximumHeight(64);
     auto* row = new QHBoxLayout;
-    body->addLayout(row);
-    auto* clear = tool(row, "Clear", "Clear all measured entities");
-    auto* remove = tool(row, "Remove", "Remove the highlighted list entry");
+    row->addWidget(new QLabel("Selection"));
     row->addStretch();
-    auto* copy = tool(row, "Copy", "Copy the result table");
-    auto* smaller = tool(row, "A−", "Decrease result text size");
-    auto* larger = tool(row, "A+", "Increase result text size");
+    auto* remove = tool("Remove", "Remove the highlighted list entry");
+    auto* clear = tool("Clear", "Clear all measured entities");
+    row->addWidget(remove);
+    row->addWidget(clear);
+    auto* results = new QHBoxLayout;
+    body->addLayout(results);
+    results->addWidget(new QLabel("Results"));
+    results->addStretch();
+    auto* copy = tool("Copy", "Copy the result table");
+    auto* smaller = tool("A−", "Decrease result and callout text size");
+    auto* larger = tool("A+", "Increase result and callout text size");
+    for (auto* button : {copy, smaller, larger})
+        results->addWidget(button);
     m_values = new QTableWidget(0, 2);
     m_values->setObjectName("measureReadout");
     m_values->setAccessibleName("Measurement results");
+    auto resultFont = m_values->font();
+    resultFont.setPixelSize(defaultMeasureTextPixels);
+    m_values->setFont(resultFont);
+    m_values->setMinimumHeight(76);
     m_values->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_values->setSelectionMode(QAbstractItemView::SingleSelection);
     m_values->setShowGrid(false);
@@ -274,6 +313,8 @@ MeasurePanel::MeasurePanel(QWidget* parent) : QDialog(parent, Qt::Tool)
     m_note = new QLabel;
     m_note->setWordWrap(true);
     body->addWidget(m_note);
+    body->addLayout(row);
+    body->addWidget(m_selection);
     auto removeCurrent = [this] { emit removePick(m_selection->currentRow()); };
     connect(remove, &QToolButton::clicked, this, removeCurrent);
     auto* del = new QShortcut(QKeySequence::Delete, m_selection);
@@ -300,21 +341,14 @@ MeasurePanel::MeasurePanel(QWidget* parent) : QDialog(parent, Qt::Tool)
     auto fontSize = [this](int step)
     {
         auto f = m_values->font();
-        f.setPointSize(std::clamp(f.pointSize() + step, 7, 22));
+        f.setPixelSize(std::clamp(f.pixelSize() + step, 12, 28));
         m_values->setFont(f);
         m_values->resizeRowsToContents();
+        emit optionsChanged();
     };
     connect(larger, &QToolButton::clicked, this, [=] { fontSize(1); });
     connect(smaller, &QToolButton::clicked, this, [=] { fontSize(-1); });
-    connect(m_expand, &QToolButton::toggled, this,
-            [this](bool expanded)
-            {
-                m_details->setVisible(expanded);
-                m_expand->setText(expanded ? "▾" : "▸");
-                adjustSize();
-                if (expanded)
-                    resize(width(), 350);
-            });
+    connect(m_expand, &QCheckBox::toggled, m_details, &QWidget::setVisible);
     connect(m_point, &QToolButton::toggled, this, &MeasurePanel::pointModeChanged);
     connect(m_pickPlane, &QPushButton::clicked, this,
             [this]
@@ -369,7 +403,19 @@ MeasurePanel::MeasurePanel(QWidget* parent) : QDialog(parent, Qt::Tool)
                 d->resize(430, 360);
                 d->show();
             });
-    resize(445, 350);
+    setWidget(scroll);
+}
+QSize MeasurePanel::sizeHint() const
+{
+    return QDockWidget::sizeHint().expandedTo(QSize(280, 480));
+}
+void MeasurePanel::resizeEvent(QResizeEvent* event)
+{
+    QDockWidget::resizeEvent(event);
+    // Keep the readings in view when the dock shares a short sidebar with the tree.
+    const bool compact = height() < 350;
+    m_controlsToggle->setVisible(compact);
+    m_commands->setVisible(!compact || m_controlsToggle->isChecked());
 }
 void MeasurePanel::setPicks(const std::vector<MeasurePick>& picks)
 {
@@ -487,13 +533,13 @@ void MeasurePanel::resetSession()
 }
 void MeasurePanel::closeEvent(QCloseEvent* event)
 {
-    done(QDialog::Rejected);
-    event->accept();
+    QDockWidget::closeEvent(event);
+    if (event->isAccepted())
+        emit closed();
 }
-void MeasurePanel::reject()
+int MeasurePanel::resultTextPixels() const
 {
-    if (!pinned())
-        QDialog::reject();
+    return m_values->font().pixelSize();
 }
 void MeasurePanel::setFrames(const std::vector<std::pair<QString, gp_Ax3>>& frames)
 {

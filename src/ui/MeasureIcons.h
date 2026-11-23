@@ -11,7 +11,7 @@ enum class MeasureIcon
     Frame,
     Project,
     History,
-    Pin
+    Display
 };
 QIcon measureIcon(MeasureIcon);
 } // namespace thecad::ui

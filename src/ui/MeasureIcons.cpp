@@ -13,11 +13,26 @@ class InspectionIcon final : public QIconEngine
 public:
     explicit InspectionIcon(MeasureIcon kind) : m_kind(kind) {}
     QIconEngine* clone() const override { return new InspectionIcon(m_kind); }
+    QPixmap pixmap(const QSize& size, QIcon::Mode mode, QIcon::State state) override
+    {
+        QPixmap image(size);
+        image.fill(Qt::transparent);
+        QPainter painter(&image);
+        paint(&painter, image.rect(), mode, state);
+        return image;
+    }
+    QPixmap scaledPixmap(const QSize& size, QIcon::Mode mode, QIcon::State state,
+                         qreal scale) override
+    {
+        auto image = pixmap(size * scale, mode, state);
+        image.setDevicePixelRatio(scale);
+        return image;
+    }
     void paint(QPainter* p, const QRect& rect, QIcon::Mode mode, QIcon::State) override
     {
         p->save();
         p->setRenderHint(QPainter::Antialiasing);
-        p->translate(rect.center());
+        p->translate(QRectF(rect).center());
         double scale = std::min(rect.width(), rect.height()) / 24.;
         p->scale(scale, scale);
         p->translate(-12, -12);
@@ -66,10 +81,12 @@ public:
             p->drawLine(12, 7, 12, 12);
             p->drawLine(12, 12, 16, 14);
             break;
-        case MeasureIcon::Pin:
-            p->drawPolygon(QPolygonF{
-                {13, 3}, {20, 10}, {17, 11}, {15, 15}, {14, 17}, {7, 10}, {10, 9}, {13, 6}});
-            p->drawLine(10, 14, 4, 20);
+        case MeasureIcon::Display:
+            p->drawLine(3, 7, 21, 7);
+            p->drawLine(3, 17, 21, 17);
+            p->setBrush(color);
+            p->drawEllipse(QPointF(9, 7), 2., 2.);
+            p->drawEllipse(QPointF(16, 17), 2., 2.);
             break;
         }
         p->restore();

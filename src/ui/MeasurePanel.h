@@ -1,6 +1,6 @@
 #pragma once
 #include "ui/MeasurePresentation.h"
-#include <QDialog>
+#include <QDockWidget>
 #include <QTimer>
 #include <QFutureWatcher>
 
@@ -28,12 +28,13 @@ struct MeasureUnits
     bool nearestFraction = true;
     MeasureValue format(QString name, double value, int power = 1) const;
 };
-class MeasurePanel final : public QDialog
+class MeasurePanel final : public QDockWidget
 {
     Q_OBJECT
 public:
     explicit MeasurePanel(QWidget* parent);
-    void reject() override;
+    QSize sizeHint() const override;
+    void resizeEvent(QResizeEvent*) override;
     void closeEvent(QCloseEvent*) override;
     void resetSession();
     std::optional<modeling::Measurement> measurement;
@@ -51,10 +52,12 @@ public:
     bool pinned() const;
     bool showXYZ() const;
     bool callouts() const;
+    int resultTextPixels() const;
     QComboBox *circle, *firstCondition, *secondCondition, *projection;
     std::optional<gp_Pln> selectedPlane;
     QString readingText() const;
 signals:
+    void closed();
     void optionsChanged();
     void pointModeChanged(bool);
     void projectionPick(bool);
@@ -70,11 +73,13 @@ private:
     QComboBox *m_frame, *m_unit, *m_dual, *m_angle, *m_copyMode, *m_fractions;
     QSpinBox *m_digits, *m_angleDigits;
     QCheckBox *m_scientific, *m_xyz, *m_visible, *m_roundFraction;
-    QToolButton *m_pin, *m_point, *m_expand;
+    QCheckBox *m_pin, *m_expand;
+    QToolButton *m_point, *m_controlsToggle;
     QPushButton* m_pickPlane;
     QListWidget* m_selection;
     QTableWidget* m_values;
     QLabel* m_note;
     QWidget* m_details;
+    QWidget* m_commands;
 };
 } // namespace thecad::ui

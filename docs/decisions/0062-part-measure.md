@@ -28,7 +28,7 @@ The geometry combinations, projection choices, copying, history semantics and pi
 
 | Behavior | TheCAD status and scope |
 |---|---|
-| Evaluate activation, preselection, update and cleanup | Implemented. Checked action, modeless part window, separate transient inspection selection. Active sketch and modeling modes |
+| Evaluate activation, preselection, update and cleanup | Implemented. The checked action opens the left Measure dock and starts a temporary inspection selection in parts and active sketches |
 | Pick and remove | Implemented. Click to add or toggle up to six items. Blank space clears. List supports Remove or Delete. Select Other and selection filters reuse the viewport's tolerance and occlusion rules |
 | Vertices and sketch points | Implemented. Exact coordinates relative to the part origin or the chosen frame |
 | Lines, circles, arcs, splines, construction curves | Implemented. BRep lengths. Lines report direction. Circles and arcs report center, radius, diameter, circumference and sweep. An arc's Length row is its actual trimmed length |
@@ -44,7 +44,7 @@ The geometry combinations, projection choices, copying, history semantics and pi
 | Projected surface area | Implemented. Planar area uses the normal dot product. Other supported faces and bodies use OCCT geometric hidden-line projection, planar partitioning and intersection classification to preserve holes and overlaps. Computed on a worker using a detached shape |
 | Units | Implemented. Document mm, custom metric/imperial units, degrees/radians, independent decimal precision, scientific notation, dual length/area units and fractional inches. Document format currently supplies mm only |
 | Copy, font, history | Implemented. Copy a result value with or without units, copy all rows or a history entry, adjust result text size. History is shared in memory across part windows during the process |
-| Appearance and navigation | Implemented. Floating resizable panel, collapse, pin, callout visibility, temporary green selection, boxed labels, leaders, end markers and arrows. XYZ, projected and normal spans use separate colors. Label drags move only text. Screen layout updates after pan, orbit, zoom and resize |
+| Appearance and navigation | Owner-requested layout. Measure opens in the left dock below the FeatureManager. Every measurement mode has a visible name. Display controls callout visibility, result visibility and whether Esc keeps the panel open. The result table and viewport labels default to 16 logical pixels and resize together with A− and A+. Temporary green selection, colored spans, leaders, end markers and arrows remain attached to the geometry during navigation |
 | Precision slider | Deferred. Computations use the modeling kernel's tolerance and adaptive integration. Display decimals affect formatting |
 | Sensors | Disabled. Requires persistent document-owned sensors, stable reference resolution at regeneration, thresholds and notifications |
 | Assemblies, drawings, mass properties | Outside this milestone. The solver-independent model API can be used by future inspectors |
@@ -94,5 +94,5 @@ The Windows Release build passed all 62 CTest entries, including the modeling me
 2. In a sketch, measure a line, circular arc, point and construction line. Drag near an endpoint. Close Measure and verify that the sketch and Undo history are intact.
 3. Compare two circular edges using center, minimum, maximum and mixed conditions. Measure two points on the same face. Switch primary, angular and dual units and copy a value into a text field.
 4. Pick a projection plane in the tree, replace it with a planar face, then try Screen while orbiting. Project a drilled body's area normal to the hole.
-5. Move a label, zoom, resize and switch themes. Check all three component colors against the model. Hide callouts, collapse the panel, pin it, press Esc, unpin and close.
+5. Check that the left dock leaves the tree available for picking. On a short display, expand Measurement controls to reach the named commands. Move a label, orbit and try A+ and A−. Check the panel values and the viewport labels at both sizes and in both themes. In Display, toggle callouts and Keep open on Esc. Close the dock with its title-bar button and reopen from Evaluate.
 6. Reopen the tool and inspect History. Confirm that selecting and clearing targets did not change camera orientation or mark the part modified.

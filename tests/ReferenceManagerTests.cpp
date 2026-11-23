@@ -2,6 +2,9 @@
 #include "ui/CadViewport.h"
 #include "ui/Theme.h"
 #include "ui/MeasurePanel.h"
+#include <Prs3d_TextAspect.hxx>
+#include <QDir>
+#include <QTableWidget>
 #include <QListWidget>
 #include <QClipboard>
 #include <Graphic3d_Camera.hxx>
@@ -94,9 +97,49 @@ private slots:
         QVERIFY(button && button->isVisible());
         QTest::mouseClick(button, Qt::LeftButton);
         QVERIFY(measure->isChecked() && readout->isVisible());
+        QCOMPARE(window.dockWidgetArea(readout), Qt::LeftDockWidgetArea);
+        QVERIFY(!readout->isFloating());
+        if (viewport->height() >= 660)
+            QTRY_VERIFY(readout->findChild<QToolButton*>("measurePointMode")->isVisible());
+        auto* featureTree = window.findChild<QTreeWidget*>("featureTree");
+        QVERIFY(featureTree->isVisible());
+        QVERIFY(featureTree->mapToGlobal(featureTree->rect().topLeft()).y() <
+                readout->mapToGlobal(readout->rect().topLeft()).y());
         const auto number = [](double value) { return QLocale().toString(value, 'f', 3); };
         QVERIFY(readout->readingText().contains("Length  " + number(60)));
         QVERIFY(!viewport->m_measureLabel.IsNull());
+        auto* values = readout->findChild<QTableWidget*>("measureReadout");
+        QVERIFY(values);
+        QTRY_VERIFY2(values->viewport()->visibleRegion().boundingRect().height() >= values->rowHeight(0),
+                     qPrintable(QString("Dock height %1, results top %2, visible height %3, row height %4")
+                         .arg(readout->height()).arg(values->mapTo(readout, QPoint{}).y())
+                         .arg(values->viewport()->visibleRegion().boundingRect().height()).arg(values->rowHeight(0))));
+        QCOMPARE(values->font().pixelSize(), 16);
+        auto labelHeight = [&]
+        { return viewport->m_measureLabel->Attributes()->TextAspect()->Height(); };
+        QCOMPARE(labelHeight(), 16 * viewport->devicePixelRatioF());
+        QToolButton *larger = nullptr, *smaller = nullptr;
+        for (auto* b : readout->findChildren<QToolButton*>())
+        {
+            if (b->text() == "Measurement controls" && b->isVisible())
+            {
+                QTest::mouseClick(b, Qt::LeftButton);
+                QVERIFY(readout->findChild<QToolButton*>("measurePointMode")->isVisible());
+                QTest::mouseClick(b, Qt::LeftButton);
+            }
+            if (b->text() == "A+")
+                larger = b;
+            if (b->text() == "A−")
+                smaller = b;
+        }
+        QVERIFY(larger && smaller);
+        const auto originalText = readout->readingText();
+        QTest::mouseClick(larger, Qt::LeftButton);
+        QCOMPARE(values->font().pixelSize(), 17);
+        QCOMPARE(labelHeight(), 17 * viewport->devicePixelRatioF());
+        QTest::mouseClick(smaller, Qt::LeftButton);
+        QCOMPARE(readout->readingText(), originalText);
+        QCOMPARE(labelHeight(), 16 * viewport->devicePixelRatioF());
 
         QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, project(viewport, {60, 25, 20}));
         QCOMPARE(viewport->selection().size(), std::size_t(2));
@@ -114,6 +157,15 @@ private slots:
         QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, right);
         QVERIFY(readout->readingText().contains("Minimum distance  " + number(60)));
         QVERIFY(!viewport->m_measureSpan.IsNull());
+        const auto artifacts = qEnvironmentVariable("THECAD_TEST_ARTIFACT_DIR");
+        if (!artifacts.isEmpty())
+        {
+            QVERIFY(QDir().mkpath(artifacts));
+            const auto suffix = QString("-%1.png").arg(viewport->devicePixelRatioF());
+            QVERIFY(readout->grab().save(artifacts + "/measure-dock" + suffix));
+            QVERIFY(viewport->m_graphics.view()->Dump(
+                (artifacts + "/measure-callouts" + suffix).toUtf8().constData()));
+        }
         window.findChild<QCheckBox*>("measureXYZ")->setChecked(true);
         window.findChild<QComboBox*>("measureUnits")->setCurrentText("cm");
         QVERIFY(readout->readingText().contains(QString(QChar(0x0394)) + "X  " + number(6) + " cm"));
@@ -170,6 +222,11 @@ private slots:
         QTest::keyClick(viewport, Qt::Key_Escape);
         QVERIFY(!measure->isChecked() && readout->isHidden());
         QVERIFY(viewport->m_measureLabel.IsNull());
+        readout->toggleViewAction()->trigger();
+        QVERIFY(measure->isChecked() && readout->isVisible());
+        QCOMPARE(window.dockWidgetArea(readout), Qt::LeftDockWidgetArea);
+        readout->close();
+        QVERIFY(!measure->isChecked() && !viewport->measuring());
         QVERIFY(afterViewCommand.unchanged(viewport));
         QVERIFY(!window.isWindowModified());
         QCOMPARE(window.document().features().size(), std::size_t(1));
@@ -229,6 +286,36 @@ private slots:
         QCOMPARE(units.format("Area", 25.4 * 25.4, 2).number, QLocale().toString(1., 'f', 2));
         QCOMPARE(units.format("Angle", 90., -1).number,
                  QLocale().toString(std::acos(-1.) / 2., 'f', 4));
+    }
+
+    void measurementCommandsHaveLabelsAndTransparentIcons()
+    {
+        MeasurePanel panel(nullptr);
+        const QStringList captions{"Point to point", "Arc distance", "Coordinates", "Project onto",
+                                   "Units",          "Display",      "History"};
+        const auto buttons = panel.findChildren<QToolButton*>();
+        for (const auto& caption : captions)
+        {
+            const auto it = std::find_if(buttons.begin(), buttons.end(),
+                                         [&](auto* b) { return b->text() == caption; });
+            QVERIFY2(it != buttons.end(), qPrintable(caption));
+            auto* b = *it;
+            QCOMPARE(b->toolButtonStyle(), Qt::ToolButtonTextBesideIcon);
+            QVERIFY(!b->toolTip().isEmpty());
+            for (qreal dpr : {1.0, 1.5, 2.0})
+            {
+                const auto pixmap = b->icon().pixmap({20, 20}, dpr);
+                const auto image = pixmap.toImage();
+                QCOMPARE(image.size(), QSize(20, 20) * dpr);
+                QCOMPARE(image.pixelColor(0, 0).alpha(), 0);
+                int ink = 0;
+                for (int y = 0; y < image.height(); ++y)
+                    for (int x = 0; x < image.width(); ++x)
+                        if (image.pixelColor(x, y).alpha() > 0)
+                            ++ink;
+                QVERIFY(ink > image.width() && ink < image.width() * image.height() / 2);
+            }
+        }
     }
 
     void referenceCommandsKeepBasePlaneVisibility()

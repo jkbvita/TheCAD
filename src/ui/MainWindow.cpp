@@ -480,11 +480,11 @@ MainWindow::MainWindow(QWidget* parent)
     m_entities->addAction(m_deleteEntity);
     geometryLayout->addLayout(entityButtons);
     auto* geometryScroll=new QScrollArea;geometryScroll->setObjectName("sketchGeometryScroll");geometryScroll->setWidgetResizable(true);geometryScroll->setFrameShape(QFrame::NoFrame);geometryScroll->setWidget(geometryPanel);
+    connect(m_measure, &QAction::toggled, geometryScroll, &QWidget::setHidden);
     historySplitter->addWidget(geometryScroll);
     historySplitter->setStretchFactor(0, 2);
     historySplitter->setStretchFactor(1, 1);
     historyLayout->addWidget(historySplitter);
-    createMeasurePanel();
     connect(&ThemeManager::instance(), &ThemeManager::changed, this, &MainWindow::refreshMeasurement);
     m_managerStack = new QStackedWidget;
     m_managerStack->setObjectName("managerStack");
@@ -492,6 +492,7 @@ MainWindow::MainWindow(QWidget* parent)
     historyDock->setWidget(m_managerStack);
     addDockWidget(Qt::LeftDockWidgetArea, historyDock);
     resizeDocks({historyDock}, {300}, Qt::Horizontal);
+    createMeasurePanel();
     viewMenu->addSeparator();
     viewMenu->addAction(historyDock->toggleViewAction());
     editMenu->addAction(m_editEntity);

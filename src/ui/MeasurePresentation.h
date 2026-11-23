@@ -6,6 +6,8 @@
 
 namespace thecad::ui
 {
+inline constexpr int defaultMeasureTextPixels = 16;
+
 struct MeasurePick
 {
     modeling::SelectionRef ref;

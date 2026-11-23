@@ -6,6 +6,7 @@
 #include <QFileInfo>
 #include <QStatusBar>
 #include <QTreeWidget>
+#include <algorithm>
 
 namespace thecad::ui
 {
@@ -13,7 +14,11 @@ using namespace modeling;
 void MainWindow::createMeasurePanel()
 {
     m_measurePanel = new MeasurePanel(this);
-    connect(m_measurePanel, &QDialog::finished, this, [this] { setMeasureActive(false); });
+    addDockWidget(Qt::LeftDockWidgetArea, m_measurePanel, Qt::Vertical);
+    m_measurePanel->hide();
+    connect(m_measurePanel, &MeasurePanel::closed, this, [this] { setMeasureActive(false); });
+    connect(m_measurePanel->toggleViewAction(), &QAction::triggered, this,
+            &MainWindow::setMeasureActive);
     connect(m_measurePanel, &MeasurePanel::clearPicks, m_viewport, &CadViewport::clearMeasurePicks);
     connect(m_measurePanel, &MeasurePanel::removePick, m_viewport, &CadViewport::removeMeasurePick);
     connect(m_measurePanel, &MeasurePanel::pointModeChanged, m_viewport,
@@ -71,13 +76,16 @@ void MainWindow::setMeasureActive(bool active)
             frames.emplace_back(QString::fromStdString(f.name) + " frame", f.datum.frame);
     m_measurePanel->setFrames(frames);
     m_viewport->setMeasurePicking(true);
-    m_measurePanel->setWindowTitle("Measure — " + QFileInfo(windowFilePath()).fileName());
-    if (!m_measurePanel->property("positioned").toBool())
-    {
-        m_measurePanel->move(mapToGlobal(QPoint(12, 155)));
-        m_measurePanel->setProperty("positioned", true);
-    }
     m_measurePanel->show();
+    m_measurePanel->raise();
+    // Give readings room below the tree, including on a laptop at high DPI.
+    if (m_historyDock->isVisible() && !m_historyDock->isFloating() &&
+        dockWidgetArea(m_historyDock) == Qt::LeftDockWidgetArea)
+    {
+        const int available = m_viewport->height();
+        const int preferred = std::min(480, available * 2 / 3);
+        resizeDocks({m_historyDock, m_measurePanel}, {available - preferred, preferred}, Qt::Vertical);
+    }
     updateActions();
     measureSelectionChanged();
     m_viewport->setFocus();
@@ -90,6 +98,7 @@ void MainWindow::updateMeasureAction()
     if (!available && m_measure->isChecked())
         setMeasureActive(false);
     m_measure->setEnabled(available);
+    m_measurePanel->toggleViewAction()->setEnabled(available);
 }
 void MainWindow::measureTreeSelection()
 {
@@ -287,6 +296,7 @@ void MainWindow::refreshMeasurement()
     }
     panel.setReading(rows, note);
     m_viewport->showMeasurement(panel.callouts() ? std::move(graphics)
-                                                 : std::vector<MeasureGraphic>{});
+                                                 : std::vector<MeasureGraphic>{},
+                                panel.resultTextPixels());
 }
 } // namespace thecad::ui

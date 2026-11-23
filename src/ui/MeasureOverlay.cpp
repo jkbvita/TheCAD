@@ -36,9 +36,10 @@ Quantity_Color inkColor(MeasureInk ink, bool dark)
     }
 }
 } // namespace
-void CadViewport::showMeasurement(std::vector<MeasureGraphic> graphics)
+void CadViewport::showMeasurement(std::vector<MeasureGraphic> graphics, int textPixels)
 {
     m_measureGraphics = std::move(graphics);
+    m_measureTextPixels = textPixels;
     m_measureOffsets.resize(m_measureGraphics.size());
     renderMeasurement();
     update();
@@ -105,7 +106,7 @@ void CadViewport::renderMeasurement()
         return p.Translated(ray * (gp_Vec(p, depth).Dot(normal) / ray.Dot(normal)));
     };
     QFont font("Arial");
-    font.setPixelSize(13);
+    font.setPixelSize(m_measureTextPixels);
     QFontMetricsF metrics(font);
     for (size_t i = 0; i < m_measureGraphics.size(); ++i)
     {
@@ -161,7 +162,7 @@ void CadViewport::renderMeasurement()
         }
         const auto pixel = projectWorldPoint(anchor);
         const auto text = metrics.elidedText(g.text, Qt::ElideRight, std::max(1, width() - 20));
-        QSizeF extent(metrics.horizontalAdvance(text) + 12, 20);
+        QSizeF extent(metrics.horizontalAdvance(text) + 12, metrics.height() + 6);
         auto pos = pixel + QPointF(24, -35) + m_measureOffsets[i];
         auto clamp = [&](QPointF p)
         {
@@ -176,7 +177,7 @@ void CadViewport::renderMeasurement()
                                    m_measureLabelBounds.begin(), m_measureLabelBounds.end(),
                                    [&](auto r) { return r.intersects(rect); });
                  ++n)
-                rect.moveTopLeft(clamp(pos + QPointF(0, 22 * (n + 1))));
+                rect.moveTopLeft(clamp(pos + QPointF(0, (extent.height() + 2) * (n + 1))));
         }
         m_measureLabelBounds.push_back(rect);
         auto leader = QPointF(std::clamp(pixel.x(), rect.left(), rect.right()),
@@ -185,7 +186,7 @@ void CadViewport::renderMeasurement()
         Handle(AIS_TextLabel) label = new AIS_TextLabel;
         label->SetText(TCollection_ExtendedString(text.toUtf8().constData(), true));
         label->SetFont("Arial");
-        label->SetHeight(13 * ratio);
+        label->SetHeight(m_measureTextPixels * ratio);
         label->SetPosition(atPixel(rect.center(), anchor));
         label->SetHJustification(Graphic3d_HTA_CENTER);
         label->SetVJustification(Graphic3d_VTA_CENTER);

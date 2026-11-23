@@ -132,7 +132,8 @@ public:
     void clearMeasurePicks();
     const auto& measurementSelection() const { return m_measurePicks; }
     gp_Pln measureScreenPlane() const;
-    void showMeasurement(std::vector<MeasureGraphic> graphics = {});
+    void showMeasurement(std::vector<MeasureGraphic> graphics = {},
+                         int textPixels = defaultMeasureTextPixels);
     const modeling::SelectionPolicy& selectionPolicy() const {return m_selectionPolicy;}
     void setSelectionFilters(std::uint32_t filters,bool enabled=true);
     void showSelectOther(const QPoint& position);
@@ -228,6 +229,7 @@ private:
     void renderMeasurement();
     void measureCameraUpdate();
     std::vector<MeasureGraphic> m_measureGraphics;
+    int m_measureTextPixels = defaultMeasureTextPixels;
     std::vector<Handle(AIS_InteractiveObject)> m_measureDecorations, m_measureHighlights;
     std::vector<QRectF> m_measureLabelBounds;
     std::vector<QPointF> m_measureOffsets;

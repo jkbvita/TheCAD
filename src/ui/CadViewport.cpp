@@ -1304,11 +1304,13 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
     }
     if (event->button()==Qt::LeftButton && m_measurePicking) {
         setFocus(Qt::MouseFocusReason);
+        m_planeClickCandidate = true;
+        m_planePressPosition = event->position();
         for (int i=0;i<int(m_measureLabelBounds.size());++i)
             if(m_measureLabelBounds[i].contains(event->position())){
                 m_dragMeasureLabel=i;m_measureDragStart=event->position();grabMouse();event->accept();return;
             }
-        m_planeClickCandidate=true;m_planePressPosition=event->position();event->accept();return;
+        event->accept();return;
     }
     if (event->button() == Qt::LeftButton && m_sketchLineEditPicking) {
         setFocus(Qt::MouseFocusReason);
@@ -1472,8 +1474,14 @@ void CadViewport::mouseMoveEvent(QMouseEvent* event)
     if((event->position()-m_contextPress).manhattanLength()>QApplication::startDragDistance())m_contextClick=false;
     if(m_measurePicking) {
         if(m_dragMeasureLabel>=0){
-            m_measureOffsets[m_dragMeasureLabel]+=event->position()-m_measureDragStart;
-            m_measureDragStart=event->position();renderMeasurement();update();
+            if ((event->position() - m_planePressPosition).manhattanLength() > QApplication::startDragDistance())
+                m_planeClickCandidate = false;
+            if (!m_planeClickCandidate && m_dragMeasureLabel < int(m_measureOffsets.size())) {
+                m_measureOffsets[m_dragMeasureLabel] += event->position() - m_measureDragStart;
+                m_measureDragStart = event->position();
+                renderMeasurement();
+                update();
+            }
         }else{
             if((event->position()-m_planePressPosition).manhattanLength()>QApplication::startDragDistance())m_planeClickCandidate=false;
             updateSelectionHover(event->position());
@@ -1540,11 +1548,12 @@ void CadViewport::mouseMoveEvent(QMouseEvent* event)
 void CadViewport::mouseReleaseEvent(QMouseEvent* event)
 {
     if(m_measurePicking && event->button()==Qt::LeftButton){
-        if(m_dragMeasureLabel>=0){m_dragMeasureLabel=-1;if(QWidget::mouseGrabber()==this)releaseMouse();}
-        else if(m_planeClickCandidate && (event->position()-m_planePressPosition).manhattanLength()<=QApplication::startDragDistance()){
+        const bool onLabel = m_dragMeasureLabel >= 0;
+        if(onLabel){m_dragMeasureLabel=-1;if(QWidget::mouseGrabber()==this)releaseMouse();}
+        if(m_planeClickCandidate && (event->position()-m_planePressPosition).manhattanLength()<=QApplication::startDragDistance()){
             auto candidates=selectionCandidates(event->position());
             if(!candidates.empty())pickMeasurement(candidates.front(),event->position());
-            else if(!m_measurePlanePicking)clearMeasurePicks();
+            else if(!onLabel && !m_measurePlanePicking)clearMeasurePicks();
         }
         m_planeClickCandidate=false;event->accept();return;
     }
