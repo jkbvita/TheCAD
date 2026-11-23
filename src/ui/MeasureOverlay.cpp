@@ -72,6 +72,7 @@ void CadViewport::renderMeasurement()
         return;
     const double ratio = devicePixelRatioF();
     const bool dark = ThemeManager::instance().isDark();
+    std::vector<Handle(AIS_TextLabel)> labels;
     auto display = [&](Handle(AIS_InteractiveObject) h, int mode)
     {
         h->SetInfiniteState(true);
@@ -193,9 +194,14 @@ void CadViewport::renderMeasurement()
         label->SetColor(color);
         label->SetColorSubTitle(Quantity_Color(dark ? Quantity_NOC_GRAY15 : Quantity_NOC_WHITE));
         label->SetDisplayType(Aspect_TODT_SUBTITLE);
-        display(label, 0);
+        label->SetZLayer(Graphic3d_ZLayerId_Topmost);
+        labels.push_back(label);
         if (i == 0)
             m_measureLabel = label;
     }
+    // Draw text after every dimension line, so later component spans cannot
+    // paint across labels belonging to earlier measurements.
+    for (const auto& label : labels)
+        display(label, 0);
 }
 } // namespace thecad::ui

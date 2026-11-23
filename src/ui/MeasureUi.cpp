@@ -262,7 +262,7 @@ void MainWindow::refreshMeasurement()
         {
             auto v = d.Coord(i + 1);
             auto b = a.Translated(gp_Vec(axes[i]) * v);
-            auto text = read("Δ" + QString("XYZ").mid(i, 1), v);
+            auto text = read("Δ" + QString("XYZ").mid(i, 1), std::abs(v));
             if (std::abs(v) > Precision::Confusion())
                 spanGraphic(text, {a, b}, inks[i]);
             a = b;
