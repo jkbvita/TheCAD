@@ -131,6 +131,7 @@ void DocumentSession::commitTraversal(bool redo, State previous)
 }
 void DocumentSession::clearHistory()
 {
+    ++m_identity;
     m_history.clear();
     m_revision = 0;
     m_nextRevision = 0;

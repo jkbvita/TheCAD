@@ -68,8 +68,11 @@ bool sameReference(const document::AssemblyReference& a, const document::Assembl
                                           x.role == y.role && x.index == y.index);
 }
 } // namespace
-AssemblyWindow::AssemblyWindow(QWidget* parent) : QMainWindow(parent)
+AssemblyWindow::AssemblyWindow(QWidget* parent) : QMainWindow(parent),
+    m_commands([this] { return commandContext(); })
 {
+    application::registerBuiltInCommands(m_commands.registry());
+    m_commands.bindSessionControls();
     ThemeManager::instance();
     setObjectName("assemblyWindow");
     resize(1280, 850);
@@ -94,6 +97,7 @@ AssemblyWindow::AssemblyWindow(QWidget* parent) : QMainWindow(parent)
     dock->setWidget(m_left);
     addDockWidget(Qt::LeftDockWidgetArea, dock);
     buildCommands();
+    bindCommandHandlers();
     connect(m_tree, &QTreeWidget::itemSelectionChanged, this, &AssemblyWindow::selectTree);
     connect(m_tree, &QTreeWidget::itemChanged, this,
             [this](QTreeWidgetItem* item, int)
@@ -335,33 +339,18 @@ void AssemblyWindow::buildCommands()
     file->addAction(action("actionCloseAssembly", "Close", [this] { close(); }));
     auto* edit = menuBar()->addMenu("&Edit");
     m_undo = action("actionUndo", "Undo",
-                    [this]
-                    {
-                        m_session.traverse(false);
-                        refresh();
-                    });
+                    [this] { m_commands.execute({"edit.undo"}); });
     m_undo->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Z));
     edit->addAction(m_undo);
     m_redo = action("actionRedo", "Redo",
-                    [this]
-                    {
-                        m_session.traverse(true);
-                        refresh();
-                    });
+                    [this] { m_commands.execute({"edit.redo"}); });
     m_redo->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Y));
     edit->addAction(m_redo);
     m_delete = action("actionDeleteAssemblySelection", "Delete", [this] { deleteSelected(); });
     m_delete->setShortcut(QKeySequence::Delete);
     edit->addAction(m_delete);
     m_fix = action("actionFixFloatComponent", "Fix / Float",
-                   [this]
-                   {
-                       if (!m_selected.empty())
-                       {
-                           const auto id = m_selected;
-                           mutate([&](auto& doc) { doc.setFixed(id, !doc.component(id).fixed); });
-                       }
-                   });
+                   [this] { m_commands.execute({"assembly.fix_float"}); });
     edit->addAction(m_fix);
     m_hide =
         action("actionHideShowComponent", "Hide / Show",
@@ -1307,11 +1296,11 @@ void AssemblyWindow::updateActions()
     m_contextAction->setEnabled(!active);
     m_magneticAction->setEnabled(!m_mate && !m_workflow);
     m_rebuild->setEnabled(!active && !document().components().empty());
-    m_undo->setEnabled(!active && m_session.canUndo());
-    m_redo->setEnabled(!active && m_session.canRedo());
+    m_undo->setEnabled(m_commands.availability("edit.undo").available);
+    m_redo->setEnabled(m_commands.availability("edit.redo").available);
     for (auto* action : {m_new, m_open, m_save, m_saveAs})
         action->setEnabled(!active);
-    m_fix->setEnabled(!active && selected);
+    m_fix->setEnabled(m_commands.availability("assembly.fix_float").available);
     m_hide->setEnabled(!active && selected);
     m_fix->setText(selected && found->fixed ? "Float" : "Fix");
     m_hide->setText(selected && found->visible ? "Hide" : "Show");

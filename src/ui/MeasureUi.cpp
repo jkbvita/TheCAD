@@ -105,7 +105,7 @@ void MainWindow::updateMeasureAction()
                            !m_session.document().shape().IsNull();
     if (!available && m_measure->isChecked())
         setMeasureActive(false);
-    m_measure->setEnabled(available);
+    m_measure->setEnabled(available && m_commands.availability("inspect.measure").available);
 }
 
 void MainWindow::refreshMeasurement()

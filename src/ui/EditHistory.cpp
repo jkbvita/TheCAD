@@ -22,7 +22,8 @@ void MainWindow::updateHistoryActions() {
     const bool clickingLines=m_sketchModifier && modeling::isSketchLineEdit(m_sketchModifier->kind);
     const bool ready=(!featureDraftActive() || clickingLines) && !m_selectingPlane &&
         !(m_smartDimension && m_smartDimension->editor);
-    m_undo->setEnabled(ready && m_session.canUndo());m_redo->setEnabled(ready && m_session.canRedo());
+    m_undo->setEnabled(ready && m_commands.availability("edit.undo").available);
+    m_redo->setEnabled(ready && m_commands.availability("edit.redo").available);
 }
 void MainWindow::traverseHistory(bool redo) {
     updateHistoryActions();

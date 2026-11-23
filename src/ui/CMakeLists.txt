@@ -12,11 +12,11 @@ target_include_directories(thecad_viewport_widget PUBLIC "${PROJECT_SOURCE_DIR}/
 target_link_libraries(thecad_viewport_widget PUBLIC Qt6::Widgets thecad_application thecad_graphics thecad_widgets)
 
 add_library(thecad_ui STATIC
-    MainWindow.cpp MainWindow.h EditHistory.cpp files/NativeFileDialogs.cpp
+    MainWindow.cpp MainWindow.h EditHistory.cpp UiCommandAdapter.cpp files/NativeFileDialogs.cpp
     features/ExtrusionOptionsPanel.cpp features/SplineParametersDialog.cpp features/SolidFeaturePanel.cpp features/SolidFeaturePanel.h features/SweepFeatureForm.cpp SolidFeaturesUi.cpp
     SelectionUi.cpp MeasureUi.cpp ReferenceGeometryUi.cpp SketchConstraintsUi.cpp
     SmartDimensionUi.cpp SketchToolsUi.cpp SketchModifierUi.cpp RelationsContextUi.cpp
-    assembly/AssemblyWindow.cpp assembly/AssemblyWindow.h assembly/AssemblyMateEditor.cpp assembly/AssemblyMateEditor.h
+    assembly/AssemblyWindow.cpp assembly/AssemblyWindow.h assembly/AssemblyUiCommands.cpp assembly/AssemblyMateEditor.cpp assembly/AssemblyMateEditor.h
     assembly/MateIcons.cpp assembly/MateIcons.h
     assembly/AssemblyMateParameters.cpp assembly/AssemblyMateParameters.h
     assembly/AssemblyQuickMates.cpp

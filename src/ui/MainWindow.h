@@ -2,6 +2,7 @@
 
 #include "document/PartDocument.h"
 #include "application/DocumentSession.h"
+#include "application/CommandSystem.h"
 
 #include <QMainWindow>
 #include <QPointer>
@@ -44,6 +45,7 @@ public:
     const document::PartDocument& document() const;
     QString currentPath() const;
     bool openPartFile(const QString& path);
+    application::CommandDispatcher& commands() { return m_commands; }
 
 protected:
     enum class UnsavedChoice { Save, Discard, Cancel };
@@ -137,6 +139,11 @@ private:
     QAction* m_redo=nullptr;
     void updateDocumentUi();
     void updateActions();
+    application::CommandContext commandContext() const;
+    void bindCommandHandlers();
+    void bindOperationCommands();
+    void bindReferenceCommands();
+    application::CommandResult dispatchCommand(const std::string& id);
     void updateSketchToolActions();
     QWidget* createMeasurePanel(QWidget* parent);
     void setMeasureActive(bool active);
@@ -228,6 +235,7 @@ private:
     enum class WorkspaceMode { Part, SelectingPlane, EditingSketch, FeatureDraft };
     WorkspaceMode m_mode = WorkspaceMode::Part;
     application::DocumentSession m_session;
+    application::CommandDispatcher m_commands;
     CadViewport* m_viewport = nullptr;
     QLabel* m_dimensions = nullptr;
     QTreeWidget* m_tree = nullptr;

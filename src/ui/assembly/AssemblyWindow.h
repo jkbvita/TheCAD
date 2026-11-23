@@ -1,5 +1,6 @@
 #pragma once
 #include "application/AssemblySession.h"
+#include "application/CommandSystem.h"
 #include <QMainWindow>
 #include <functional>
 class QAction;
@@ -25,6 +26,7 @@ public:
     const document::AssemblyDocument& document() const { return m_session.document(); }
     bool openAssemblyFile(const QString& path);
     bool insertPartFile(const QString& path);
+    application::CommandDispatcher& commands() { return m_commands; }
 
 protected:
     virtual QString chooseComponentPath();
@@ -73,11 +75,14 @@ private:
     bool maybeSave();
     void cancelDraft();
     void updateActions();
+    application::CommandContext commandContext() const;
+    void bindCommandHandlers();
     void mutate(const std::function<void(document::AssemblyDocument&)>& operation);
     bool draftActive() const;
     document::AssemblyReferenceOption faceReference(const std::string& id, int face,
                                                     TopAbs_ShapeEnum kind = TopAbs_FACE) const;
     application::AssemblySession m_session;
+    application::CommandDispatcher m_commands;
     AssemblyViewport* m_viewport;
     QTreeWidget* m_tree;
     QStackedWidget* m_panels;
