@@ -95,8 +95,8 @@ private:
     QDoubleSpinBox* m_insertCoordinates[3]{};
     std::vector<document::AssemblyReferenceOption> m_treeReferences;
     std::vector<document::AssemblyReferenceOption> m_preselection;
-    QAction *m_insertAction, *m_mateAction, *m_moveAction, *m_rotateAction, *m_undo, *m_redo,
-        *m_delete, *m_fix, *m_hide, *m_save, *m_saveAs, *m_open, *m_new, *m_rebuild;
+    QAction *m_insertAction, *m_mateAction, *m_undo, *m_redo, *m_delete, *m_fix, *m_hide,
+        *m_save, *m_saveAs, *m_open, *m_new, *m_rebuild;
     QAction *m_beltAction, *m_assetAction, *m_groundAction, *m_contextAction, *m_magneticAction;
 };
 void showAssemblyWindow(const QString& path = {});

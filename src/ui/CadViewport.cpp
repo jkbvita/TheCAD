@@ -1395,7 +1395,9 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
             m_selectedPoint = hit ? std::optional<modeling::SketchPointRef>(hit->reference) : std::nullopt;
             const auto body = hit ? std::optional<std::string>(hit->reference.entityId) : entityAt(event->position());
             if(!toggle){m_selectedEntities.clear();m_selectedDimensions.clear();}
-            if(body && !body->empty()) {
+            // A point belongs to an entity for reference/drag purposes, but selecting
+            // that point must not also select and highlight its whole owning curve.
+            if(!hit && body && !body->empty()) {
                 const auto found=std::find(m_selectedEntities.begin(),m_selectedEntities.end(),*body);
                 if(toggle && found!=m_selectedEntities.end())m_selectedEntities.erase(found);else m_selectedEntities.push_back(*body);
             }

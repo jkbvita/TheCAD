@@ -133,6 +133,20 @@ private slots:
         const auto target=pixel({-20,-30});QMouseEvent motion(QEvent::MouseMove,target,viewport->mapToGlobal(target),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);QApplication::sendEvent(viewport,&motion);QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,target);
         QCOMPARE(viewport->m_sketch->entities.back().id,id);QVERIFY(std::abs(viewport->m_sketch->entities.back().first.x+20)<0.5);validateSketchRelations(*viewport->m_sketch);
     }
+    void endpointPickSelectsPointWithoutSelectingOwningLine() {
+        using namespace modeling;
+        Sketch sketch;
+        sketch.entities={{EntityKind::Line,{-30,10},{35,10},1,"line"}};
+        viewport->beginSketch(sketch);
+        viewport->selectSketchTool();
+        click({-30,10});
+        QVERIFY(viewport->selectedSketchPoint());
+        QCOMPARE(viewport->selectedSketchPoint()->entityId,std::string("line"));
+        QCOMPARE(viewport->selectedSketchPoint()->role,PointRole::First);
+        QVERIFY(viewport->selectedSketchEntities().empty());
+        QVERIFY(viewport->selectedSketchEntity().empty());
+        QVERIFY(viewport->m_selectedEntityPresentation.IsNull());
+    }
     void centerlineAndPolygonCreationPreviewAndDrag() {
         using namespace modeling;viewport->setSketchTool(EntityKind::Line,true);click({-30,-20});hover({30,-20});click({30,-20});
         QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(1));QVERIFY(viewport->m_sketch->entities[0].construction);QVERIFY(!viewport->m_constructionPresentation.IsNull());QVERIFY(closedContours(*viewport->m_sketch).empty());

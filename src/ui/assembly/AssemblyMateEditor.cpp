@@ -1,5 +1,6 @@
 #include "ui/assembly/AssemblyMateEditor.h"
 #include "ui/assembly/AssemblyMateParameters.h"
+#include "ui/assembly/MateIcons.h"
 #include "ui/PropertyManagerPage.h"
 #include "ui/widgets/PropertyManagerControls.h"
 #include "document/storage/AssemblyMateData.h"
@@ -161,7 +162,7 @@ void AssemblyMateEditor::changeFamily()
     m_kind->clear();
     for (int i = 0; i < 22; ++i)
         if (int(mateFamily(MateKind(i))) == m_family->currentIndex())
-            m_kind->addItem(mateName(MateKind(i)), i);
+            m_kind->addItem(assemblyMateIcon(MateKind(i)), mateName(MateKind(i)), i);
     const int index = m_kind->findData(wanted);
     m_kind->setCurrentIndex(index < 0 ? 0 : index);
 }

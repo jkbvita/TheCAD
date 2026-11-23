@@ -1,6 +1,7 @@
 #include "ui/assembly/AssemblyWindow.h"
 #include "ui/assembly/AssemblyViewport.h"
 #include "ui/assembly/AssemblyMateEditor.h"
+#include "ui/assembly/MateIcons.h"
 #include "ui/assembly/AssemblyPropertyEditor.h"
 #include "ui/assembly/AssemblyBeltEditor.h"
 #include "ui/assembly/ComponentPlacementEditor.h"
@@ -442,22 +443,6 @@ void AssemblyWindow::buildCommands()
                });
     insert->addAction(m_magneticAction);
     insert->addAction(snapDistance);
-    m_moveAction = action("actionMoveComponent", "Move Component",
-                          [this]
-                          {
-                              m_viewport->setRotationMode(false);
-                              m_placement->focusRotation(false);
-                              updateActions();
-                          });
-    m_moveAction->setCheckable(true);
-    m_rotateAction = action("actionRotateComponent", "Rotate Component",
-                            [this]
-                            {
-                                m_viewport->setRotationMode(true);
-                                m_placement->focusRotation(true);
-                                updateActions();
-                            });
-    m_rotateAction->setCheckable(true);
     m_rebuild = action("actionRebuildAssembly", "Rebuild",
                        [this] { mutate([](auto& doc) { doc.reloadSources(); }); });
     m_rebuild->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_B));
@@ -491,9 +476,7 @@ void AssemblyWindow::buildCommands()
     auto* group = new QWidget;
     auto* grid = new QGridLayout(group);
     grid->setContentsMargins(5, 0, 5, 0);
-    commandButton(m_moveAction, grid, 0, 0);
-    commandButton(m_rotateAction, grid, 1, 0);
-    commandButton(m_rebuild, grid, 2, 0);
+    commandButton(m_rebuild, grid, 0, 0);
     row->addWidget(group);
     auto* workflows = new QWidget;
     workflows->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
@@ -814,6 +797,7 @@ void AssemblyWindow::refreshTree()
             : mate.status == modeling::assembly::MateStatus::Unsolved ? " (unsolved)"
                                                                       : "";
         auto* item = new QTreeWidgetItem(mates, {q(mate.name) + status});
+        item->setIcon(0, assemblyMateIcon(mate.kind));
         item->setData(0, Qt::UserRole, q(mate.id));
         item->setData(0, kindRole, "mate");
         item->setToolTip(0, QString::fromUtf8(modeling::assembly::mateName(mate.kind)) + "\n" +
@@ -1314,8 +1298,7 @@ void AssemblyWindow::updateActions()
     const bool active = draftActive();
     const auto found = std::find_if(document().components().begin(), document().components().end(),
                                     [&](const auto& c) { return c.id == m_selected; });
-    const bool selected = found != document().components().end(),
-               movable = selected && document().componentMovable(found->id) && !active;
+    const bool selected = found != document().components().end();
     m_insertAction->setEnabled(!active);
     m_mateAction->setEnabled(!active && !document().components().empty());
     m_beltAction->setEnabled(!active && document().components().size() >= 2);
@@ -1332,11 +1315,6 @@ void AssemblyWindow::updateActions()
     m_hide->setEnabled(!active && selected);
     m_fix->setText(selected && found->fixed ? "Float" : "Fix");
     m_hide->setText(selected && found->visible ? "Hide" : "Show");
-    const bool placementMode = selected && !found->fixed && !m_mate && !m_workflow && !m_insertPage;
-    m_moveAction->setEnabled(movable);
-    m_rotateAction->setEnabled(movable);
-    m_moveAction->setChecked(placementMode && !m_viewport->rotationMode());
-    m_rotateAction->setChecked(placementMode && m_viewport->rotationMode());
     bool deletable = false;
     for (const auto* item : m_tree->selectedItems())
         deletable |= item->data(0, kindRole).toString() == "component" ||
