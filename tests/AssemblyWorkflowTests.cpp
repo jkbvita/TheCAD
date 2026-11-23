@@ -574,15 +574,28 @@ private slots:
                 1e-6);
         command(window, "actionRedo");
         command(window, "actionUndo");
-        command(window, "actionRotateComponent");
         QTest::mousePress(viewport, Qt::LeftButton, Qt::NoModifier, start);
-        QApplication::sendEvent(viewport, &move);
-        QTest::mouseRelease(viewport, Qt::LeftButton, Qt::NoModifier, end);
+        // A curved drag gesture rotates a component without a separate mode.
+        // Use an arc around the grabbed screen point so the final orientation
+        // differs from the original while the grabbed point stays anchored.
+        const QPointF center = start + QPoint(0, -32);
+        for (int i = 1; i <= 20; ++i)
+        {
+            const double angle = 1.5707963267948966 + (2.0 * i / 20.0);
+            const QPointF point(center.x() + 32.0 * std::cos(angle),
+                                center.y() + 32.0 * std::sin(angle));
+            QMouseEvent curved(QEvent::MouseMove, point, viewport->mapToGlobal(point.toPoint()),
+                               Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(viewport, &curved);
+        }
+        const QPoint curvedEnd = viewport->mapFromGlobal(
+            viewport->mapToGlobal(start) + QPoint(qRound(32 * std::cos(1.57079632679 + 2.0)),
+                                                   qRound(32 * std::sin(1.57079632679 + 2.0))));
+        QTest::mouseRelease(viewport, Qt::LeftButton, Qt::NoModifier, curvedEnd);
         QVERIFY(window.document().component(b).placement.GetRotation().GetRotationAngle() > 0.01);
         unchanged(camera, viewport);
         command(window, "actionUndo");
         QVERIFY(window.document().component(b).placement.GetRotation().GetRotationAngle() < 1e-8);
-        command(window, "actionMoveComponent");
         const auto beforeCancel = window.document().stateKey();
         QTest::mousePress(viewport, Qt::LeftButton, Qt::NoModifier, start);
         QApplication::sendEvent(viewport, &move);

@@ -35,8 +35,6 @@ public:
     void setReferenceHighlights(const std::vector<AssemblyVisual>& references);
     void setMatePicking(bool active) { m_matePicking = active; }
     void setInserting(bool active) { m_inserting = active; }
-    void setRotationMode(bool rotate) { m_rotate = rotate; }
-    bool rotationMode() const { return m_rotate; }
     void fitAll();
     void standardView(int index);
     gp_Pnt cursorPoint(const QPointF& position) const;
@@ -71,6 +69,7 @@ private:
     void initialize();
     QPoint native(const QPointF& point) const;
     AssemblyHit hit(const QPointF& point);
+    gp_Pnt cursorPointAtDepth(const QPointF& point, const gp_Pnt& planePoint) const;
     TopoDS_Shape selectedShape(const std::string& id, int face,
                                TopAbs_ShapeEnum kind = TopAbs_FACE) const;
     void refreshSelection();
@@ -88,7 +87,13 @@ private:
     QPointF m_press;
     gp_Trsf m_dragPose;
     gp_Pnt m_dragPoint;
-    bool m_dragMoved = false, m_matePicking = false, m_inserting = false, m_rotate = false,
+    std::optional<gp_Pnt> m_hitPoint;
+    QPointF m_dragPrevious, m_dragCentroidSum;
+    double m_dragPathLength = 0.0, m_dragSignedTurn = 0.0, m_dragAbsoluteTurn = 0.0;
+    int m_dragSampleCount = 0;
+    enum class DragMode { Pending, Translate, Rotate };
+    DragMode m_dragMode = DragMode::Pending;
+    bool m_dragMoved = false, m_matePicking = false, m_inserting = false,
          m_attempted = false, m_fitPending = false;
     QString m_error;
 };

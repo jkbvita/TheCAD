@@ -17,6 +17,7 @@ add_library(thecad_ui STATIC
     SelectionUi.cpp MeasureUi.cpp ReferenceGeometryUi.cpp SketchConstraintsUi.cpp
     SmartDimensionUi.cpp SketchToolsUi.cpp SketchModifierUi.cpp RelationsContextUi.cpp
     assembly/AssemblyWindow.cpp assembly/AssemblyWindow.h assembly/AssemblyMateEditor.cpp assembly/AssemblyMateEditor.h
+    assembly/MateIcons.cpp assembly/MateIcons.h
     assembly/AssemblyMateParameters.cpp assembly/AssemblyMateParameters.h
     assembly/AssemblyQuickMates.cpp
     assembly/AssemblyPropertyEditor.cpp assembly/AssemblyPropertyEditor.h
