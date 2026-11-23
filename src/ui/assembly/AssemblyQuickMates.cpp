@@ -1,5 +1,6 @@
 #include "ui/assembly/AssemblyWindow.h"
 #include "ui/assembly/AssemblyMateEditor.h"
+#include "ui/assembly/MateIcons.h"
 #include "modeling/assembly/MateEquations.h"
 #include <QComboBox>
 #include <QCursor>
@@ -23,7 +24,7 @@ void AssemblyWindow::quickMates()
     {
         if (!compatibleMate(kind, first.mateGeometry, second.mateGeometry))
             continue;
-        auto* action = menu->addAction(mateName(kind));
+        auto* action = menu->addAction(assemblyMateIcon(kind), mateName(kind));
         action->setObjectName(QString("quickMate_%1").arg(mateKey(kind)));
         connect(action, &QAction::triggered, this,
                 [this, kind]

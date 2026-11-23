@@ -1,4 +1,5 @@
 #include "ui/assembly/AssemblyWindow.h"
+#include "ui/assembly/MateIcons.h"
 #include "ui/assembly/AssemblyViewport.h"
 #include "ui/assembly/AssemblyMateEditor.h"
 #include "ui/assembly/AssemblyPropertyEditor.h"
@@ -815,6 +816,7 @@ void AssemblyWindow::refreshTree()
             : mate.status == modeling::assembly::MateStatus::Unsolved ? " (unsolved)"
                                                                       : "";
         auto* item = new QTreeWidgetItem(mates, {q(mate.name) + status});
+        item->setIcon(0, assemblyMateIcon(mate.kind));
         item->setData(0, Qt::UserRole, q(mate.id));
         item->setData(0, kindRole, "mate");
         item->setToolTip(0, QString::fromUtf8(modeling::assembly::mateName(mate.kind)) + "\n" +

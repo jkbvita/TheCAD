@@ -22,7 +22,7 @@ add_library(thecad_ui STATIC
     SmartDimensionUi.cpp SketchToolsUi.cpp SketchModifierUi.cpp RelationsContextUi.cpp
     assembly/AssemblyWindow.cpp assembly/AssemblyWindow.h assembly/AssemblyMateEditor.cpp assembly/AssemblyMateEditor.h
     assembly/AssemblyMateParameters.cpp assembly/AssemblyMateParameters.h
-    assembly/AssemblyQuickMates.cpp
+    assembly/AssemblyQuickMates.cpp assembly/MateIcons.cpp assembly/MateIcons.h
     assembly/AssemblyPropertyEditor.cpp assembly/AssemblyPropertyEditor.h
     assembly/AssemblyBeltEditor.cpp assembly/AssemblyBeltEditor.h
     assembly/AssemblyAssetEditor.cpp assembly/AssemblyAssetEditor.h
