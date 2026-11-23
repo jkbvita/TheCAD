@@ -7,6 +7,7 @@
 #include <BRepPrimAPI_MakeCone.hxx>
 #include <GC_MakeArcOfCircle.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRepPrimAPI_MakeTorus.hxx>
 #include <TopExp_Explorer.hxx>
 #include <Geom_Line.hxx>
 #include <gp_Quaternion.hxx>
@@ -343,6 +344,40 @@ void geometry()
             cone = g;
     }
     solve(bodies(), pair(MateKind::Tangent, cone, entity(K::Plane)), 4);
+
+    // SolidWorks permits a straight edge tangent to a non-analytic surface.
+    // Use a tangent segment at the middle of a torus face to verify both the
+    // selection matrix and surface-contact equation without opening a UI.
+    MateGeometry torusSurface;
+    const auto torus = BRepPrimAPI_MakeTorus(8, 2).Shape();
+    for (TopExp_Explorer it(torus, TopAbs_FACE); it.More(); it.Next())
+    {
+        torusSurface = mateGeometry(it.Current());
+        if (torusSurface.kind == K::Surface)
+            break;
+    }
+    const auto straightAxis = entity(K::Line);
+    require(torusSurface.kind == K::Surface &&
+                !compatibleMate(MateKind::Tangent, straightAxis, torusSurface),
+            "An infinite axis should not be offered for finite-edge surface tangency");
+    const double u = 0.5 * (torusSurface.u0 + torusSurface.u1);
+    const double v = 0.5 * (torusSurface.v0 + torusSurface.v1);
+    gp_Pnt contact;
+    gp_Vec du, dv;
+    torusSurface.surface->D1(u, v, contact, du, dv);
+    du.Normalize();
+    const auto tangentEdge = BRepBuilderAPI_MakeEdge(contact.Translated(du * -5),
+                                                      contact.Translated(du * 5)).Edge();
+    const auto tangentLine = mateGeometry(tangentEdge);
+    require(compatibleMate(MateKind::Tangent, tangentLine, torusSurface),
+            "A finite line and non-analytic surface should permit a tangent mate");
+    auto lineSurface = pair(MateKind::Tangent, tangentLine, torusSurface);
+    lineSurface.definition->motion.initialized = true;
+    lineSurface.definition->motion.anchors = {gp_Trsf(), gp_Trsf()};
+    lineSurface.definition->motion.coordinates = {
+        (u - torusSurface.u0) / (torusSurface.u1 - torusSurface.u0),
+        (v - torusSurface.v0) / (torusSurface.v1 - torusSurface.v0), 0.5};
+    solve(bodies({}, 0), lineSurface, 5);
 }
 } // namespace
 int main()
@@ -364,3 +399,4 @@ int main()
         return 1;
     }
 }
+

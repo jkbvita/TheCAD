@@ -44,7 +44,10 @@ pixels; selections and previews preserve the camera.
   closed tangent chain, excluding end faces. Normalized winding makes external
   roller contact independent of the picked seed face.
 - General surface contact validates finite UV domains and trimmed faces; singular
-  normals and invalid contact branches reject transactionally.
+  normals and invalid contact branches reject transactionally. Tangent mates now
+  support finite straight edges against non-analytic surfaces by solving a shared
+  surface/edge contact point and tangent direction. Infinite reference axes are
+  not offered for that pair because they do not provide a bounded contact segment.
 
 ## Generated workflows
 
@@ -110,6 +113,8 @@ This is a testable expanded mate implementation, not complete SolidWorks parity.
 - Linked misaligned-concentric deviation options are not implemented.
 - Cam requires planar/cylindrical extruded side faces; general spline cam surfaces,
   arbitrary face-chain contact and collision dynamics are not covered.
+- Line-to-non-analytic-surface Tangent is limited to finite straight edges. Curved
+  sketch entities and unbounded axes need separate contact equations.
 - Some Standard entity pairs and complex nonparallel Width combinations reject.
   A failed nonlinear solve preserves the prior model; it does not prove that the
   physical configuration is impossible.
@@ -139,7 +144,9 @@ This is a testable expanded mate implementation, not complete SolidWorks parity.
    original files backed up when testing schema-2 saves.
 
 Official references: [research catalog](solidworks-assembly-mates.md),
+[Standard Mates by Entity](https://help.solidworks.com/2025/english/SolidWorks/sldworks/r_Standard_Mates_by_Entity.htm),
 [Profile Center](https://help.solidworks.com/2021/English/SolidWorks/sldworks/t_profile_center_mate.htm),
 [Width](https://help.solidworks.com/2025/english/SolidWorks/sldworks/t_Width_Mates_SWassy.htm),
 [Belt/Chain](https://help.solidworks.com/2023/english/solidworks/sldworks/HIDD_DVE_FEAT_BELT.htm),
 [Magnetic Mates](https://help.solidworks.com/2026/English/SolidWorks/sldworks/c_magnetic_mates_intro.htm).
+
