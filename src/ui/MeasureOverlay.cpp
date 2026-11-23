@@ -73,10 +73,11 @@ void CadViewport::renderMeasurement()
     const double ratio = devicePixelRatioF();
     const bool dark = ThemeManager::instance().isDark();
     std::vector<Handle(AIS_TextLabel)> labels;
-    auto display = [&](Handle(AIS_InteractiveObject) h, int mode)
+    auto display = [&](Handle(AIS_InteractiveObject) h, int mode,
+                       Graphic3d_ZLayerId layer = Graphic3d_ZLayerId_Topmost)
     {
         h->SetInfiniteState(true);
-        h->SetZLayer(Graphic3d_ZLayerId_Topmost);
+        h->SetZLayer(layer);
         ctx->Display(h, mode, -1, false);
         m_measureDecorations.push_back(h);
     };
@@ -93,7 +94,7 @@ void CadViewport::renderMeasurement()
         h->SetWidth(ratio * (dashed ? 1. : 1.6));
         if (dashed)
             h->Attributes()->SetLineAspect(new Prs3d_LineAspect(c, Aspect_TOL_DASH, ratio));
-        display(h, AIS_WireFrame);
+        display(h, AIS_WireFrame, Graphic3d_ZLayerId_Top);
         return h;
     };
     const gp_Vec normal(view->Camera()->Direction());
@@ -202,6 +203,6 @@ void CadViewport::renderMeasurement()
     // Draw text after every dimension line, so later component spans cannot
     // paint across labels belonging to earlier measurements.
     for (const auto& label : labels)
-        display(label, 0);
+        display(label, 0, Graphic3d_ZLayerId_Topmost);
 }
 } // namespace thecad::ui
