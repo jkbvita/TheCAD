@@ -556,7 +556,7 @@ MateSolution dragMates(const std::vector<RigidBody>& bodies, const std::vector<R
             limit = std::max(limit, std::abs(delta[std::size_t(c)]) /
                                         (variables[std::size_t(c)].body >= 0 &&
                                                  variables[std::size_t(c)].coordinate >= 3
-                                             ? 0.18
+                                             ? 0.4
                                              : 0.5));
         }
         auto trial = state;

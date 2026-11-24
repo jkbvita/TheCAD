@@ -8,7 +8,6 @@
 #include <AIS_Shape.hxx>
 #include <BRepBndLib.hxx>
 #include <Bnd_Box.hxx>
-#include <gp_Ax1.hxx>
 #include <Graphic3d_Camera.hxx>
 #include <SelectMgr_ViewerSelector.hxx>
 #include <StdSelect_BRepOwner.hxx>
@@ -16,10 +15,8 @@
 #include <TopExp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopLoc_Location.hxx>
-#include <gp_Quaternion.hxx>
 #include <QApplication>
 #include <QKeyEvent>
-#include <QLineF>
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <algorithm>
@@ -462,19 +459,17 @@ void AssemblyViewport::mousePressEvent(QMouseEvent* event)
     if (pickedValue.kind == TopAbs_FACE)
         emit picked(QString::fromStdString(pickedValue.first), pickedValue.second,
                     event->modifiers());
-    if (!m_matePicking && !value.id.empty() && !value.fixed &&
+    if (event->button() == Qt::LeftButton && !m_matePicking && !value.id.empty() && !value.fixed &&
         !(event->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier)))
     {
         m_dragId = value.id;
         m_press = event->position();
         m_dragPoint = m_hitPoint.value_or(cursorPoint(m_press));
-        m_dragPose = value.placement;
+        m_dragLocalPoint = m_dragPoint.Transformed(value.placement.Inverted());
+        m_dragTolerance = std::max(1e-5, 0.5 * m_dragPoint.Distance(
+            cursorPointAtDepth(m_press + QPointF(1, 0), m_dragPoint)));
         m_dragMoved = false;
-        m_dragMode = DragMode::Pending;
         m_dragPrevious = m_press;
-        m_dragCentroidSum = m_press;
-        m_dragPathLength = m_dragSignedTurn = m_dragAbsoluteTurn = 0.0;
-        m_dragSampleCount = 1;
     }
 }
 void AssemblyViewport::mouseMoveEvent(QMouseEvent* event)
@@ -500,17 +495,6 @@ void AssemblyViewport::mouseMoveEvent(QMouseEvent* event)
     }
     if (!m_dragId.empty() && event->buttons().testFlag(Qt::LeftButton))
     {
-        const QPointF next = event->position() - m_press;
-        const QPointF previous = m_dragPrevious - m_press;
-        m_dragPathLength += QLineF(m_dragPrevious, event->position()).length();
-        const double cross = previous.x() * next.y() - previous.y() * next.x();
-        const double dot = previous.x() * next.x() + previous.y() * next.y();
-        const double turn = std::atan2(cross, dot);
-        m_dragSignedTurn += turn;
-        m_dragAbsoluteTurn += std::abs(turn);
-        m_dragPrevious = event->position();
-        m_dragCentroidSum += event->position();
-        ++m_dragSampleCount;
         if (!m_dragMoved &&
             (event->position() - m_press).manhattanLength() < QApplication::startDragDistance())
             return;
@@ -520,56 +504,13 @@ void AssemblyViewport::mouseMoveEvent(QMouseEvent* event)
             emit dragStarted();
             grabMouse();
         }
-        // Infer the intended action from the drag itself: a straight gesture
-        // translates the component, while a curved/circular gesture rotates it.
-        // Recompute from the original placement on every event to avoid drift.
-        const double pathLength = m_dragPathLength;
-        const double signedTurn = m_dragSignedTurn;
-        const double absoluteTurn = m_dragAbsoluteTurn;
-        const double directLength = QLineF(m_press, event->position()).length();
-        if (m_dragMode == DragMode::Pending && pathLength >= 24.0)
-        {
-            const bool mostlyStraight = pathLength >= 40.0 &&
-                                        directLength / std::max(1.0, pathLength) > 0.97 &&
-                                        absoluteTurn < 0.35;
-            const bool curvedGesture = pathLength >= 24.0 && absoluteTurn >= 0.70 &&
-                                       std::abs(signedTurn) >= 0.60;
-            if (curvedGesture)
-                m_dragMode = DragMode::Rotate;
-            else if (mostlyStraight || pathLength >= 80.0)
-                m_dragMode = DragMode::Translate;
-        }
-        auto placement = m_dragPose;
-        if (m_dragMode == DragMode::Rotate)
-        {
-            QPointF centroid;
-            if (m_dragSampleCount > 0)
-                centroid = m_dragCentroidSum / static_cast<double>(m_dragSampleCount);
-            auto startVector = m_press - centroid;
-            auto currentVector = event->position() - centroid;
-            if (std::hypot(startVector.x(), startVector.y()) < 3.0)
-                startVector = QPointF(1.0, 0.0);
-            const double angle = std::atan2(startVector.x() * currentVector.y() -
-                                                startVector.y() * currentVector.x(),
-                                            startVector.x() * currentVector.x() +
-                                                startVector.y() * currentVector.y());
-            const gp_Dir axis = camera()->Direction();
-            const auto localAnchor = m_dragPoint.Transformed(m_dragPose.Inverted());
-            const auto rotation = gp_Quaternion(axis, -angle) * m_dragPose.GetRotation();
-            placement.SetRotation(rotation);
-            auto rotatedAnchor = localAnchor;
-            rotatedAnchor.Transform(placement);
-            placement.SetTranslationPart(gp_Vec(rotatedAnchor, m_dragPoint));
-        }
-        else if (m_dragMode == DragMode::Translate || m_dragMode == DragMode::Pending)
-        {
-            // While the gesture is still ambiguous, preview translation. It
-            // remains reversible until the path becomes clearly rotational.
-            placement.SetTranslationPart(
-                m_dragPose.TranslationPart() +
-                gp_Vec(m_dragPoint, cursorPointAtDepth(event->position(), m_dragPoint)).XYZ());
-        }
-        emit dragPlacement(QString::fromStdString(m_dragId), placement);
+        if (std::hypot(event->position().x() - m_dragPrevious.x(),
+                       event->position().y() - m_dragPrevious.y()) < 1.0)
+            return;
+        m_dragPrevious = event->position();
+        emit dragPointRequested(QString::fromStdString(m_dragId), m_dragLocalPoint,
+                                cursorPointAtDepth(event->position(), m_dragPoint),
+                                camera()->Direction(), m_dragTolerance);
         return;
     }
     hover(event->position());
@@ -586,21 +527,12 @@ void AssemblyViewport::mouseReleaseEvent(QMouseEvent* event)
     if (event->button() == Qt::LeftButton && !m_dragId.empty())
     {
         const bool moved = m_dragMoved;
-        // Short/ambiguous gestures default to translation, matching the normal
-        // expectation for dragging a component by a face or vertex.
-        if (moved && m_dragMode == DragMode::Pending)
-        {
-            const auto placement = m_dragPose;
-            const auto delta = gp_Vec(m_dragPoint,
-                                      cursorPointAtDepth(event->position(), m_dragPoint));
-            auto translated = placement;
-            translated.SetTranslationPart(placement.TranslationPart() + delta.XYZ());
-            emit dragPlacement(QString::fromStdString(m_dragId), translated);
-        }
+        if (moved && event->position() != m_dragPrevious)
+            emit dragPointRequested(QString::fromStdString(m_dragId), m_dragLocalPoint,
+                                    cursorPointAtDepth(event->position(), m_dragPoint),
+                                    camera()->Direction(), m_dragTolerance);
         m_dragId.clear();
         m_dragMoved = false;
-        m_dragMode = DragMode::Pending;
-        m_dragSampleCount = 0;
         if (QWidget::mouseGrabber() == this)
             releaseMouse();
         if (moved)

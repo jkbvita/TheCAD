@@ -110,6 +110,7 @@ approved scope do not need repeated approval.
 - [0063. Application command system](0063-application-command-system.md) — stable command IDs, typed requests and application-level dispatch.
 
 - [0064. One consolidated desktop build](0064-consolidated-desktop-build.md) — keep accepted development lines together and publish one desktop shortcut target.
+- [0065. Mate-constrained component drag](0065-mate-constrained-component-drag.md) — move a grabbed point only through the degrees of freedom left by assembly mates.
 
 ## Pending owner decisions
 

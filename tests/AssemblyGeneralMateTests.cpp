@@ -106,6 +106,52 @@ void standards()
     require(!compatibleMate(MateKind::Concentric, plane, cylinder),
             "Plane/cylinder concentric accepted");
 }
+void constrainedDragging()
+{
+    const auto cylinder = entity(K::Cylinder, {}, gp_Dir(0, 0, 1), 2);
+    const auto plane = entity(K::Plane);
+    auto assembly = bodies({}, 0);
+    const std::vector<ResolvedMate> mates = {
+        pair(MateKind::Concentric, cylinder, cylinder),
+        pair(MateKind::Coincident, plane, plane)};
+    const gp_Pnt grab(4, 0, 0), target(0, 4, 0);
+    const auto result = dragMates(assembly, mates, {1, grab, target, gp_Dir(0, 0, 1), 0.01});
+    const double dragError = grab.Transformed(result.placements[1]).Distance(target);
+    require(dragError < 0.1,
+            "Dragging an off-axis point must rotate a concentric, seated component; error=" +
+                std::to_string(dragError));
+    require(result.placements[1].TranslationPart().Modulus() < 1e-4,
+            "Concentric drag must keep the shaft seated on its axis");
+    require(result.placements[0].TranslationPart().Modulus() < 1e-12,
+            "Dragging must not move the fixed component");
+
+    auto movingBodies = assembly;
+    auto movingMates = mates;
+    for (int step = 1; step <= 16; ++step)
+    {
+        const double angle = (step <= 8 ? step : 16 - step) * pi / 16;
+        const gp_Pnt cursor(4 * std::cos(angle), 4 * std::sin(angle), 0);
+        const auto preview = dragMates(
+            movingBodies, movingMates, {1, grab, cursor, gp_Dir(0, 0, 1), 0.01});
+        require(grab.Transformed(preview.placements[1]).Distance(cursor) < 0.1,
+                "Repeated dragging must follow the same grabbed point through mate freedom");
+        movingBodies[1].placement = preview.placements[1];
+        for (std::size_t i = 0; i < movingMates.size(); ++i)
+            movingMates[i].definition->motion = preview.motion[i];
+    }
+    require(grab.Transformed(movingBodies[1].placement).Distance(grab) < 0.1,
+            "Returning the cursor must return the mated component without drift");
+
+    auto locked = mates;
+    locked.front().definition->parameters.standard.lockRotation = true;
+    const auto blocked = dragMates(assembly, locked, {1, grab, target, gp_Dir(0, 0, 1), 0.01});
+    require(grab.Transformed(blocked.placements[1]).Distance(grab) < 1e-4,
+            "Lock rotation must prevent point dragging around the axis");
+
+    const auto free = dragMates(assembly, {}, {1, grab, target, gp_Dir(0, 0, 1), 0.01});
+    require(grab.Transformed(free.placements[1]).Distance(target) < 1e-4,
+            "Unmated component must follow a dragged point by translation");
+}
 void advanced()
 {
     const auto plane = entity(K::Plane), axis = entity(K::Line), point = entity(K::Point);
@@ -385,6 +431,7 @@ int main()
     try
     {
         standards();
+        constrainedDragging();
         advanced();
         mechanical();
         relativeMechanicalMotion();

@@ -255,12 +255,6 @@ AssemblyWindow::AssemblyWindow(QWidget* parent) : QMainWindow(parent),
                 m_dragCandidate = document();
                 updateActions();
             });
-    connect(m_viewport, &AssemblyViewport::dragPlacement, this,
-            [this](const QString& id, const gp_Trsf& pose)
-            {
-                previewComponentDrag(id,
-                                     [&](auto& doc) { doc.setPlacement(id.toStdString(), pose); });
-            });
     connect(m_viewport, &AssemblyViewport::dragPointRequested, this,
             [this](const QString& id, const gp_Pnt& local, const gp_Pnt& target,
                    const gp_Dir& normal, double tolerance)

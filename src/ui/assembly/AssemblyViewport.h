@@ -49,7 +49,6 @@ signals:
     void entityPicked(const QString& component, TopAbs_ShapeEnum kind, int index,
                       Qt::KeyboardModifiers modifiers);
     void dragStarted();
-    void dragPlacement(const QString& component, const gp_Trsf& placement);
     void dragPointRequested(const QString& component, const gp_Pnt& local, const gp_Pnt& target,
                             const gp_Dir& normal, double tolerance);
     void dragFinished(bool accepted);
@@ -95,14 +94,10 @@ private:
     int m_selectedFace = 0, m_hoveredFace = 0;
     TopAbs_ShapeEnum m_selectedKind = TopAbs_FACE, m_hoveredKind = TopAbs_FACE;
     QPointF m_press;
-    gp_Trsf m_dragPose;
-    gp_Pnt m_dragPoint;
+    gp_Pnt m_dragPoint, m_dragLocalPoint;
     std::optional<gp_Pnt> m_hitPoint;
-    QPointF m_dragPrevious, m_dragCentroidSum;
-    double m_dragPathLength = 0.0, m_dragSignedTurn = 0.0, m_dragAbsoluteTurn = 0.0;
-    int m_dragSampleCount = 0;
-    enum class DragMode { Pending, Translate, Rotate };
-    DragMode m_dragMode = DragMode::Pending;
+    QPointF m_dragPrevious;
+    double m_dragTolerance = 0.01;
     bool m_dragMoved = false, m_matePicking = false, m_inserting = false,
          m_attempted = false, m_fitPending = false;
     QString m_error;

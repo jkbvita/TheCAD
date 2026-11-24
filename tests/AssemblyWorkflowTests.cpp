@@ -655,9 +655,8 @@ private slots:
         command(window, "actionRedo");
         command(window, "actionUndo");
         QTest::mousePress(viewport, Qt::LeftButton, Qt::NoModifier, start);
-        // A curved drag gesture rotates a component without a separate mode.
-        // Use an arc around the grabbed screen point so the final orientation
-        // differs from the original while the grabbed point stays anchored.
+        // Mouse-path curvature must not invent a rotation for an unmated body.
+        // Its grabbed point follows the pointer by translation instead.
         const QPointF center = start + QPoint(0, -32);
         for (int i = 1; i <= 20; ++i)
         {
@@ -672,7 +671,9 @@ private slots:
             viewport->mapToGlobal(start) + QPoint(qRound(32 * std::cos(1.57079632679 + 2.0)),
                                                    qRound(32 * std::sin(1.57079632679 + 2.0))));
         QTest::mouseRelease(viewport, Qt::LeftButton, Qt::NoModifier, curvedEnd);
-        QVERIFY(window.document().component(b).placement.GetRotation().GetRotationAngle() > 0.01);
+        QVERIFY(window.document().component(b).placement.GetRotation().GetRotationAngle() < 1e-8);
+        QVERIFY(std::abs(window.document().component(b).placement.TranslationPart().X() - 50) >
+                0.1);
         unchanged(camera, viewport);
         command(window, "actionUndo");
         QVERIFY(window.document().component(b).placement.GetRotation().GetRotationAngle() < 1e-8);
