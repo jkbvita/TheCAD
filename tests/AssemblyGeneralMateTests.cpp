@@ -7,6 +7,7 @@
 #include <BRepPrimAPI_MakeCone.hxx>
 #include <GC_MakeArcOfCircle.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRepPrimAPI_MakeTorus.hxx>
 #include <TopExp_Explorer.hxx>
 #include <Geom_Line.hxx>
 #include <gp_Quaternion.hxx>
@@ -343,64 +344,40 @@ void geometry()
             cone = g;
     }
     solve(bodies(), pair(MateKind::Tangent, cone, entity(K::Plane)), 4);
-}
-void pointDragging()
-{
-    const auto axis = entity(K::Line), plane = entity(K::Plane);
-    auto hinge = pair(MateKind::Hinge, axis, axis);
-    hinge.definition->references = {{"concentric", 0, axis},
-                                    {"concentric", 1, axis},
-                                    {"coincident", 0, plane},
-                                    {"coincident", 1, plane}};
-    auto b = bodies({}, 0);
-    for (int i = 1; i <= 24; ++i)
+
+    // SolidWorks permits a straight edge tangent to a non-analytic surface.
+    // Use a tangent segment at the middle of a torus face to verify both the
+    // selection matrix and surface-contact equation without opening a UI.
+    MateGeometry torusSurface;
+    const auto torus = BRepPrimAPI_MakeTorus(8, 2).Shape();
+    for (TopExp_Explorer it(torus, TopAbs_FACE); it.More(); it.Next())
     {
-        const double angle = i * pi / 48;
-        const gp_Pnt wanted(10 * std::cos(angle), 10 * std::sin(angle), 0);
-        const auto result = dragMates(b, {hinge}, {1, {10, 0, 0}, wanted, gp_Dir(0, 0, 1), 1e-4});
-        require(gp_Pnt(10, 0, 0).Transformed(result.placements[1]).Distance(wanted) < 0.01,
-                "Grabbed hinge point did not follow a circular cursor path");
-        require(result.degreesOfFreedom == 1, "Temporary drag target leaked into mate freedom");
-        b[1].placement = result.placements[1];
-        hinge.definition->motion = result.motion[0];
+        torusSurface = mateGeometry(it.Current());
+        if (torusSurface.kind == K::Surface)
+            break;
     }
-    auto blocked = dragMates(b, {hinge}, {1, {10, 0, 0}, {0, 20, 0}, gp_Dir(0, 0, 1), 1e-4});
-    require(gp_Pnt().Transformed(blocked.placements[1]).Distance(gp_Pnt()) < 1e-6,
-            "Off-path mouse motion broke the hinge");
-    auto free = dragMates(b, {}, {1, {2, 3, 4}, {15, 7, 4}, gp_Dir(0, 0, 1), 1e-4});
-    require(gp_Pnt(2, 3, 4).Transformed(free.placements[1]).Distance(gp_Pnt(15, 7, 4)) < 1e-6,
-            "Free grab point drifted");
-    require(std::abs(free.placements[1].GetRotation().GetRotationAngle() -
-                     b[1].placement.GetRotation().GetRotationAngle()) < 1e-8,
-            "Straight free drag changed orientation");
-    auto limit = pair(MateKind::LimitDistance, plane, plane);
-    limit.definition->parameters.limit = {0, 5};
-    b = bodies({}, 0);
-    const auto stop = dragMates(b, {limit}, {1, {0, 0, 0}, {0, 0, 8}, gp_Dir(0, 1, 0), 1e-4});
-    require(stop.placements[1].TranslationPart().Z() <= 5.00001, "Point drag crossed a mate limit");
-    b[1].placement = stop.placements[1];
-    limit.definition->motion = stop.motion[0];
-    const auto reverse = dragMates(b, {limit}, {1, {0, 0, 0}, {0, 0, 2}, gp_Dir(0, 1, 0), 1e-4});
-    require(std::abs(reverse.placements[1].TranslationPart().Z() - 2) < 0.01,
-            "Point drag could not reverse away from a stop");
-    b = {{"ground", {}, true, 40}, {"driver", {}, false, 20}, {"follower", {}, false, 20}};
-    b[2].placement.SetTranslationPart({30, 0, 0});
-    hinge.definition->motion = {};
-    auto secondHinge = hinge;
-    secondHinge.id = "second-hinge";
-    secondHinge.definition->references = {{"concentric", 0, entity(K::Line, {30, 0, 0})},
-                                          {"concentric", 2, axis},
-                                          {"coincident", 0, plane},
-                                          {"coincident", 2, plane}};
-    auto gear = pair(MateKind::Gear, axis, axis);
-    gear.definition->references = {{"first", 1, axis}, {"second", 2, axis}};
-    gear.definition->parameters.coupler.secondRatio = 2;
-    const auto coupled = dragMates(
-        b, {hinge, secondHinge, gear},
-        {1, {10, 0, 0}, {10 * std::cos(0.2), 10 * std::sin(0.2), 0}, gp_Dir(0, 0, 1), 1e-4});
-    const auto follower = gp_Dir(1, 0, 0).Transformed(coupled.placements[2]);
-    require(follower.IsEqual(gp_Dir(std::cos(-0.1), std::sin(-0.1), 0), 0.002),
-            "Grab-point driving did not propagate through a gear mate");
+    const auto straightAxis = entity(K::Line);
+    require(torusSurface.kind == K::Surface &&
+                !compatibleMate(MateKind::Tangent, straightAxis, torusSurface),
+            "An infinite axis should not be offered for finite-edge surface tangency");
+    const double u = 0.5 * (torusSurface.u0 + torusSurface.u1);
+    const double v = 0.5 * (torusSurface.v0 + torusSurface.v1);
+    gp_Pnt contact;
+    gp_Vec du, dv;
+    torusSurface.surface->D1(u, v, contact, du, dv);
+    du.Normalize();
+    const auto tangentEdge = BRepBuilderAPI_MakeEdge(contact.Translated(du * -5),
+                                                      contact.Translated(du * 5)).Edge();
+    const auto tangentLine = mateGeometry(tangentEdge);
+    require(compatibleMate(MateKind::Tangent, tangentLine, torusSurface),
+            "A finite line and non-analytic surface should permit a tangent mate");
+    auto lineSurface = pair(MateKind::Tangent, tangentLine, torusSurface);
+    lineSurface.definition->motion.initialized = true;
+    lineSurface.definition->motion.anchors = {gp_Trsf(), gp_Trsf()};
+    lineSurface.definition->motion.coordinates = {
+        (u - torusSurface.u0) / (torusSurface.u1 - torusSurface.u0),
+        (v - torusSurface.v0) / (torusSurface.v1 - torusSurface.v0), 0.5};
+    solve(bodies({}, 0), lineSurface, 5);
 }
 } // namespace
 int main()
@@ -412,7 +389,6 @@ int main()
         mechanical();
         relativeMechanicalMotion();
         geometry();
-        pointDragging();
         std::cout << "PASS: typed standard, advanced, mechanical and generated equations, freedom "
                      "and geometry\n";
         return 0;

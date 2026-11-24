@@ -1,4 +1,5 @@
 #include "ui/ReferenceGeometryUi.h"
+#include "ui/UiCommandSession.h"
 #include "ui/CadViewport.h"
 #include "modeling/Selection.h"
 #include <QComboBox>
@@ -29,6 +30,76 @@ using namespace modeling;
 bool same(const GeometryReference& a,const GeometryReference& b){return a.source==b.source&&a.featureId==b.featureId&&a.entityId==b.entityId&&a.role==b.role&&a.index==b.index&&a.signature==b.signature&&a.topologyName==b.topologyName;}
 std::vector<DatumVisual> visuals(const document::PartDocument& doc){std::vector<DatumVisual> result;for(const auto& f:doc.features())if(f.kind==document::FeatureKind::ReferenceGeometry)result.push_back({f.id,f.name,f.datum,f.referenceVisible});return result;}
 double entered(QDoubleSpinBox* spin){bool okay=false;const double value=spin->locale().toDouble(spin->cleanText(),&okay);if(!okay||!spin->hasAcceptableInput())throw std::runtime_error("Enter a valid number in each visible parameter.");return value;}
+}
+void MainWindow::bindReferenceCommands(){
+    m_commands.bindInteractive("reference.plane",
+        [this](const application::CommandContext&) {
+            return m_referencePlane && m_referencePlane->isEnabled()
+                ? application::CommandAvailability{true, {}, {}}
+                : application::CommandAvailability{false, "Finish the active sketch or operation first", {"part workspace"}};
+        },
+        [this](const application::CommandRequest&, const application::CommandContext&)
+            -> std::unique_ptr<application::CommandSession> {
+            startReferenceGeometry(modeling::DatumKind::Plane);
+            if (!m_referenceDraft) return {};
+            auto session = std::make_unique<UiCommandSession>(
+                [this](const application::CommandRequest& update) {
+                    if (!m_referenceDraft) return application::CommandResult{application::CommandState::Rejected, "Plane editor is no longer active"};
+                    auto& d = *m_referenceDraft;
+                    const auto it = update.parameters.find("definition");
+                    if (it != update.parameters.end()) {
+                        if (!std::holds_alternative<modeling::DatumDefinition>(it->second))
+                            return application::CommandResult{application::CommandState::Rejected, "Expected a plane definition"};
+                        const auto& definition = std::get<modeling::DatumDefinition>(it->second);
+                        if (modeling::datumKind(definition.method) != modeling::DatumKind::Plane)
+                            return application::CommandResult{application::CommandState::Rejected, "Definition is not a plane"};
+                        const int methodRow = d.method->findData(int(definition.method));
+                        if (methodRow < 0 || definition.references.size() > d.references.size())
+                            return application::CommandResult{application::CommandState::Rejected, "Unsupported plane definition"};
+                        { const QSignalBlocker block(d.automatic); d.automatic->setChecked(false); }
+                        d.method->setCurrentIndex(methodRow);
+                        updateReferenceGeometryForm();
+                        for (std::size_t i = 0; i < definition.references.size(); ++i) {
+                            int row = -1;
+                            for (int j = 0; j < d.references[i]->count(); ++j) {
+                                const int option = d.references[i]->itemData(j).toInt();
+                                if (option >= 0 && option < int(d.options.size()) &&
+                                    same(definition.references[i], d.options[std::size_t(option)].reference)) {
+                                    row = j; break;
+                                }
+                            }
+                            if (row < 0)
+                                return application::CommandResult{application::CommandState::Rejected,
+                                    "Reference is stale or unavailable; reselect it"};
+                            d.references[i]->setCurrentIndex(row);
+                        }
+                        for (int i = 0; i < 3; ++i) {
+                            d.position[i]->setValue(definition.position.Coord(i + 1));
+                            d.direction[i]->setValue(definition.direction.Coord(i + 1));
+                        }
+                        d.value->setValue(definition.value);
+                    }
+                    updateReferenceGeometryPreview();
+                    return d.candidate
+                        ? application::CommandResult{application::CommandState::PreviewReady, "Plane preview ready"}
+                        : application::CommandResult{application::CommandState::WaitingForSelection, "Select valid plane references"};
+                },
+                [this] {
+                    updateReferenceGeometryPreview();
+                    if (!m_referenceDraft || !m_referenceDraft->candidate)
+                        return application::CommandResult{application::CommandState::Rejected, "No valid plane preview"};
+                    const auto id = m_referenceDraft->candidateId;
+                    finishReferenceGeometry(true);
+                    return !m_referenceDraft
+                        ? application::CommandResult{application::CommandState::Committed, "Plane committed", {}, {id}, true}
+                        : application::CommandResult{application::CommandState::Failed, "Could not commit plane"};
+                },
+                [this] {
+                    finishReferenceGeometry(false);
+                    return application::CommandResult{application::CommandState::Canceled, "Plane canceled"};
+                });
+            return session;
+        });
 }
 void MainWindow::startReferenceGeometry(modeling::DatumKind kind,const document::Feature* editing){
     if(featureDraftActive()||m_session.editingSketch()||m_selectingPlane)return;
@@ -81,7 +152,14 @@ void MainWindow::startReferenceGeometry(modeling::DatumKind kind,const document:
     for(auto* spin:{d.position[0],d.position[1],d.position[2],d.direction[0],d.direction[1],d.direction[2],d.value}){
         connect(spin,&QDoubleSpinBox::valueChanged,this,[this]{updateReferenceGeometryPreview();});connect(spin->findChild<QLineEdit*>(),&QLineEdit::textChanged,this,[this]{updateReferenceGeometryPreview();});
     }
-    connect(d.page->buttons,&QDialogButtonBox::accepted,this,[this]{finishReferenceGeometry(true);});connect(d.page->buttons,&QDialogButtonBox::rejected,this,[this]{finishReferenceGeometry(false);});
+    connect(d.page->buttons,&QDialogButtonBox::accepted,this,[this]{
+        if (m_commands.activeCommandId() == "reference.plane") m_commands.confirm(m_commands.activeSessionId());
+        else finishReferenceGeometry(true);
+    });
+    connect(d.page->buttons,&QDialogButtonBox::rejected,this,[this]{
+        if (m_commands.activeCommandId() == "reference.plane") m_commands.cancel(m_commands.activeSessionId());
+        else finishReferenceGeometry(false);
+    });
     m_viewport->setSelectedSolidFace(0);m_viewport->setShape(d.support.shape());m_viewport->endSketch();m_viewport->setSelectedDatum({});
     if(editing){const QSignalBlocker blocker(d.method);d.method->setCurrentIndex(d.method->findData(int(editing->reference.method)));}
     updateReferenceGeometryForm();
@@ -175,7 +253,15 @@ void MainWindow::createSketchOnReferencePlane(const std::string& id){
 bool MainWindow::referenceGeometryEvent(QObject* watched,QEvent* event){
     if(!m_referenceDraft)return false;auto* widget=qobject_cast<QWidget*>(watched);if(!widget||widget->window()!=this)return false;
     if(event->type()==QEvent::FocusIn){for(int i=0;i<3;++i)if(widget==m_referenceDraft->references[i])activateReferenceGeometryPick(i);}
-    if(event->type()==QEvent::KeyPress){auto* key=static_cast<QKeyEvent*>(event);if(key->key()==Qt::Key_Escape){finishReferenceGeometry(false);key->accept();return true;}if(key->key()==Qt::Key_Return||key->key()==Qt::Key_Enter){bool numeric=false;for(auto* spin:{m_referenceDraft->position[0],m_referenceDraft->position[1],m_referenceDraft->position[2],m_referenceDraft->direction[0],m_referenceDraft->direction[1],m_referenceDraft->direction[2],m_referenceDraft->value})numeric|=widget==spin||spin->isAncestorOf(widget);if(widget==m_viewport||numeric){finishReferenceGeometry(true);key->accept();return true;}}}
+    if(event->type()==QEvent::KeyPress){auto* key=static_cast<QKeyEvent*>(event);if(key->key()==Qt::Key_Escape){
+        if (m_commands.activeCommandId() == "reference.plane") m_commands.cancel(m_commands.activeSessionId());
+        else finishReferenceGeometry(false);
+        key->accept();return true;
+    }if(key->key()==Qt::Key_Return||key->key()==Qt::Key_Enter){bool numeric=false;for(auto* spin:{m_referenceDraft->position[0],m_referenceDraft->position[1],m_referenceDraft->position[2],m_referenceDraft->direction[0],m_referenceDraft->direction[1],m_referenceDraft->direction[2],m_referenceDraft->value})numeric|=widget==spin||spin->isAncestorOf(widget);if(widget==m_viewport||numeric){
+        if (m_commands.activeCommandId() == "reference.plane") m_commands.confirm(m_commands.activeSessionId());
+        else finishReferenceGeometry(true);
+        key->accept();return true;
+    }}}
     return false;
 }
 }

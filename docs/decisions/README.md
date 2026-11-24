@@ -107,6 +107,10 @@ approved scope do not need repeated approval.
 
 - [0062. Measure in parts and active sketches](0062-part-measure.md) — reference inspection, parity checklist, analytic fixtures and manual acceptance.
 
+- [0063. Application command system](0063-application-command-system.md) — stable command IDs, typed requests and application-level dispatch.
+
+- [0064. One consolidated desktop build](0064-consolidated-desktop-build.md) — keep accepted development lines together and publish one desktop shortcut target.
+
 ## Pending owner decisions
 
 - Resilient face references beyond the approved conservative planar-face strategy.

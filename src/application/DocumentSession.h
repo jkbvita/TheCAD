@@ -43,6 +43,8 @@ public:
     void clearHistory();
     void markSaved() { m_savedRevision = m_revision; }
     bool modified() const { return m_path.isEmpty() || m_revision != m_savedRevision; }
+    std::size_t revision() const { return m_revision; }
+    std::size_t identity() const { return m_identity; }
 
 private:
     document::PartDocument m_document;
@@ -51,5 +53,6 @@ private:
     QString m_path;
     document::UndoHistory<State> m_history{10};
     std::size_t m_revision = 0, m_nextRevision = 0, m_savedRevision = 0;
+    std::size_t m_identity = 1;
 };
 } // namespace thecad::application

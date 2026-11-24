@@ -12,9 +12,12 @@ public:
     void open(const QString& path);
     void save(const QString& path);
     void reset();
+    void replaceInitial(document::AssemblyDocument document);
     bool commit(document::AssemblyDocument candidate);
     bool canUndo() const { return m_history.canUndo(); }
     bool canRedo() const { return m_history.canRedo(); }
+    std::size_t revision() const { return m_revision; }
+    std::size_t identity() const { return m_identity; }
     void traverse(bool redo);
 
 private:
@@ -27,5 +30,6 @@ private:
     document::UndoHistory<State> m_history{10};
     QString m_path;
     std::size_t m_revision = 0, m_saved = 0, m_next = 0;
+    std::size_t m_identity = 1;
 };
 } // namespace thecad::application

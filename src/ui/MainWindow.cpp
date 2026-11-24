@@ -5,6 +5,7 @@
 #include "modeling/DimensionAnnotation.h"
 #include <QInputDialog>
 #include "ui/MainWindow.h"
+#include "ui/UiCommandSession.h"
 #include "ui/files/NativeFileDialogs.h"
 #include "exchange/ShapeExporter.h"
 #include "ui/widgets/FeatureTreePresenter.h"
@@ -70,6 +71,8 @@
 #include <QVBoxLayout>
 
 #include <exception>
+#include <cmath>
+#include <utility>
 #include <stdexcept>
 #include <algorithm>
 #include <map>
@@ -154,9 +157,66 @@ struct MainWindow::OperationDraft {
     std::string candidateFeatureId;
 };
 
-MainWindow::MainWindow(QWidget* parent)
-    : QMainWindow(parent), m_session(document::PartDocument::createEmpty())
+void MainWindow::bindOperationCommands()
 {
+    for (const auto& entry : {std::pair<const char*, bool>{"feature.extrude", false},
+                              {"feature.extruded_cut", true}}) {
+        const std::string id = entry.first;
+        const bool cut = entry.second;
+        m_commands.bindInteractive(id,
+            [this, cut](const application::CommandContext&) {
+                const auto* action = cut ? m_cut : m_extrude;
+                return action && action->isEnabled()
+                    ? application::CommandAvailability{true, {}, {}}
+                    : application::CommandAvailability{false, "Select a suitable sketch/profile", {"profile"}};
+            },
+            [this, cut](const application::CommandRequest&, const application::CommandContext&)
+                -> std::unique_ptr<application::CommandSession> {
+                extrude(cut);
+                if (!m_operation) return {};
+                auto session = std::make_unique<UiCommandSession>(
+                    [this](const application::CommandRequest& update) {
+                        if (!m_operation) return application::CommandResult{application::CommandState::Rejected, "Extrude is no longer active"};
+                        const auto depth = update.parameters.find("depth");
+                        if (depth != update.parameters.end()) {
+                            if (!std::holds_alternative<application::Length>(depth->second))
+                                return application::CommandResult{application::CommandState::Rejected, "Depth must be a length"};
+                            const double mm = std::get<application::Length>(depth->second).millimeters;
+                            if (!std::isfinite(mm) || mm <= 0)
+                                return application::CommandResult{application::CommandState::Rejected, "Depth must be positive"};
+                            m_operation->length->setValue(mm);
+                        }
+                        updateOperationPreview();
+                        return m_operation->candidate
+                            ? application::CommandResult{application::CommandState::PreviewReady, "Extrude preview ready"}
+                            : application::CommandResult{application::CommandState::WaitingForSelection, "Select a valid contour"};
+                    },
+                    [this] {
+                        updateOperationPreview();
+                        if (!m_operation || !m_operation->candidate)
+                            return application::CommandResult{application::CommandState::Rejected, "No valid extrude preview"};
+                        const auto id = m_operation->candidateFeatureId;
+                        m_viewport->clearPreview();
+                        if (!applyModel(*m_operation->candidate, id))
+                            return application::CommandResult{application::CommandState::Failed, "Could not commit extrusion"};
+                        finishOperation(true);
+                        return application::CommandResult{application::CommandState::Committed, "Extrusion committed", {}, {id}, true};
+                    },
+                    [this] {
+                        finishOperation(false);
+                        return application::CommandResult{application::CommandState::Canceled, "Extrusion canceled"};
+                    });
+                return session;
+            });
+    }
+}
+
+MainWindow::MainWindow(QWidget* parent)
+    : QMainWindow(parent), m_session(document::PartDocument::createEmpty()),
+      m_commands([this] { return commandContext(); })
+{
+    application::registerBuiltInCommands(m_commands.registry());
+    m_commands.bindSessionControls();
     ThemeManager::instance();
     resize(1200, 800);
     m_viewport = new CadViewport(m_session.document().shape(), this);
@@ -188,8 +248,8 @@ MainWindow::MainWindow(QWidget* parent)
     connect(&ThemeManager::instance(),&ThemeManager::changed,this,[this]{hideRelationsContext();for(auto* a:findChildren<QAction*>())if(!a->icon().isNull()&&a->objectName().startsWith("action")&&!a->objectName().contains("Preferences"))a->setIcon(commandIcon(a->text().remove('&')));});
     m_undo=editMenu->addAction("Undo");m_undo->setObjectName("actionUndo");m_undo->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Z));
     m_redo=editMenu->addAction("Redo");m_redo->setObjectName("actionRedo");m_redo->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Y));
-    connect(m_undo,&QAction::triggered,this,[this]{traverseHistory(false);});
-    connect(m_redo,&QAction::triggered,this,[this]{traverseHistory(true);});
+    connect(m_undo,&QAction::triggered,this,[this]{dispatchCommand("edit.undo");});
+    connect(m_redo,&QAction::triggered,this,[this]{dispatchCommand("edit.redo");});
     editMenu->addSeparator();
     auto* insertMenu = menuBar()->addMenu("&Insert");
     auto* toolsMenu = menuBar()->addMenu("&Tools");
@@ -248,8 +308,8 @@ MainWindow::MainWindow(QWidget* parent)
         connect(result, &QAction::triggered, this, callback);
         return result;
     };
-    m_extrude = action("Extruded Boss/Base", "actionExtrude", [this] { extrude(false); });
-    m_cut = action("Extruded Cut", "actionExtrudedCut", [this] { extrude(true); });
+    m_extrude = action("Extruded Boss/Base", "actionExtrude", [this] { dispatchCommand("feature.extrude"); });
+    m_cut = action("Extruded Cut", "actionExtrudedCut", [this] { dispatchCommand("feature.extruded_cut"); });
     m_revolve=action("Revolved Boss/Base","actionRevolve",[this]{startSolidFeature(document::FeatureKind::Revolve);});
     m_revolvedCut=action("Revolved Cut","actionRevolvedCut",[this]{startSolidFeature(document::FeatureKind::RevolvedCut);});
     m_sweep=action("Swept Boss/Base","actionSweep",[this]{startSolidFeature(document::FeatureKind::Sweep);});
@@ -259,7 +319,7 @@ MainWindow::MainWindow(QWidget* parent)
     m_linearPattern=action("Linear Pattern","actionLinearPattern",[this]{startSolidFeature(document::FeatureKind::LinearPattern);});
     m_mirror=action("Mirror","actionMirror",[this]{startSolidFeature(document::FeatureKind::Mirror);});
     m_circularPattern=action("Circular Pattern","actionCircularPattern",[this]{startSolidFeature(document::FeatureKind::CircularPattern);});
-    m_referencePlane=action("Reference Plane","actionReferencePlane",[this]{startReferenceGeometry(modeling::DatumKind::Plane);});
+    m_referencePlane=action("Reference Plane","actionReferencePlane",[this]{dispatchCommand("reference.plane");});
     m_referenceAxis=action("Reference Axis","actionReferenceAxis",[this]{startReferenceGeometry(modeling::DatumKind::Axis);});
     m_referencePoint=action("Reference Point","actionReferencePoint",[this]{startReferenceGeometry(modeling::DatumKind::Point);});
     populateFeatureCommands(featureButtons,{m_extrude,m_revolve,m_sweep,m_cut,m_revolvedCut,m_sweptCut,
@@ -274,7 +334,7 @@ MainWindow::MainWindow(QWidget* parent)
     commandButton(action("Smart Dimension", "actionSmartDimension", [this]{startSmartDimension();}), sketchGrid, 0, 2, true);
     commandGroup(sketchButtons, "Draw", drawGrid);
     m_selectEntity = action("Select", "actionSelectSketchEntity", [this] { closeSmartDimension();m_viewport->selectSketchTool(); });
-    m_line = action("Line", "actionLine", [this] { closeSmartDimension();m_viewport->setSketchTool(modeling::EntityKind::Line); });
+    m_line = action("Line", "actionLine", [this] { closeSmartDimension();dispatchCommand("sketch.line"); });
     m_rectangle = action("Rectangle", "actionRectangle", [this] { closeSmartDimension();m_viewport->setSketchTool(modeling::EntityKind::Rectangle); });
     m_circle = action("Circle", "actionCircle", [this] { closeSmartDimension();m_viewport->setSketchTool(modeling::EntityKind::Circle); });
     commandButton(m_selectEntity, drawGrid, 0, 0);
@@ -329,7 +389,13 @@ MainWindow::MainWindow(QWidget* parent)
     sketchButtons->addStretch();
     QGridLayout* evaluateGrid = nullptr;
     commandGroup(evaluateButtons, "Evaluate", evaluateGrid);
-    m_measure = action("Measure", "actionMeasure", [this](bool active) { setMeasureActive(active); });
+    m_measure = action("Measure", "actionMeasure", [this](bool active) {
+        if (active && m_commands.activeCommandId() == "sketch.line")
+            m_commands.cancel(m_commands.activeSessionId());
+        application::CommandRequest request{"inspect.measure"};
+        request.parameters["active"] = active;
+        if (!m_commands.execute(request)) m_measure->setChecked(false);
+    });
     m_measure->setCheckable(true);
     commandButton(m_measure, evaluateGrid, 0, 0, true);
     toolsMenu->addMenu("Evaluate")->addAction(m_measure);
@@ -350,7 +416,7 @@ MainWindow::MainWindow(QWidget* parent)
     reset->setObjectName("actionIsometric");
     reset->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_7));
     using StandardView = CadViewport::StandardView;
-    connect(reset, &QAction::triggered, this, [this] { m_viewport->setStandardView(StandardView::Isometric); });
+    connect(reset, &QAction::triggered, this, [this] { dispatchCommand("view.isometric"); });
     viewMenu->addAction(fit);
     auto* resetView = viewMenu->addAction("Reset View");
     resetView->setShortcut(QKeySequence(Qt::Key_Home));
@@ -552,7 +618,13 @@ MainWindow::MainWindow(QWidget* parent)
     qApp->installEventFilter(this);
     connect(m_viewport,&CadViewport::sketchRelationDeleteRequested,this,[this](const QString& id){deleteRelation(id.toStdString());});
     connect(m_viewport,&CadViewport::sketchDeleteRequested,this,[this]{deleteSketchEntity();});
-    connect(m_viewport,&CadViewport::sketchToolChanged,this,[this]{hideRelationsContext();updateSketchToolActions();});
+    connect(m_viewport,&CadViewport::sketchToolChanged,this,[this]{
+        hideRelationsContext();updateSketchToolActions();
+        if (!m_viewport->sketchTool() || *m_viewport->sketchTool() != modeling::EntityKind::Line ||
+            m_viewport->constructionTool())
+            if (m_commands.activeCommandId() == "sketch.line")
+                m_commands.cancel(m_commands.activeSessionId());
+    });
     connect(m_viewport,&CadViewport::constraintPickingCanceled,this,[this]{closeConstraints();closeSmartDimension();});
     connect(m_viewport,&CadViewport::dimensionPlacementRequested,this,[this](modeling::Point2 point){placeSmartDimension(point);});
     connect(m_viewport,&CadViewport::dimensionReferencePicked,this,[this](const QString& id,int role){smartReferencePicked(id,role);});
@@ -605,10 +677,20 @@ MainWindow::MainWindow(QWidget* parent)
 
     auto* cancelFeature = new QAction("Cancel feature", this);
     cancelFeature->setObjectName("actionCancelFeature");cancelFeature->setShortcut(QKeySequence(Qt::Key_Escape));
-    addAction(cancelFeature);connect(cancelFeature,&QAction::triggered,this,[this]{if(m_sketchModifier)finishSketchModifier(false);else if(m_solidFeature)finishSolidFeature(false);else if(m_referenceDraft)finishReferenceGeometry(false);else finishOperation(false);});
+    addAction(cancelFeature);connect(cancelFeature,&QAction::triggered,this,[this]{
+        if(!m_commands.activeSessionId().empty() && (m_operation || m_referenceDraft))
+            m_commands.cancel(m_commands.activeSessionId());
+        else if(m_sketchModifier)finishSketchModifier(false);
+        else if(m_solidFeature)finishSolidFeature(false);
+        else if(m_referenceDraft)finishReferenceGeometry(false);
+        else finishOperation(false);
+    });
     statusBar()->showMessage("Click Front, Top or Right in the viewport to start your first sketch.");
     m_dimensions = new QLabel(this);
     statusBar()->addPermanentWidget(m_dimensions);
+    bindCommandHandlers();
+    bindOperationCommands();
+    bindReferenceCommands();
     setWindowModified(true);
     updateDocumentUi();
     m_viewport->showReferencePlanes(true);
@@ -1033,7 +1115,8 @@ void MainWindow::updateActions()
         if(kind==K::Face)try{(void)m_session.document().sketchOnFace(selection.front().index);}catch(const std::exception&){sketchSupport=false;}}
     m_createSketch->setEnabled(!m_session.editingSketch() && !operation && !selecting && sketchSupport);
     m_selectEntity->setEnabled(editing && !operation);
-    m_line->setEnabled(editing && !operation);
+    m_line->setEnabled(editing && !operation &&
+        (m_commands.activeCommandId() == "sketch.line" || m_commands.availability("sketch.line").available));
     m_rectangle->setEnabled(editing && !operation);
     m_circle->setEnabled(editing && !operation);
     m_arc->setEnabled(editing && !operation);
@@ -1403,8 +1486,17 @@ void MainWindow::startOperation(document::Feature feature, bool editing)
         updateOperationPreview();
     });
     connect(draft.preview,&QPushButton::toggled,this,[this]{updateOperationPreview();});
-    connect(draft.buttons,&QDialogButtonBox::rejected,this,[this]{finishOperation(false);});
+    connect(draft.buttons,&QDialogButtonBox::rejected,this,[this]{
+        if (m_commands.activeCommandId() == "feature.extrude" ||
+            m_commands.activeCommandId() == "feature.extruded_cut")
+            m_commands.cancel(m_commands.activeSessionId());
+        else finishOperation(false);
+    });
     connect(draft.buttons,&QDialogButtonBox::accepted,this,[this]{
+        if (m_commands.activeCommandId() == "feature.extrude" ||
+            m_commands.activeCommandId() == "feature.extruded_cut") {
+            m_commands.confirm(m_commands.activeSessionId()); return;
+        }
         updateOperationPreview();if(!m_operation || !m_operation->candidate)return;
         m_viewport->clearPreview();if(applyModel(*m_operation->candidate,m_operation->candidateFeatureId))finishOperation(true);
     });

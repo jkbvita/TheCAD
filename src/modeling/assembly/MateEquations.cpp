@@ -245,6 +245,14 @@ bool surfaceContact(const MateGeometry& a, const MateGeometry& b)
 {
     return a.kind == K::Surface || b.kind == K::Surface || a.kind == K::Cone || b.kind == K::Cone;
 }
+bool lineSurfaceContact(const MateGeometry& a, const MateGeometry& b)
+{
+    const auto& line = a.kind == K::Line ? a : b;
+    const auto& surface = a.kind == K::Surface ? a : b;
+    return ((a.kind == K::Line && b.kind == K::Surface) ||
+            (b.kind == K::Line && a.kind == K::Surface)) &&
+           !line.curve.IsNull() && !surface.surface.IsNull();
+}
 } // namespace
 bool compatibleMate(MateKind kind, const MateGeometry& a, const MateGeometry& b)
 {
@@ -289,6 +297,7 @@ bool compatibleMate(MateKind kind, const MateGeometry& a, const MateGeometry& b)
         return pair(K::Plane, K::Cylinder) || pair(K::Plane, K::Sphere) ||
                pair(K::Plane, K::Cone) || pair(K::Plane, K::Surface) ||
                pair(K::Line, K::Cylinder) || pair(K::Line, K::Sphere) ||
+               lineSurfaceContact(a, b) ||
                pair(K::Cylinder, K::Cylinder) || pair(K::Cylinder, K::Sphere) ||
                pair(K::Sphere, K::Sphere) || pair(K::Cone, K::Sphere) ||
                pair(K::Surface, K::Cylinder) || pair(K::Surface, K::Cone);
@@ -480,6 +489,21 @@ void prepareMate(ResolvedMate& mate, const std::vector<gp_Trsf>& poses)
             d.motion.coordinates.push_back(0.5);
     }
     else if (mate.kind == MateKind::Tangent &&
+             lineSurfaceContact(d.references[0].geometry, d.references[1].geometry))
+    {
+        const auto line = std::find_if(d.references.begin(), d.references.end(),
+                                       [](const auto& ref) { return ref.geometry.kind == K::Line; });
+        auto& surface = line == d.references.begin() ? d.references[1].geometry
+                                                      : d.references[0].geometry;
+        if (line->geometry.curve.IsNull())
+            throw std::runtime_error("Tangent to a surface requires a finite line or edge.");
+        if (surface.surface.IsNull() || std::abs(surface.u1 - surface.u0) < 1e-12 ||
+            std::abs(surface.v1 - surface.v0) < 1e-12)
+            throw std::runtime_error("The selected surface has no usable contact domain.");
+        if (!initialized)
+            d.motion.coordinates = {0.5, 0.5, 0.5};
+    }
+    else if (mate.kind == MateKind::Tangent &&
              surfaceContact(d.references[0].geometry, d.references[1].geometry))
     {
         for (auto& ref : d.references)
@@ -545,7 +569,7 @@ void prepareMate(ResolvedMate& mate, const std::vector<gp_Trsf>& poses)
     std::size_t expected = 0;
     if (mate.kind == MateKind::Tangent &&
         surfaceContact(d.references[0].geometry, d.references[1].geometry))
-        expected = 4;
+        expected = lineSurfaceContact(d.references[0].geometry, d.references[1].geometry) ? 3 : 4;
     if (mate.kind == MateKind::Coincident &&
         (d.references[0].geometry.kind == K::Curve || d.references[1].geometry.kind == K::Curve))
         expected = 1;
@@ -829,7 +853,38 @@ MateResidual mateResidual(const ResolvedMate& mate, const std::vector<gp_Trsf>& 
     }
     case MateKind::Tangent:
     {
-        if (surfaceContact(a.g, b.g))
+        if (lineSurfaceContact(a.g, b.g))
+        {
+            const auto& surface = a.g.kind == K::Surface ? a : b;
+            const auto& line = a.g.kind == K::Line ? a : b;
+            gp_Vec normal;
+            const auto contact = surfacePoint(surface, q.at(0), q.at(1), &normal);
+            gp_Pnt linePoint;
+            gp_Vec lineDirection;
+            if (!line.g.curve.IsNull())
+            {
+                const double parameter = line.g.first + q.at(2) * (line.g.last - line.g.first);
+                line.g.curve->D1(parameter, linePoint, lineDirection);
+                linePoint.Transform(line.placement);
+                lineDirection.Transform(line.placement);
+                e.bound(q.at(2), 0, 1);
+            }
+            else
+            {
+                linePoint = line.c.Translated(line.n * q.at(2));
+                lineDirection = line.n;
+            }
+            e.vector(gp_Vec(contact, linePoint), true);
+            e.scalar(normal.Dot(lineDirection));
+            const auto& g = surface.g;
+            if (g.shape.IsNull() || !g.surface->IsUPeriodic() ||
+                std::abs(g.u1 - g.u0 - g.surface->UPeriod()) >= 1e-6)
+                e.bound(q.at(0), 0, 1);
+            if (g.shape.IsNull() || !g.surface->IsVPeriodic() ||
+                std::abs(g.v1 - g.v0 - g.surface->VPeriod()) >= 1e-6)
+                e.bound(q.at(1), 0, 1);
+        }
+        else if (surfaceContact(a.g, b.g))
         {
             gp_Vec na, nb;
             const auto pa = surfacePoint(a, q.at(0), q.at(1), &na),
@@ -1063,7 +1118,14 @@ void validateMateSolution(const ResolvedMate& mate, const std::vector<double>& q
                                      "another reference or contact branch.");
     };
     if (mate.kind == MateKind::Tangent &&
-        surfaceContact(d.references[0].geometry, d.references[1].geometry))
+        lineSurfaceContact(d.references[0].geometry, d.references[1].geometry))
+    {
+        const auto surface = std::find_if(d.references.begin(), d.references.end(),
+                                          [](const auto& ref) { return ref.geometry.kind == K::Surface; });
+        checkSurface(surface->geometry, q.at(0), q.at(1));
+    }
+    else if (mate.kind == MateKind::Tangent &&
+             surfaceContact(d.references[0].geometry, d.references[1].geometry))
         for (std::size_t i = 0; i < 2; ++i)
             checkSurface(d.references[i].geometry, q.at(2 * i), q.at(2 * i + 1));
     if (mate.kind == MateKind::Coincident && q.size() == 2)

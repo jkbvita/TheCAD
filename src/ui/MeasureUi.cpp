@@ -97,7 +97,7 @@ void MainWindow::updateMeasureAction()
                            (m_session.editingSketch() || !document().features().empty());
     if (!available && m_measure->isChecked())
         setMeasureActive(false);
-    m_measure->setEnabled(available);
+    m_measure->setEnabled(available && m_commands.availability("inspect.measure").available);
     m_measurePanel->toggleViewAction()->setEnabled(available);
 }
 void MainWindow::measureTreeSelection()

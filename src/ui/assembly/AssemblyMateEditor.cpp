@@ -1,6 +1,7 @@
 #include "ui/assembly/AssemblyMateEditor.h"
 #include "ui/assembly/MateIcons.h"
 #include "ui/assembly/AssemblyMateParameters.h"
+#include "ui/assembly/MateIcons.h"
 #include "ui/PropertyManagerPage.h"
 #include "ui/widgets/PropertyManagerControls.h"
 #include "document/storage/AssemblyMateData.h"

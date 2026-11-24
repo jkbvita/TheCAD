@@ -1,4 +1,8 @@
 add_executable(thecad_application_tests ApplicationSessionTests.cpp)
+add_executable(thecad_command_system_tests CommandSystemTests.cpp)
+set_target_properties(thecad_command_system_tests PROPERTIES AUTOMOC OFF)
+target_link_libraries(thecad_command_system_tests PRIVATE thecad_application)
+add_test(NAME application.commands COMMAND thecad_command_system_tests)
 set_target_properties(thecad_application_tests PROPERTIES AUTOMOC OFF)
 target_link_libraries(thecad_application_tests PRIVATE thecad_application)
 add_test(NAME application.session COMMAND thecad_application_tests)

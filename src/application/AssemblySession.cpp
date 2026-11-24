@@ -4,6 +4,7 @@ namespace thecad::application
 {
 void AssemblySession::open(const QString& path)
 {
+    ++m_identity;
     auto document = document::AssemblyDocument::load(path);
     m_document = std::move(document);
     m_path = QFileInfo(path).absoluteFilePath();
@@ -20,8 +21,16 @@ void AssemblySession::save(const QString& path)
 }
 void AssemblySession::reset()
 {
+    ++m_identity;
     m_document = {};
     m_path.clear();
+    m_history.clear();
+    m_revision = m_saved = m_next = 0;
+}
+void AssemblySession::replaceInitial(document::AssemblyDocument document)
+{
+    ++m_identity;
+    m_document = std::move(document);
     m_history.clear();
     m_revision = m_saved = m_next = 0;
 }

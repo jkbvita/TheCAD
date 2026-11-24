@@ -76,7 +76,7 @@ private:
     void initialize();
     QPoint native(const QPointF& point) const;
     AssemblyHit hit(const QPointF& point);
-    gp_Pnt cursorAtGrabDepth(const QPointF& point) const;
+    gp_Pnt cursorPointAtDepth(const QPointF& point, const gp_Pnt& planePoint) const;
     TopoDS_Shape selectedShape(const std::string& id, int face,
                                TopAbs_ShapeEnum kind = TopAbs_FACE) const;
     void refreshSelection();
@@ -97,16 +97,14 @@ private:
     QPointF m_press;
     gp_Trsf m_dragPose;
     gp_Pnt m_dragPoint;
-    gp_Pnt m_localGrab, m_localCenter, m_rotationPivot;
-    gp_Trsf m_rotationBase;
-    QPointF m_lastStroke, m_lastSegment;
-    double m_strokeTurning = 0, m_rotationStartTurning = 0;
-    double m_straightTravel = 0;
-    int m_curvedSamples = 0;
-    Qt::MouseButton m_dragButton = Qt::NoButton;
-    bool m_rotationGesture = false, m_dragConstrained = false;
-    bool m_dragMoved = false, m_matePicking = false, m_inserting = false, m_attempted = false,
-         m_fitPending = false;
+    std::optional<gp_Pnt> m_hitPoint;
+    QPointF m_dragPrevious, m_dragCentroidSum;
+    double m_dragPathLength = 0.0, m_dragSignedTurn = 0.0, m_dragAbsoluteTurn = 0.0;
+    int m_dragSampleCount = 0;
+    enum class DragMode { Pending, Translate, Rotate };
+    DragMode m_dragMode = DragMode::Pending;
+    bool m_dragMoved = false, m_matePicking = false, m_inserting = false,
+         m_attempted = false, m_fitPending = false;
     QString m_error;
 };
 } // namespace thecad::ui
