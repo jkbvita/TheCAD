@@ -10,9 +10,13 @@ profile and does not change global PATH settings.
 
 For a completely independent runtime, double-click:
 
-`C:\Users\jakub\projects\TheCAD\build\package\TheCAD\TheCAD.exe`
+`build\package\TheCAD-current\TheCAD.exe` in the checkout used to build it.
 
-Keep the whole `TheCAD` package folder together. The executable cannot be moved
+The desktop **TheCAD** shortcut points to the consolidated checkout's
+`TheCAD-current` package. Build and package from that checkout; older worktrees
+and their packages are retained for history but are not the active desktop build.
+
+Keep the whole `TheCAD-current` package folder together. The executable cannot be moved
 away from its DLLs, Qt plugins, `qt.conf`, and OCCT resources.
 
 ## Open a saved model from Explorer
@@ -49,7 +53,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\package-window
 ```
 
 The package script accepts the same `-DependencyPrefix` as the development
-helpers. It recreates `build/package/TheCAD/`; custom `-OutputDirectory`
+helpers. It recreates `build/package/TheCAD-current/`; custom `-OutputDirectory`
 destinations must be children of `build/package/`. Do not put user documents
 inside a generated package destination.
 

@@ -128,10 +128,9 @@ With dependencies installed, run from the repository root:
 
 ## Launch from Windows Explorer
 
-For the current selection/construction build, use the updated desktop **TheCAD**
-shortcut or `build/package/TheCAD-Selection-Construction-Final/TheCAD.exe` in the isolated
-worktree. The older package is retained to protect an open sketch; see the
-[repair checks](docs/verification/sketch-relations-system.md).
+Use the desktop **TheCAD** shortcut or
+`build/package/TheCAD-current/TheCAD.exe` in the consolidated checkout.
+The shortcut and repository launcher target this one current package.
 
 Drop one saved **.thepart** onto the desktop shortcut or `TheCAD.exe` to reopen
 that model. Launching with a file path also works from a shell, including paths
@@ -157,8 +156,7 @@ See the [intersection-region checks](docs/verification/intersection-regions.md).
 
 For a standard checkout, double-click **Launch TheCAD.cmd** in the repository root. To create an independent
 Release folder after building, run `.\scripts\package-windows.ps1`, then double-click
-`build/package/TheCAD/TheCAD.exe`. On this computer the executable is
-`C:\Users\jakub\projects\TheCAD\build\package\TheCAD\TheCAD.exe`.
+`build/package/TheCAD-current/TheCAD.exe`.
 Keep its DLLs, plugins and resources together.
 See [Windows deployment](docs/windows-deployment.md) for the exact local path and details.
 

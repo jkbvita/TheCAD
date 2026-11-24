@@ -10,7 +10,7 @@ $repoRoot = Split-Path $PSScriptRoot
 $buildRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot 'build'))
 $executable = Join-Path $buildRoot 'windows\Release\TheCAD.exe'
 if (-not (Test-Path -LiteralPath $executable)) { throw 'Build Release first with scripts/build.ps1.' }
-if (-not $OutputDirectory) { $OutputDirectory = Join-Path $buildRoot 'package\TheCAD' }
+if (-not $OutputDirectory) { $OutputDirectory = Join-Path $buildRoot 'package\TheCAD-current' }
 $packageRoot = [IO.Path]::GetFullPath($OutputDirectory)
 $packageParent = [IO.Path]::GetFullPath((Join-Path $buildRoot 'package'))
 # Constrain cleanup to generated build outputs, including custom destinations.
