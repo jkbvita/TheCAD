@@ -1,5 +1,6 @@
 #include "presentation/ViewportAppearance.h"
 #include "ui/assembly/AssemblyViewport.h"
+#include "viewport/ComponentRotationDrag.h"
 #include "ui/Theme.h"
 #include "ui/input/NavigationInputSettings.h"
 #include <QNativeGestureEvent>
@@ -428,7 +429,7 @@ void AssemblyViewport::mousePressEvent(QMouseEvent* event)
     if (!isReady())
         return;
     setFocus(Qt::MouseFocusReason);
-    if (event->button() == Qt::MiddleButton)
+    if (event->button() == Qt::MiddleButton && m_dragId.empty())
     {
         auto pivot = camera()->Center();
         (void)hit(event->position());
@@ -443,6 +444,7 @@ void AssemblyViewport::mousePressEvent(QMouseEvent* event)
     }
     if (event->button() != Qt::LeftButton && event->button() != Qt::RightButton)
         return;
+    if (!m_dragId.empty()) return;
     if (event->button() == Qt::RightButton && (m_inserting || m_matePicking))
         return;
     if (m_inserting)
@@ -459,10 +461,11 @@ void AssemblyViewport::mousePressEvent(QMouseEvent* event)
     if (pickedValue.kind == TopAbs_FACE)
         emit picked(QString::fromStdString(pickedValue.first), pickedValue.second,
                     event->modifiers());
-    if (event->button() == Qt::LeftButton && !m_matePicking && !value.id.empty() && !value.fixed &&
+    if (!m_matePicking && !value.id.empty() && !value.fixed &&
         !(event->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier)))
     {
         m_dragId = value.id;
+        m_dragButton = event->button();
         m_press = event->position();
         m_dragPoint = m_hitPoint.value_or(cursorPoint(m_press));
         m_dragLocalPoint = m_dragPoint.Transformed(value.placement.Inverted());
@@ -470,6 +473,15 @@ void AssemblyViewport::mousePressEvent(QMouseEvent* event)
             cursorPointAtDepth(m_press + QPointF(1, 0), m_dragPoint)));
         m_dragMoved = false;
         m_dragPrevious = m_press;
+        if (m_dragButton == Qt::RightButton)
+        {
+            Bnd_Box bounds;
+            BRepBndLib::Add(value.shape, bounds);
+            m_dragLocalPoint = bounds.IsVoid() ? gp_Pnt() :
+                gp_Pnt((bounds.CornerMin().XYZ() + bounds.CornerMax().XYZ()) * 0.5);
+            m_rotationCenter = project(m_dragLocalPoint.Transformed(value.placement));
+            m_rotationRadius = std::max(60.0, 0.35 * std::min(width(), height()));
+        }
     }
 }
 void AssemblyViewport::mouseMoveEvent(QMouseEvent* event)
@@ -493,7 +505,7 @@ void AssemblyViewport::mouseMoveEvent(QMouseEvent* event)
         emit insertionMoved(cursorPoint(event->position()));
         return;
     }
-    if (!m_dragId.empty() && event->buttons().testFlag(Qt::LeftButton))
+    if (!m_dragId.empty() && event->buttons().testFlag(m_dragButton))
     {
         if (!m_dragMoved &&
             (event->position() - m_press).manhattanLength() < QApplication::startDragDistance())
@@ -507,13 +519,28 @@ void AssemblyViewport::mouseMoveEvent(QMouseEvent* event)
         if (std::hypot(event->position().x() - m_dragPrevious.x(),
                        event->position().y() - m_dragPrevious.y()) < 1.0)
             return;
-        m_dragPrevious = event->position();
-        emit dragPointRequested(QString::fromStdString(m_dragId), m_dragLocalPoint,
-                                cursorPointAtDepth(event->position(), m_dragPoint),
-                                camera()->Direction(), m_dragTolerance);
+        updateComponentDrag(event->position());
         return;
     }
     hover(event->position());
+}
+void AssemblyViewport::updateComponentDrag(const QPointF& position)
+{
+    if (m_dragButton == Qt::RightButton)
+    {
+        const auto found = std::find_if(m_visuals.begin(), m_visuals.end(),
+            [&](const auto& visual) { return visual.id == m_dragId; });
+        if (found == m_visuals.end()) return;
+        const auto delta = viewport::componentRotationDrag(m_dragPrevious, position,
+            m_rotationCenter, m_rotationRadius, camera()->Direction(), camera()->Up());
+        emit dragRotationRequested(QString::fromStdString(m_dragId), m_dragLocalPoint,
+                                   delta * found->placement.GetRotation());
+    }
+    else
+        emit dragPointRequested(QString::fromStdString(m_dragId), m_dragLocalPoint,
+                                cursorPointAtDepth(position, m_dragPoint),
+                                camera()->Direction(), m_dragTolerance);
+    m_dragPrevious = position;
 }
 void AssemblyViewport::mouseReleaseEvent(QMouseEvent* event)
 {
@@ -524,14 +551,13 @@ void AssemblyViewport::mouseReleaseEvent(QMouseEvent* event)
             releaseMouse();
         return;
     }
-    if (event->button() == Qt::LeftButton && !m_dragId.empty())
+    if (event->button() == m_dragButton && !m_dragId.empty())
     {
         const bool moved = m_dragMoved;
         if (moved && event->position() != m_dragPrevious)
-            emit dragPointRequested(QString::fromStdString(m_dragId), m_dragLocalPoint,
-                                    cursorPointAtDepth(event->position(), m_dragPoint),
-                                    camera()->Direction(), m_dragTolerance);
+            updateComponentDrag(event->position());
         m_dragId.clear();
+        m_dragButton = Qt::NoButton;
         m_dragMoved = false;
         if (QWidget::mouseGrabber() == this)
             releaseMouse();
@@ -541,6 +567,7 @@ void AssemblyViewport::mouseReleaseEvent(QMouseEvent* event)
 }
 void AssemblyViewport::wheelEvent(QWheelEvent* event)
 {
+    if (!m_dragId.empty()) { event->accept(); return; }
     if (!isReady())
         return;
     if (m_touchpad.wheel(event,m_graphics.view(),size(),devicePixelRatioF(),
@@ -589,6 +616,7 @@ void AssemblyViewport::keyPressEvent(QKeyEvent* event)
         if (!m_dragId.empty())
         {
             m_dragId.clear();
+            m_dragButton = Qt::NoButton;
             m_dragMoved = false;
             if (QWidget::mouseGrabber() == this)
                 releaseMouse();

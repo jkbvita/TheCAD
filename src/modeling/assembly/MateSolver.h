@@ -3,6 +3,7 @@
 #include "modeling/assembly/MateTypes.h"
 #include "modeling/assembly/MateGeometry.h"
 #include <gp_Trsf.hxx>
+#include <gp_Quaternion.hxx>
 #include <string>
 #include <vector>
 #include <optional>
@@ -45,13 +46,15 @@ struct MateSolution
     int degreesOfFreedom = 0;
     std::vector<MateMotionState> motion;
 };
-// Transient screen-plane grab target. It never becomes a persisted mate.
+// Transient grab target. Rotation uses localPoint as its preferred pivot;
+// tolerance is radians for rotation, model units for point dragging.
 struct ComponentDragTarget
 {
     int body = -1;
     gp_Pnt localPoint, target;
     gp_Dir viewNormal;
     double tolerance = 0.01;
+    std::optional<gp_Quaternion> rotation;
 };
 MateSolution dragMates(const std::vector<RigidBody>& bodies, const std::vector<ResolvedMate>& mates,
                        const ComponentDragTarget& target);

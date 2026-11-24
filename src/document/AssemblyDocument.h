@@ -122,6 +122,8 @@ public:
     std::string insertComponent(const QString& path, const gp_Trsf& placement = {},
                                 std::optional<bool> fixed = {});
     void setPlacement(const std::string& id, const gp_Trsf& placement);
+    void dragRotation(const std::string& id, const gp_Pnt& localPivot,
+                      const gp_Quaternion& rotation);
     void dragPoint(const std::string& id, const gp_Pnt& local, const gp_Pnt& target,
                    const gp_Dir& viewNormal, double tolerance);
     void setFixed(const std::string& id, bool fixed);
@@ -152,6 +154,7 @@ public:
     QByteArray stateKey() const;
 
 private:
+    void applyDrag(const std::string& id, modeling::assembly::ComponentDragTarget target);
     static AssemblyComponent loadSource(const QString& path);
     static AssemblyComponent ownedSource(const QByteArray& data);
     static void prepareSource(AssemblyComponent&);

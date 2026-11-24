@@ -678,6 +678,24 @@ private slots:
         command(window, "actionUndo");
         QVERIFY(window.document().component(b).placement.GetRotation().GetRotationAngle() < 1e-8);
         const auto beforeCancel = window.document().stateKey();
+        const auto rightEnd = start + QPoint(40, -25);
+        QTest::mousePress(viewport, Qt::RightButton, Qt::NoModifier, start);
+        QMouseEvent rotate(QEvent::MouseMove, rightEnd, viewport->mapToGlobal(rightEnd),
+                            Qt::NoButton, Qt::RightButton, Qt::NoModifier);
+        QApplication::sendEvent(viewport, &rotate);
+        QTest::mouseRelease(viewport, Qt::RightButton, Qt::NoModifier, rightEnd);
+        QVERIFY(window.document().component(b).placement.GetRotation().GetRotationAngle() > 0.01);
+        unchanged(camera, viewport);
+        command(window, "actionUndo");
+        QCOMPARE(window.document().stateKey(), beforeCancel);
+        command(window, "actionRedo");
+        QVERIFY(window.document().component(b).placement.GetRotation().GetRotationAngle() > 0.01);
+        command(window, "actionUndo");
+        QTest::mousePress(viewport, Qt::RightButton, Qt::NoModifier, start);
+        QApplication::sendEvent(viewport, &rotate);
+        QTest::keyClick(viewport, Qt::Key_Escape);
+        QTest::mouseRelease(viewport, Qt::RightButton, Qt::NoModifier, rightEnd);
+        QCOMPARE(window.document().stateKey(), beforeCancel);
         QTest::mousePress(viewport, Qt::LeftButton, Qt::NoModifier, start);
         QApplication::sendEvent(viewport, &move);
         QTest::keyClick(viewport, Qt::Key_Escape);

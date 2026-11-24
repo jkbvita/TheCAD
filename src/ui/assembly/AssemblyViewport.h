@@ -5,6 +5,7 @@
 #include <QWidget>
 #include <AIS_Shape.hxx>
 #include <gp_Trsf.hxx>
+#include <gp_Quaternion.hxx>
 #include <map>
 #include <optional>
 #include <vector>
@@ -49,6 +50,8 @@ signals:
     void entityPicked(const QString& component, TopAbs_ShapeEnum kind, int index,
                       Qt::KeyboardModifiers modifiers);
     void dragStarted();
+    void dragRotationRequested(const QString& component, const gp_Pnt& localPivot,
+                               const gp_Quaternion& rotation);
     void dragPointRequested(const QString& component, const gp_Pnt& local, const gp_Pnt& target,
                             const gp_Dir& normal, double tolerance);
     void dragFinished(bool accepted);
@@ -80,6 +83,7 @@ private:
                                TopAbs_ShapeEnum kind = TopAbs_FACE) const;
     void refreshSelection();
     void hover(const QPointF& point);
+    void updateComponentDrag(const QPointF& position);
     viewport::GraphicsScene m_graphics;
     viewport::CameraNavigation m_navigation;
     TouchpadNavigation m_touchpad;
@@ -98,6 +102,9 @@ private:
     std::optional<gp_Pnt> m_hitPoint;
     QPointF m_dragPrevious;
     double m_dragTolerance = 0.01;
+    Qt::MouseButton m_dragButton = Qt::NoButton;
+    QPointF m_rotationCenter;
+    double m_rotationRadius = 100;
     bool m_dragMoved = false, m_matePicking = false, m_inserting = false,
          m_attempted = false, m_fitPending = false;
     QString m_error;

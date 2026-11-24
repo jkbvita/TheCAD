@@ -222,11 +222,17 @@ std::string AssemblyDocument::insertComponent(const QString& path, const gp_Trsf
 void AssemblyDocument::dragPoint(const std::string& id, const gp_Pnt& local, const gp_Pnt& target,
                                  const gp_Dir& normal, double tolerance)
 {
+    applyDrag(id, {-1, local, target, normal, tolerance});
+}
+void AssemblyDocument::dragRotation(const std::string& id, const gp_Pnt& localPivot,
+                                     const gp_Quaternion& rotation)
+{
+    applyDrag(id, {-1, localPivot, {}, gp_Dir(0, 0, 1), 1e-4, rotation});
+}
+void AssemblyDocument::applyDrag(const std::string& id,
+                                  modeling::assembly::ComponentDragTarget drag)
+{
     require(componentMovable(id), "The component has no available movement.");
-    require(std::isfinite(tolerance) && tolerance > 0, "Invalid drag precision.");
-    for (const auto& p : {local, target})
-        require(std::isfinite(p.X()) && std::isfinite(p.Y()) && std::isfinite(p.Z()),
-                "Invalid drag point.");
     auto candidate = *this;
     for (auto& mate : candidate.m_mates)
         if (mate.kind == AssemblyMateKind::Magnetic && mate.definition &&
@@ -242,8 +248,7 @@ void AssemblyDocument::dragPoint(const std::string& id, const gp_Pnt& local, con
                 }
     const auto found = std::find_if(candidate.m_components.begin(), candidate.m_components.end(),
                                     [&](const auto& c) { return c.id == id; });
-    modeling::assembly::ComponentDragTarget drag{int(found - candidate.m_components.begin()), local,
-                                                 target, normal, tolerance};
+    drag.body = int(found - candidate.m_components.begin());
     candidate.solve({}, 0, &drag);
     *this = std::move(candidate);
 }

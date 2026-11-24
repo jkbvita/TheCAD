@@ -198,6 +198,25 @@ int main(int argc, char** argv)
         auto free = document::AssemblyDocument{};
         const auto freeId = free.insertComponent(partPath, {}, false);
         session.commit(free);
+        const auto beforeRotation = session.document().stateKey();
+        const gp_Pnt pivot(20, 15, 10);
+        auto rotationPreview = session.document();
+        rotationPreview.dragRotation(freeId, pivot, gp_Quaternion(gp_Vec(0, 0, 1), 0.7));
+        require(session.document().stateKey() == beforeRotation,
+                "Rotation preview must not alter the committed document");
+        const auto rotated = rotationPreview.stateKey();
+        require(rotated != beforeRotation, "Rotation preview must rotate the component");
+        require(pivot.Transformed(rotationPreview.component(freeId).placement).Distance(pivot) < 1e-6,
+                "Rotation preview moved its pivot");
+        const auto validPreview = rotationPreview.stateKey();
+        rejects([&] { rotationPreview.dragRotation(freeId, pivot, gp_Quaternion(0, 0, 0, 0)); });
+        require(rotationPreview.stateKey() == validPreview, "Invalid rotation damaged the preview");
+        session.commit(rotationPreview);
+        session.traverse(false);
+        require(session.document().stateKey() == beforeRotation, "Rotation undo failed");
+        session.traverse(true);
+        require(session.document().stateKey() == rotated, "Rotation redo failed");
+        session.traverse(false);
         for (int i = 1; i <= 15; ++i)
         {
             auto candidate = session.document();

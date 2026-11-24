@@ -22,7 +22,8 @@ struct Variable
 {
     int body = -1, coordinate = 0, mate = -1;
 };
-void step(State& s, const Variable& v, double delta, double scale)
+void step(State& s, const Variable& v, double delta, double scale,
+          const ComponentDragTarget* drag = nullptr)
 {
     if (v.body < 0)
     {
@@ -39,11 +40,16 @@ void step(State& s, const Variable& v, double delta, double scale)
     }
     else
     {
+        const bool pivoted = drag && drag->rotation && v.body == drag->body;
+        const auto pivot = pivoted ? drag->localPoint.Transformed(pose) : gp_Pnt();
         const gp_Vec axis = v.coordinate == 3   ? gp_Vec(1, 0, 0)
                             : v.coordinate == 4 ? gp_Vec(0, 1, 0)
                                                 : gp_Vec(0, 0, 1);
         pose.SetRotation(gp_Quaternion(axis, delta) * pose.GetRotation());
         pose.SetTranslationPart(position);
+        if (pivoted)
+            pose.SetTranslationPart(position +
+                gp_Vec(drag->localPoint.Transformed(pose), pivot).XYZ());
     }
 }
 MateResidual evaluate(const State& s, const std::vector<ResolvedMate>& mates, double scale,
@@ -77,7 +83,8 @@ bool satisfied(const MateResidual& r)
     return true;
 }
 math_Matrix jacobian(const State& s, const std::vector<ResolvedMate>& mates,
-                     const std::vector<Variable>& vars, double scale, bool diagnose = false)
+                     const std::vector<Variable>& vars, double scale, bool diagnose = false,
+                     const ComponentDragTarget* drag = nullptr)
 {
     const int rows = int(evaluate(s, mates, scale, diagnose).values.size());
     math_Matrix j(1, rows, 1, int(vars.size()), 0.0);
@@ -85,8 +92,8 @@ math_Matrix jacobian(const State& s, const std::vector<ResolvedMate>& mates,
     for (std::size_t c = 0; c < vars.size(); ++c)
     {
         auto plus = s, minus = s;
-        step(plus, vars[c], h, scale);
-        step(minus, vars[c], -h, scale);
+        step(plus, vars[c], h, scale, drag);
+        step(minus, vars[c], -h, scale, drag);
         const auto a = evaluate(plus, mates, scale, diagnose),
                    b = evaluate(minus, mates, scale, diagnose);
         if (a.values.size() != std::size_t(rows) || b.values.size() != std::size_t(rows))
@@ -409,6 +416,14 @@ MateSolution solveGeneralMates(const std::vector<RigidBody>& bodies,
 MateSolution dragMates(const std::vector<RigidBody>& bodies, const std::vector<ResolvedMate>& input,
                        const ComponentDragTarget& target)
 {
+    if (!std::isfinite(target.tolerance) || target.tolerance <= 0)
+        throw std::runtime_error("Invalid drag precision.");
+    for (const auto& p : {target.localPoint, target.target})
+        if (!std::isfinite(p.X()) || !std::isfinite(p.Y()) || !std::isfinite(p.Z()))
+            throw std::runtime_error("Invalid drag point.");
+    if (target.rotation && (!std::isfinite(target.rotation->SquareNorm()) ||
+                            target.rotation->SquareNorm() < 1e-12))
+        throw std::runtime_error("Invalid drag rotation.");
     if (target.body < 0 || target.body >= int(bodies.size()) ||
         bodies[std::size_t(target.body)].fixed)
         throw std::runtime_error("Choose a floating component to drag.");
@@ -432,6 +447,16 @@ MateSolution dragMates(const std::vector<RigidBody>& bodies, const std::vector<R
         });
     if (!constrained)
     {
+        if (target.rotation)
+        {
+            auto& placement = result.placements[std::size_t(target.body)];
+            const auto pivot = target.localPoint.Transformed(placement);
+            const auto position = placement.TranslationPart();
+            placement.SetRotation(target.rotation->Normalized());
+            placement.SetTranslationPart(position +
+                gp_Vec(target.localPoint.Transformed(placement), pivot).XYZ());
+            return result;
+        }
         auto delta =
             gp_Vec(target.localPoint.Transformed(result.placements[std::size_t(target.body)]),
                    target.target);
@@ -466,11 +491,21 @@ MateSolution dragMates(const std::vector<RigidBody>& bodies, const std::vector<R
     const gp_Vec normal(target.viewNormal);
     const auto error = [&](const std::vector<gp_Trsf>& poses)
     {
+        if (target.rotation)
+        {
+            auto difference = target.rotation->Normalized() *
+                poses[std::size_t(target.body)].GetRotation().Inverted();
+            if (difference.W() < 0) difference = difference.Negated();
+            gp_Vec axis;
+            double angle = 0;
+            difference.GetVectorAndAngle(axis, angle);
+            return axis * angle;
+        }
         auto v =
             gp_Vec(target.localPoint.Transformed(poses[std::size_t(target.body)]), target.target);
         return v - normal * v.Dot(normal);
     };
-    for (int iteration = 0; iteration < 6; ++iteration)
+    for (int iteration = 0; iteration < (target.rotation ? 10 : 6); ++iteration)
     {
         const auto wanted = error(result.placements);
         if (wanted.Magnitude() <= target.tolerance)
@@ -502,7 +537,7 @@ MateSolution dragMates(const std::vector<RigidBody>& bodies, const std::vector<R
                     weights.push_back(1);
                 }
         }
-        auto hard = jacobian(state, mates, variables, scale, true);
+        auto hard = jacobian(state, mates, variables, scale, true, &target);
         for (int r = 1; r <= hard.RowNumber(); ++r)
             for (int c = 1; c <= hard.ColNumber(); ++c)
                 hard(r, c) *= weights[std::size_t(c - 1)];
@@ -514,8 +549,8 @@ MateSolution dragMates(const std::vector<RigidBody>& bodies, const std::vector<R
             if (variables[std::size_t(c)].body != target.body)
                 continue;
             auto plus = state, minus = state;
-            step(plus, variables[std::size_t(c)], 1e-6, scale);
-            step(minus, variables[std::size_t(c)], -1e-6, scale);
+            step(plus, variables[std::size_t(c)], 1e-6, scale, &target);
+            step(minus, variables[std::size_t(c)], -1e-6, scale, &target);
             const auto derivative =
                 (error(minus.poses) - error(plus.poses)) * (weights[std::size_t(c)] / 2e-6);
             for (int r = 1; r <= 3; ++r)
@@ -561,7 +596,7 @@ MateSolution dragMates(const std::vector<RigidBody>& bodies, const std::vector<R
         }
         auto trial = state;
         for (int c = 0; c < columns; ++c)
-            step(trial, variables[std::size_t(c)], delta[std::size_t(c)] / limit, scale);
+            step(trial, variables[std::size_t(c)], delta[std::size_t(c)] / limit, scale, &target);
         auto trialBodies = bodies;
         for (std::size_t b = 0; b < bodies.size(); ++b)
             trialBodies[b].placement = trial.poses[b];

@@ -152,6 +152,54 @@ void constrainedDragging()
     require(grab.Transformed(free.placements[1]).Distance(target) < 1e-4,
             "Unmated component must follow a dragged point by translation");
 }
+void constrainedRotation()
+{
+    auto assembly = bodies({}, 0);
+    const auto cylinder = entity(K::Cylinder, {}, gp_Dir(0, 0, 1), 2);
+    const auto plane = entity(K::Plane);
+    auto mates = std::vector<ResolvedMate>{pair(MateKind::Concentric, cylinder, cylinder),
+                                          pair(MateKind::Coincident, plane, plane)};
+    const gp_Quaternion quarterTurn(gp_Vec(0, 0, 1), pi / 2);
+    const gp_Pnt pivot(4, 2, 3);
+    ComponentDragTarget target{1, pivot, {}, gp_Dir(0, 0, 1), 1e-4, quarterTurn};
+    const auto free = dragMates(assembly, {}, target);
+    require(pivot.Transformed(free.placements[1]).Distance(pivot) < 1e-6,
+            "Free rotation must preserve its center");
+    require(std::abs((free.placements[1].GetRotation() * quarterTurn.Inverted()).GetRotationAngle()) < 1e-5,
+            "Free rotation must reach the requested orientation");
+    const auto seated = dragMates(assembly, mates, target);
+    require(std::abs((seated.placements[1].GetRotation() * quarterTurn.Inverted()).GetRotationAngle()) < 1e-3,
+            "Seated concentric component must rotate around its axis");
+    require(seated.placements[1].TranslationPart().Modulus() < 1e-4,
+            "Rotation must preserve the axis and seat even when the preferred pivot is off-axis");
+    target.rotation = gp_Quaternion(gp_Vec(0, 0, 1), 3.0);
+    const auto large = dragMates(assembly, mates, target);
+    require(std::abs((large.placements[1].GetRotation() * target.rotation->Inverted()).GetRotationAngle()) < 1e-3,
+            "Large cursor steps must still reach the permitted orientation");
+    target.rotation = quarterTurn;
+    mates[0].definition->parameters.standard.lockRotation = true;
+    mates.pop_back(); // Axial sliding remains possible, but rotation is blocked.
+    const auto locked = dragMates(assembly, mates, target);
+    require(std::abs(locked.placements[1].GetRotation().GetRotationAngle()) < 1e-5 &&
+                locked.placements[1].TranslationPart().Modulus() < 1e-5,
+            "Blocked rotation must not turn into unwanted sliding");
+    target.rotation = gp_Quaternion(0, 0, 0, 0);
+    bool rejected = false;
+    try { (void)dragMates(assembly, {}, target); }
+    catch (const std::exception&) { rejected = true; }
+    require(rejected, "A zero rotation quaternion must be rejected");
+
+    auto linked = bodies({10, 0, 0}, 0);
+    linked[0].fixed = false;
+    auto rigid = pair(MateKind::Lock, entity(K::Frame), entity(K::Frame));
+    target.rotation = quarterTurn;
+    const auto group = dragMates(linked, {rigid}, target);
+    require(std::abs((group.placements[0].GetRotation() * quarterTurn.Inverted()).GetRotationAngle()) < 1e-3,
+            "A rigidly mated floating neighbor must rotate with the dragged component");
+    const auto relative = group.placements[0].Inverted() * group.placements[1];
+    require((relative.TranslationPart() - gp_XYZ(10, 0, 0)).Modulus() < 1e-4,
+            "Rotating linked components must preserve their relative placement");
+}
 void advanced()
 {
     const auto plane = entity(K::Plane), axis = entity(K::Line), point = entity(K::Point);
@@ -432,6 +480,7 @@ int main()
     {
         standards();
         constrainedDragging();
+        constrainedRotation();
         advanced();
         mechanical();
         relativeMechanicalMotion();

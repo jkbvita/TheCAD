@@ -263,6 +263,12 @@ AssemblyWindow::AssemblyWindow(QWidget* parent) : QMainWindow(parent),
                     id, [&](auto& doc)
                     { doc.dragPoint(id.toStdString(), local, target, normal, tolerance); });
             });
+    connect(m_viewport, &AssemblyViewport::dragRotationRequested, this,
+            [this](const QString& id, const gp_Pnt& pivot, const gp_Quaternion& rotation)
+            {
+                previewComponentDrag(id, [&](auto& doc)
+                    { doc.dragRotation(id.toStdString(), pivot, rotation); });
+            });
     connect(m_viewport, &AssemblyViewport::dragFinished, this,
             [this](bool accepted)
             {
