@@ -68,6 +68,9 @@ Result: Release app compiled successfully. Seven focused suites passed:
 and `ui.welcome-offscreen.hidpi`. Offscreen tests load the installed Segoe UI font
 explicitly because Qt's Windows offscreen platform has no native font database.
 The actual application continues to use the normal Windows font configuration.
+The existing native assembly-entry regression now waits for the deferred workspace
+and its first-frame reveal before checking that the original part remains intact.
+It is compiled but deliberately not run, because it opens visible native windows.
 
 Manual checklist:
 
