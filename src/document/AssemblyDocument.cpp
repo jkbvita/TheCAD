@@ -84,8 +84,6 @@ AssemblyComponent AssemblyDocument::loadSource(const QString& source)
     const auto bytes = file.readAll();
     file.close();
     component.part = std::make_shared<PartDocument>(PartDocument::load(component.path));
-    require(!component.part->shape().IsNull(),
-            "The component part has no solid body: " + component.path.toStdString());
     require(file.open(QIODevice::ReadOnly), "Component source disappeared while loading.");
     require(file.readAll() == bytes,
             "The component source changed while loading. Retry the insertion or rebuild.");
@@ -108,15 +106,31 @@ void AssemblyDocument::prepareSource(AssemblyComponent& component)
 {
     if (component.part->shape().IsNull())
     {
-        require(!component.embeddedPart.isEmpty(), "Linked assembly parts require a solid body.");
         const auto last =
             std::find_if(component.part->features().rbegin(), component.part->features().rend(),
                          [](const auto& f) { return f.kind == FeatureKind::Sketch; });
-        require(last != component.part->features().rend(),
-                "An owned component requires a solid or a generated sketch.");
-        component.displayShape = modeling::sketchShape(last->sketch);
+        if (last != component.part->features().rend())
+            component.displayShape = modeling::sketchShape(last->sketch);
     }
-    require(!component.shape().IsNull(), "The component has no displayable geometry.");
+    if (component.shape().IsNull())
+    {
+        component.size = 100;
+        auto references = std::make_shared<std::vector<AssemblySourceReference>>();
+        for (const auto& option : component.part->referenceOptions(false, false, false))
+        {
+            try
+            {
+                const auto geometry = modeling::assembly::mateGeometry(
+                    option.geometry, option.reference.source == modeling::ReferenceSource::Origin);
+                references->push_back({option.label, option.reference, option.geometry,
+                                       option.selectionShape, geometry});
+            }
+            catch (const Standard_Failure&) {}
+            catch (const std::exception&) {}
+        }
+        component.references = std::move(references);
+        return;
+    }
     Bnd_Box box;
     BRepBndLib::Add(component.shape(), box);
     double x0, y0, z0, x1, y1, z1;
@@ -575,6 +589,7 @@ void AssemblyDocument::reloadSources()
             found = cache.emplace(c.path.toCaseFolded(), loadSource(c.path)).first;
         c.part = found->second.part;
         c.references = found->second.references;
+        c.displayShape = found->second.displayShape;
         c.digest = found->second.digest;
         c.size = found->second.size;
     }
@@ -678,7 +693,7 @@ void AssemblyDocument::solve(const std::string& driven, int generatedPass,
     {
         require(!c.id.empty() && c.id.size() <= 128 && ids.insert(c.id).second,
                 "Invalid or duplicate component ID.");
-        require(!c.name.empty() && c.name.size() <= 256 && c.part && !c.shape().IsNull(),
+        require(!c.name.empty() && c.name.size() <= 256 && c.part,
                 "Invalid component source or name.");
         bodies.push_back({c.id, c.placement, c.fixed || c.id == driven, c.size});
     }

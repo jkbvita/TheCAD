@@ -55,6 +55,8 @@ public:
     bool isReady() const;
     QString initializationError() const;
     bool setShape(const TopoDS_Shape& shape);
+    // Non-pickable surrounding assembly geometry for Edit In Place.
+    void setContextShapes(const std::vector<TopoDS_Shape>& shapes, double transparency = 0.76);
     void releaseGraphics();
     void beginPlaneSelection();
     void cancelPlaneSelection();
@@ -258,6 +260,7 @@ private:
     void touchpadZoom(QPointF position, double factor);
     void initialize();
     void releaseViewer();
+    void renderContextShapes();
     void synchronizeSurface();
     void orientSketch();
     void updateReferencePlanes();
@@ -335,6 +338,9 @@ private:
     QPoint nativePosition(const QPointF& position) const;
 
     TopoDS_Shape m_shape;
+    std::vector<TopoDS_Shape> m_contextShapes;
+    std::vector<Handle(AIS_Shape)> m_contextPresentations;
+    double m_contextTransparency = 0.76;
     viewport::GraphicsScene m_graphics;
     Handle(AIS_Shape) m_presentation;
     Handle(AIS_Shape) m_sketchPresentation;

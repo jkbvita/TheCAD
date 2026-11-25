@@ -8,6 +8,8 @@
 #include <QPointer>
 #include <optional>
 #include <memory>
+#include <functional>
+#include <vector>
 
 class QLabel;
 class QDialog;
@@ -29,6 +31,8 @@ class QStackedWidget;
 class QFrame;
 class QEvent;
 class QMenu;
+class QToolBar;
+class QComboBox;
 
 namespace thecad::ui {
 
@@ -48,6 +52,11 @@ public:
     const document::PartDocument& document() const;
     QString currentPath() const;
     bool openPartFile(const QString& path);
+    bool hasEditInPlaceContext() const { return bool(m_inPlaceFinished); }
+    void setEditInPlaceContext(const QString& componentName,
+                               const std::vector<TopoDS_Shape>& surroundings,
+                               const std::vector<TopoDS_Shape>& referencedSurroundings,
+                               std::function<void()> finished);
     application::CommandDispatcher& commands() { return m_commands; }
 
 protected:
@@ -137,6 +146,8 @@ private:
     void rememberSketchChange(EditState previous);
     void traverseHistory(bool redo);
     void updateHistoryActions();
+    void applyInPlaceContextVisibility(int mode);
+    void finishInPlaceEditing();
 
     QAction* m_undo=nullptr;
     QAction* m_redo=nullptr;
@@ -274,6 +285,10 @@ private:
     bool m_startupSketchAvailable = true;
     int m_selectedFace = 0;
     std::unique_ptr<OperationDraft> m_operation;
+    QToolBar* m_inPlaceToolbar = nullptr;
+    QComboBox* m_inPlaceVisibility = nullptr;
+    std::vector<TopoDS_Shape> m_inPlaceSurroundings, m_inPlaceReferenced;
+    std::function<void()> m_inPlaceFinished;
 };
 
 } // namespace thecad::ui

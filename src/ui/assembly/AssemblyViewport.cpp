@@ -120,7 +120,10 @@ void AssemblyViewport::setComponents(const std::vector<AssemblyVisual>& visuals)
         std::equal(visuals.begin(), visuals.end(), m_visuals.begin(),
                    [](const auto& a, const auto& b)
                    {
-                       return a.id == b.id && a.shape.IsSame(b.shape) && a.visible == b.visible &&
+                       const bool sameShape =
+                           (a.shape.IsNull() && b.shape.IsNull()) ||
+                           (!a.shape.IsNull() && !b.shape.IsNull() && a.shape.IsSame(b.shape));
+                       return a.id == b.id && sameShape && a.visible == b.visible &&
                               a.fixed == b.fixed && a.preview == b.preview &&
                               a.constrained == b.constrained && samePose(a.placement, b.placement);
                    });
@@ -149,6 +152,15 @@ void AssemblyViewport::setComponents(const std::vector<AssemblyVisual>& visuals)
     for (const auto& visual : visuals)
     {
         auto& item = m_presentations[visual.id];
+        if (visual.shape.IsNull())
+        {
+            if (!item.IsNull())
+            {
+                context->Remove(item, false);
+                item.Nullify();
+            }
+            continue;
+        }
         const bool replaced = item.IsNull() || !item->Shape().IsSame(visual.shape);
         if (replaced)
         {
@@ -183,7 +195,6 @@ void AssemblyViewport::setComponents(const std::vector<AssemblyVisual>& visuals)
             context->Erase(item, false);
     }
     refreshSelection();
-    m_graphics.view()->ZFitAll();
     update();
 }
 TopoDS_Shape AssemblyViewport::selectedShape(const std::string& id, int face,

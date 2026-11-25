@@ -53,5 +53,65 @@ void AssemblyWindow::bindCommandHandlers() {
             return application::CommandResult{changed ? application::CommandState::Completed : application::CommandState::Failed,
                 changed ? "Component Fix / Float updated" : "Component change was rejected", {}, {id}, changed};
         });
+    m_commands.bindImmediate(
+        "assembly.new_part",
+        [this, yes, no](const auto& c)
+        { return !draftActive() && c.documentType == application::DocumentType::Assembly
+                     ? yes()
+                     : no("New Part is unavailable during another assembly operation", "idle assembly"); },
+        [this](const application::CommandRequest& request, const auto&)
+        {
+            const auto found = request.parameters.find("path");
+            const auto* path = found == request.parameters.end()
+                                   ? nullptr
+                                   : std::get_if<std::string>(&found->second);
+            if (!path || path->empty())
+                return application::CommandResult{application::CommandState::Rejected,
+                                                  "Choose a destination .thepart path.", {}, {}, false};
+            if (!createPartInAssembly(QString::fromStdString(*path)))
+                return application::CommandResult{application::CommandState::Failed,
+                                                  "The part was not created.", {}, {}, false};
+            return application::CommandResult{application::CommandState::Completed,
+                                              "Independent part created in assembly.", {}, {}, true};
+        });
+    const auto componentId = [](const application::CommandRequest& request,
+                                const application::CommandContext& context)
+    {
+        const auto found = request.parameters.find("component");
+        if (found != request.parameters.end())
+            if (const auto* id = std::get_if<std::string>(&found->second))
+                return *id;
+        return context.selection.empty() ? std::string{} : context.selection.front().featureId;
+    };
+    const auto bindOpen = [&](const char* command, bool inPlace)
+    {
+        m_commands.bindImmediate(
+            command,
+            [this, yes, no, componentId, command](const application::CommandContext& context)
+            {
+                const application::CommandRequest request{command};
+                const auto id = componentId(request, context);
+                return !draftActive() && hasComponent(id) &&
+                               !document().component(id).path.isEmpty()
+                           ? yes()
+                           : no("Select an external part component", "external component");
+            },
+            [this, componentId, inPlace](const application::CommandRequest& request,
+                                         const application::CommandContext& context)
+            {
+                const auto id = componentId(request, context);
+                if (!hasComponent(id) || document().component(id).path.isEmpty())
+                    return application::CommandResult{application::CommandState::Rejected,
+                                                      "Select an external part component.", {}, {}, false};
+                if (!openComponentPart(id, inPlace))
+                    return application::CommandResult{application::CommandState::Failed,
+                                                      "The part could not be opened.", {}, {id}, false};
+                return application::CommandResult{application::CommandState::Completed,
+                                                  inPlace ? "Edit In Place started" : "Part opened",
+                                                  {}, {id}, false};
+            });
+    };
+    bindOpen("assembly.open_part", false);
+    bindOpen("assembly.edit_in_place", true);
 }
 } // namespace thecad::ui

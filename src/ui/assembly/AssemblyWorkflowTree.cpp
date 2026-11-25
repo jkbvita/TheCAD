@@ -124,14 +124,40 @@ void AssemblyWindow::workflowContextMenu(QMenu& menu, QTreeWidgetItem* item)
     }
     if (kind == "component")
     {
+        const auto& component = document().component(id);
+        if (!component.path.isEmpty())
+        {
+            auto* open = menu.addAction("Open Part");
+            connect(open, &QAction::triggered, this,
+                    [this, id]
+                    {
+                        selectComponent(id);
+                        application::CommandRequest request{"assembly.open_part"};
+                        request.parameters["component"] = id;
+                        const auto result = m_commands.execute(request);
+                        if (result.state == application::CommandState::Rejected)
+                            reportError(QString::fromStdString(result.message));
+                    });
+            auto* edit = menu.addAction("Edit Part In Place");
+            connect(edit, &QAction::triggered, this,
+                    [this, id]
+                    {
+                        selectComponent(id);
+                        application::CommandRequest request{"assembly.edit_in_place"};
+                        request.parameters["component"] = id;
+                        const auto result = m_commands.execute(request);
+                        if (result.state == application::CommandState::Rejected)
+                            reportError(QString::fromStdString(result.message));
+                    });
+        }
         for (const auto& part : document().inPlaceParts())
-            if (part.componentId == id)
+            if (part.componentId == id && component.path.isEmpty())
             {
                 auto* edit = menu.addAction("Edit in-context part");
                 connect(edit, &QAction::triggered, this,
                         [this, key = part.id] { startWorkflow(Workflow::InPlace, key); });
             }
-        if (!document().component(id).embeddedPart.isEmpty())
+        if (!component.embeddedPart.isEmpty())
         {
             auto* exportPart = menu.addAction("Save owned part as…");
             connect(exportPart, &QAction::triggered, this,

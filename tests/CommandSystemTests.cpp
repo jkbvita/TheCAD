@@ -39,6 +39,24 @@ int main(int argc, char** argv) {
         require(!commands.availability("sketch.line").available, "Line available without sketch");
         require(commands.availability("sketch.line").reason.find("workspace") != std::string::npos,
                 "Unavailable command has no reason");
+        application::CommandContext assemblyContext;
+        assemblyContext.workspace = application::Workspace::Assembly;
+        application::CommandDispatcher filePathCommands([&] { return assemblyContext; });
+        application::registerBuiltInCommands(filePathCommands.registry());
+        std::string acceptedPath;
+        filePathCommands.bindImmediate("assembly.new_part",
+            [](const auto&) { return application::CommandAvailability{true, {}, {}}; },
+            [&](const auto& request, const auto&) {
+                acceptedPath = std::get<std::string>(request.parameters.at("path"));
+                return application::CommandResult{application::CommandState::Completed};
+            });
+        application::CommandRequest newPartRequest{"assembly.new_part"};
+        newPartRequest.parameters["path"] = std::string("linked-part.thepart");
+        require(bool(filePathCommands.execute(newPartRequest)) && acceptedPath == "linked-part.thepart",
+                "Typed file-path parameter was rejected");
+        newPartRequest.parameters["path"] = application::Length{25};
+        require(!filePathCommands.execute(newPartRequest),
+                "File-path parameter accepted a length value");
         bool viewed = false;
         require(!commands.availability("view.isometric").available, "View available without viewport");
         part.setViewCallback([&] { viewed = true; });

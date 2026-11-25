@@ -16,6 +16,7 @@
 #include "ui/widgets/FeatureCommandBar.h"
 #include "ui/widgets/PropertyManagerControls.h"
 #include <Standard_Failure.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
 #include <TopExp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <QAction>
@@ -28,6 +29,7 @@
 #include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
+#include <QFile>
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QInputDialog>
@@ -51,6 +53,7 @@
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
+#include <set>
 #include <stdexcept>
 
 namespace thecad::ui
@@ -398,7 +401,17 @@ void AssemblyWindow::buildCommands()
     m_groundAction = action("actionAssemblyGroundPlane", "Ground Plane",
                             [this] { startWorkflow(Workflow::Ground); });
     m_contextAction = action("actionNewInContextPart", "New Part in Context",
-                             [this] { startWorkflow(Workflow::InPlace); });
+                             [this]
+                             {
+                                 const auto path = chooseNewPartPath();
+                                 if (path.isEmpty())
+                                     return;
+                                 application::CommandRequest request{"assembly.new_part"};
+                                 request.parameters["path"] = path.toStdString();
+                                 const auto result = m_commands.execute(request);
+                                 if (result.state == application::CommandState::Rejected)
+                                     reportError(QString::fromStdString(result.message));
+                             });
     for (auto* command : {m_beltAction, m_assetAction, m_groundAction, m_contextAction})
         insert->addAction(command);
     m_magneticAction = action("actionMagneticMates", "Magnetic Mates", [] {});
@@ -481,6 +494,13 @@ QString AssemblyWindow::chooseComponentPath()
 {
     return QFileDialog::getOpenFileName(this, "Insert Components", {},
                                         "TheCAD Parts (*.thepart *.tcpart)");
+}
+QString AssemblyWindow::chooseNewPartPath()
+{
+    const auto directory = m_session.path().isEmpty() ? QString{} : QFileInfo(m_session.path()).absolutePath();
+    return QFileDialog::getSaveFileName(this, "New Part in Assembly",
+                                        QDir(directory).filePath("NewPart.thepart"),
+                                        "TheCAD Part (*.thepart)");
 }
 QString AssemblyWindow::chooseAssemblyPath(bool saving)
 {
@@ -776,6 +796,32 @@ void AssemblyWindow::refreshTree()
         item->setCheckState(0, c.visible ? Qt::Checked : Qt::Unchecked);
         item->setToolTip(0, c.path);
         references(item, c.id);
+        for (const auto& inPlace : document().inPlaceParts())
+            if (inPlace.componentId == c.id)
+            {
+                auto* folder = new QTreeWidgetItem(item, {"Assembly References"});
+                folder->setData(0, kindRole, "assembly-references");
+                folder->setIcon(0, commandIcon("Reference Geometry"));
+                QString supportName = "Assembly Origin";
+                if (!inPlace.support.componentId.empty())
+                    supportName = q(document().component(inPlace.support.componentId).name);
+                QString geometryName = "Reference unavailable";
+                for (const auto& option : document().referenceOptions(inPlace.support.componentId))
+                    if (option.reference.connectorId == inPlace.support.connectorId &&
+                        sameReference(option.reference, inPlace.support))
+                    {
+                        geometryName = option.label.section(" / ", -1);
+                        break;
+                    }
+                auto* reference = new QTreeWidgetItem(
+                    folder, {QString("%1 · %2 · %3")
+                                 .arg(inPlace.linked ? "Associative" : "Local")
+                                 .arg(supportName, geometryName)});
+                reference->setToolTip(0, inPlace.linked
+                                             ? "Stable assembly support that drives this component instance placement."
+                                             : "Local placement. Changes to source geometry do not move this component.");
+                folder->setExpanded(true);
+            }
     }
     addWorkflowTree(root);
     auto* mates = new QTreeWidgetItem(root, {"Mates"});
@@ -1107,6 +1153,196 @@ bool AssemblyWindow::insertPartFile(const QString& path)
     }
     return false;
 }
+
+bool AssemblyWindow::hasComponent(const std::string& id) const
+{
+    return std::any_of(document().components().begin(), document().components().end(),
+                       [&](const auto& component) { return component.id == id; });
+}
+
+bool AssemblyWindow::createPartInAssembly(const QString& requestedPath)
+{
+    if (draftActive() || requestedPath.isEmpty())
+        return false;
+    if (m_preselection.size() > 1)
+    {
+        reportError("Select one plane or planar reference before creating a part, or clear the selection to use the assembly origin.");
+        return false;
+    }
+    QString path = QDir::cleanPath(QFileInfo(requestedPath).absoluteFilePath());
+    if (QFileInfo(path).suffix().isEmpty())
+        path += ".thepart";
+    if (QFileInfo(path).suffix().compare("thepart", Qt::CaseInsensitive) != 0)
+    {
+        reportError("New assembly components must be saved as .thepart documents.");
+        return false;
+    }
+    if (QFileInfo::exists(path))
+    {
+        reportError("That file already exists. Choose a new name so an existing part is not overwritten.");
+        return false;
+    }
+
+    bool fileCreated = false;
+    bool assemblyCommitted = false;
+    std::string componentId;
+    try
+    {
+        document::PartDocument::createEmpty().save(path);
+        fileCreated = true;
+        auto candidate = document();
+        componentId = candidate.insertComponent(path, gp_Trsf{}, false);
+        if (m_preselection.size() == 1)
+            candidate.linkInPlacePart(componentId, m_preselection.front().reference);
+        if (!m_session.commit(std::move(candidate)))
+            throw std::runtime_error("The assembly did not accept the new part instance.");
+        assemblyCommitted = true;
+        m_selected = componentId;
+        m_preselection.clear();
+        refresh();
+        application::recordRecentDocument(path);
+        openComponentPart(componentId, true);
+        return true;
+    }
+    catch (const Standard_Failure& error)
+    {
+        if (fileCreated && !assemblyCommitted)
+            QFile::remove(path);
+        reportError(QString::fromUtf8(error.GetMessageString()));
+    }
+    catch (const std::exception& error)
+    {
+        if (fileCreated && !assemblyCommitted)
+            QFile::remove(path);
+        reportError(QString::fromUtf8(error.what()));
+    }
+    return false;
+}
+
+bool AssemblyWindow::openComponentPart(const std::string& id, bool editInPlace)
+{
+    if (!hasComponent(id))
+        return false;
+    const auto& component = document().component(id);
+    if (component.path.isEmpty())
+    {
+        reportError("This generated component has no independent part file yet. Use Save Owned Part As… first.");
+        return false;
+    }
+    if (editInPlace && m_editInPlaceWindow &&
+        m_editInPlaceWindow->currentPath().compare(component.path, Qt::CaseInsensitive) != 0)
+    {
+        reportError("Finish the current Edit In Place session before editing another component.");
+        return false;
+    }
+
+    MainWindow* partWindow = m_editInPlaceWindow;
+    if (!partWindow)
+        for (auto* top : QApplication::topLevelWidgets())
+            if (auto* candidate = dynamic_cast<MainWindow*>(top))
+                if (candidate->currentPath().compare(component.path, Qt::CaseInsensitive) == 0)
+                {
+                    partWindow = candidate;
+                    break;
+                }
+    if (partWindow && editInPlace && partWindow->hasEditInPlaceContext() &&
+        partWindow != m_editInPlaceWindow)
+    {
+        reportError("This part is already being edited in another assembly context.");
+        return false;
+    }
+    if (!partWindow)
+    {
+        partWindow = new MainWindow;
+        if (!partWindow->openPartFile(component.path))
+        {
+            delete partWindow;
+            return false;
+        }
+    }
+
+    if (editInPlace && !partWindow->hasEditInPlaceContext())
+    {
+        std::vector<TopoDS_Shape> surroundings, referenced;
+        std::set<std::string> referencedIds;
+        for (const auto& inPlace : document().inPlaceParts())
+            if (inPlace.componentId == id && inPlace.linked &&
+                !inPlace.support.componentId.empty())
+                referencedIds.insert(inPlace.support.componentId);
+        gp_Trsf worldToPart = component.placement;
+        worldToPart.Invert();
+        for (const auto& other : document().components())
+        {
+            if (other.id == id || !other.visible || other.shape().IsNull())
+                continue;
+            auto transform = worldToPart;
+            transform.Multiply(other.placement);
+            BRepBuilderAPI_Transform localShape(other.shape(), transform, Standard_True);
+            if (!localShape.IsDone())
+                continue;
+            surroundings.push_back(localShape.Shape());
+            if (referencedIds.count(other.id))
+                referenced.push_back(localShape.Shape());
+        }
+        QPointer<AssemblyWindow> guard(this);
+        setEnabled(false);
+        partWindow->setEditInPlaceContext(
+            QString::fromStdString(component.name), surroundings, referenced,
+            [guard, id]
+            {
+                if (!guard)
+                    return;
+                guard->m_editInPlaceWindow.clear();
+                guard->setEnabled(true);
+                guard->m_selected = id;
+                guard->refresh();
+                guard->raise();
+                guard->activateWindow();
+            });
+        m_editInPlaceWindow = partWindow;
+    }
+    partWindow->setAttribute(Qt::WA_DeleteOnClose);
+    partWindow->showMaximized();
+    partWindow->raise();
+    partWindow->activateWindow();
+    return true;
+}
+
+void AssemblyWindow::refreshLinkedPartSource(const QString& requestedPath)
+{
+    const auto path = QDir::cleanPath(QFileInfo(requestedPath).absoluteFilePath());
+    const bool referenced = std::any_of(
+        document().components().begin(), document().components().end(),
+        [&](const auto& component)
+        { return component.embeddedPart.isEmpty() &&
+                 component.path.compare(path, Qt::CaseInsensitive) == 0; });
+    if (!referenced)
+        return;
+    if (draftActive())
+    {
+        statusBar()->showMessage("A linked part changed on disk. Finish the current assembly operation, then use Rebuild.");
+        return;
+    }
+    try
+    {
+        auto candidate = document();
+        candidate.reloadSources();
+        m_session.commit(std::move(candidate));
+        refresh();
+        statusBar()->showMessage("Linked part updated from its saved .thepart document.", 5000);
+    }
+    catch (const Standard_Failure& error)
+    {
+        reportError(QString("Linked part update failed; the last valid assembly state was kept.\n%1")
+                        .arg(QString::fromUtf8(error.GetMessageString())));
+    }
+    catch (const std::exception& error)
+    {
+        reportError(QString("Linked part update failed; the last valid assembly state was kept.\n%1")
+                        .arg(QString::fromUtf8(error.what())));
+    }
+}
+
 void AssemblyWindow::moveInsertion(const gp_Pnt& point)
 {
     if (!m_insertCandidate)
@@ -1391,5 +1627,13 @@ bool AssemblyWindow::eventFilter(QObject* object, QEvent* event)
 void showAssemblyWindow(const QString& path)
 {
     launchWorkspace(application::LaunchDocument::Assembly, path);
+}
+
+void notifyOpenAssemblyWindowsPartSaved(const QString& path)
+{
+    const auto absolute = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+    for (auto* top : QApplication::topLevelWidgets())
+        if (auto* assembly = dynamic_cast<AssemblyWindow*>(top))
+            assembly->refreshLinkedPartSource(absolute);
 }
 } // namespace thecad::ui

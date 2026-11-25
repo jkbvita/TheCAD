@@ -18,7 +18,8 @@ std::string validateParameters(const CommandDescriptor& descriptor, const Comman
             (parameter->type == ParameterType::Count && std::holds_alternative<Count>(value)) ||
             (parameter->type == ParameterType::Direction && std::holds_alternative<Direction>(value)) ||
             (parameter->type == ParameterType::Boolean && std::holds_alternative<bool>(value)) ||
-            ((parameter->type == ParameterType::Enumeration || parameter->type == ParameterType::FeatureId) &&
+            ((parameter->type == ParameterType::Enumeration || parameter->type == ParameterType::FeatureId ||
+              parameter->type == ParameterType::FilePath) &&
              std::holds_alternative<std::string>(value)) ||
             (parameter->type == ParameterType::Reference && std::holds_alternative<modeling::SelectionRef>(value)) ||
             (parameter->type == ParameterType::Regions && std::holds_alternative<modeling::RegionReferences>(value)) ||
@@ -227,8 +228,14 @@ void registerBuiltInCommands(CommandRegistry& registry) {
     for (const char* operation : {"insert_component", "mate", "belt", "ground", "asset_publisher", "in_context_part"})
         add((std::string("assembly.") + operation).c_str(), operation, "Assembly", assembly, true);
     for (const char* operation : {"hide_show", "delete", "rebuild", "magnetic", "magnetic_snap_distance",
-                                  "open", "save", "save_as", "close", "new", "new_part", "open_part",
+                                  "open", "save", "save_as", "close", "new",
                                   "edit_mate", "suppress_mates", "unsuppress_mates"})
         add((std::string("assembly.") + operation).c_str(), operation, "Assembly", assembly, false);
+    add("assembly.new_part", "New Part in Assembly", "Assembly", assembly, false,
+        {{"path", ParameterType::FilePath, true}});
+    add("assembly.edit_in_place", "Edit Part In Place", "Assembly", assembly, false,
+        {{"component", ParameterType::FeatureId, false}});
+    add("assembly.open_part", "Open Part", "Assembly", assembly, false,
+        {{"component", ParameterType::FeatureId, false}});
 }
 } // namespace thecad::application

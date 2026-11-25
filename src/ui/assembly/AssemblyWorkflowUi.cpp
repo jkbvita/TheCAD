@@ -127,7 +127,10 @@ void AssemblyWindow::editMate(const document::AssemblyMate& mate)
     for (const auto& part : document().inPlaceParts())
         if (mate.id == "mate-inplace-" + part.id)
         {
-            startWorkflow(Workflow::InPlace, part.id);
+            if (document().component(part.componentId).path.isEmpty())
+                startWorkflow(Workflow::InPlace, part.id);
+            else
+                openComponentPart(part.componentId, true);
             return;
         }
     if (mate.id.rfind("mate-ground-", 0) == 0)

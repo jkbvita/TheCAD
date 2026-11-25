@@ -720,6 +720,59 @@ MainWindow::~MainWindow()
 const document::PartDocument& MainWindow::document() const { return m_session.document(); }
 QString MainWindow::currentPath() const { return m_session.path(); }
 
+void MainWindow::setEditInPlaceContext(const QString& componentName,
+                                      const std::vector<TopoDS_Shape>& surroundings,
+                                      const std::vector<TopoDS_Shape>& referencedSurroundings,
+                                      std::function<void()> finished)
+{
+    m_inPlaceSurroundings = surroundings;
+    m_inPlaceReferenced = referencedSurroundings;
+    m_inPlaceFinished = std::move(finished);
+    m_inPlaceToolbar = addToolBar("Edit In Place");
+    m_inPlaceToolbar->setObjectName("editInPlaceToolbar");
+    m_inPlaceToolbar->setMovable(false);
+    m_inPlaceToolbar->setFloatable(false);
+    auto* title = new QLabel(QString("Editing %1 in assembly").arg(componentName), this);
+    title->setObjectName("editInPlaceTitle");
+    m_inPlaceToolbar->addWidget(title);
+    m_inPlaceVisibility = new QComboBox(this);
+    m_inPlaceVisibility->setObjectName("editInPlaceVisibility");
+    m_inPlaceVisibility->addItems({"Show surroundings", "Transparent surroundings",
+                                   "Hide surroundings", "Isolate active part",
+                                   "Show referenced components"});
+    m_inPlaceToolbar->addWidget(m_inPlaceVisibility);
+    auto* finish = m_inPlaceToolbar->addAction("Finish Editing");
+    finish->setObjectName("actionFinishEditInPlace");
+    connect(m_inPlaceVisibility, qOverload<int>(&QComboBox::currentIndexChanged), this,
+            &MainWindow::applyInPlaceContextVisibility);
+    connect(finish, &QAction::triggered, this, &MainWindow::finishInPlaceEditing);
+    setWindowTitle(QString("Editing %1 — TheCAD").arg(componentName));
+    statusBar()->showMessage("Edit In Place · part geometry is saved to its independent .thepart file.");
+    applyInPlaceContextVisibility(0);
+}
+
+void MainWindow::applyInPlaceContextVisibility(int mode)
+{
+    if (!m_viewport)
+        return;
+    if (mode == 2 || mode == 3)
+    {
+        m_viewport->setContextShapes({});
+        return;
+    }
+    const auto& shapes = mode == 4 ? m_inPlaceReferenced : m_inPlaceSurroundings;
+    m_viewport->setContextShapes(shapes, mode == 1 ? 0.86 : 0.72);
+}
+
+void MainWindow::finishInPlaceEditing()
+{
+    if (!m_inPlaceFinished)
+        return;
+    if (!saveDocument())
+        return;
+    close();
+}
+
 QString MainWindow::chooseOpenPath()
 {
     return QFileDialog::getOpenFileName(this, "Open TheCAD document", m_session.path(),
@@ -895,6 +948,7 @@ bool MainWindow::saveToPath(const QString& path)
         setWindowModified(false);m_session.markSaved();
         application::recordRecentDocument(path);
         updateDocumentUi();
+        notifyOpenAssemblyWindowsPartSaved(m_session.path());
         statusBar()->showMessage("Saved " + QDir::toNativeSeparators(m_session.path()), 4000);
         return true;
     } catch (const std::exception& error) { reportError(QString::fromUtf8(error.what())); return false; }
@@ -1873,6 +1927,10 @@ void MainWindow::closeEvent(QCloseEvent* event)
             QString path=m_session.path();if(path.isEmpty()||legacyPath(path))path=chooseSavePath(false);
             if(path.isEmpty()){event->ignore();return;}
             if(!path.endsWith(".thepart",Qt::CaseInsensitive))path+=".thepart";snapshot.save(path);
+            m_session.setPath(QFileInfo(path).absoluteFilePath());
+            m_session.markSaved();
+            application::recordRecentDocument(path);
+            notifyOpenAssemblyWindowsPartSaved(m_session.path());
         }catch(const std::exception& e){reportError(QString::fromUtf8(e.what()));event->ignore();return;}
     }
     // Unconfirmed feature previews never silently become modeling features.
@@ -1883,6 +1941,11 @@ void MainWindow::closeEvent(QCloseEvent* event)
     closeConstraints();closeSmartDimension();
     if(m_selectingPlane)m_viewport->cancelPlaneSelection();
     setWindowModified(false);m_viewport->releaseGraphics();event->accept();
+    if (m_inPlaceFinished)
+    {
+        auto finished = std::move(m_inPlaceFinished);
+        finished();
+    }
 }
 
 } // namespace thecad::ui

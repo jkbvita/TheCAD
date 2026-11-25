@@ -2,6 +2,7 @@
 #include "application/AssemblySession.h"
 #include "application/CommandSystem.h"
 #include <QMainWindow>
+#include <QPointer>
 #include <functional>
 class QAction;
 class QTreeWidget;
@@ -14,6 +15,7 @@ class QMenu;
 namespace thecad::ui
 {
 class AssemblyViewport;
+class MainWindow;
 class AssemblyMateEditor;
 class AssemblyPropertyEditor;
 class ComponentPlacementEditor;
@@ -26,10 +28,13 @@ public:
     const document::AssemblyDocument& document() const { return m_session.document(); }
     bool openAssemblyFile(const QString& path);
     bool insertPartFile(const QString& path);
+    void refreshLinkedPartSource(const QString& path);
+    bool hasComponent(const std::string& id) const;
     application::CommandDispatcher& commands() { return m_commands; }
 
 protected:
     virtual QString chooseComponentPath();
+    virtual QString chooseNewPartPath();
     virtual QString chooseAssemblyPath(bool save);
     virtual bool confirmDiscard();
     virtual bool confirmComponentDeletion(const QStringList& componentNames,
@@ -74,6 +79,8 @@ private:
                               const std::function<void(document::AssemblyDocument&)>&);
     void deleteSelected();
     bool save(bool saveAs = false);
+    bool createPartInAssembly(const QString& path);
+    bool openComponentPart(const std::string& id, bool editInPlace);
     bool maybeSave();
     void cancelDraft();
     void updateActions();
@@ -105,6 +112,8 @@ private:
     QAction *m_insertAction, *m_mateAction, *m_undo, *m_redo, *m_delete, *m_fix, *m_hide,
         *m_save, *m_saveAs, *m_open, *m_new, *m_rebuild;
     QAction *m_beltAction, *m_assetAction, *m_groundAction, *m_contextAction, *m_magneticAction;
+    QPointer<MainWindow> m_editInPlaceWindow;
 };
 void showAssemblyWindow(const QString& path = {});
+void notifyOpenAssemblyWindowsPartSaved(const QString& path);
 } // namespace thecad::ui

@@ -16,7 +16,7 @@ namespace thecad::application {
 
 enum class DocumentType { Part, Assembly, Drawing };
 enum class Workspace { Part, Sketch, Assembly, Drawing };
-enum class ParameterType { Length, Angle, Count, Direction, Boolean, Enumeration, Reference, FeatureId, Regions, DatumDefinition };
+enum class ParameterType { Length, Angle, Count, Direction, Boolean, Enumeration, Reference, FeatureId, FilePath, Regions, DatumDefinition };
 enum class CommandState { Rejected, Completed, Started, WaitingForSelection, WaitingForParameters,
                           PreviewReady, Committed, Canceled, Failed };
 

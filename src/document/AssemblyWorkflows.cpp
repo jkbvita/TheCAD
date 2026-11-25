@@ -357,6 +357,38 @@ std::string AssemblyDocument::createInPlacePart(const PartDocument& part,
 {
     return setInPlacePart({{}, {}, support, offset}, part);
 }
+std::string AssemblyDocument::linkInPlacePart(const std::string& componentId,
+                                              const AssemblyReference& support,
+                                              const gp_Trsf& offset)
+{
+    validateRigidPlacement(offset);
+    const auto& source = component(componentId);
+    require(source.embeddedPart.isEmpty() && !source.path.isEmpty(),
+            "In-place associations require an external .thepart component.");
+    const auto geometry = world(*this, support);
+    require(geometry.kind == MateGeometryKind::Plane || geometry.kind == MateGeometryKind::Frame,
+            "Choose a stable plane or planar reference for the part origin.");
+    auto candidate = *this;
+    const auto found = std::find_if(candidate.m_inPlaces.begin(), candidate.m_inPlaces.end(),
+                                    [&](const auto& item)
+                                    { return item.componentId == componentId; });
+    InPlacePart definition;
+    if (found != candidate.m_inPlaces.end())
+        definition = *found;
+    else
+        definition.id = uuid("inplace-");
+    definition.componentId = componentId;
+    definition.support = support;
+    definition.offset = offset;
+    definition.linked = true;
+    if (found == candidate.m_inPlaces.end())
+        candidate.m_inPlaces.push_back(definition);
+    else
+        *found = definition;
+    candidate.solve();
+    *this = std::move(candidate);
+    return definition.id;
+}
 std::string AssemblyDocument::setInPlacePart(InPlacePart definition, const PartDocument& part)
 {
     validateRigidPlacement(definition.offset);
@@ -489,10 +521,11 @@ bool AssemblyDocument::updateGeneratedParts()
     }
     for (const auto& part : m_inPlaces)
     {
+        const auto& inPlaceComponent = component(part.componentId);
         require(identifier(part.id) && workflowIds.insert(part.id).second &&
-                    !component(part.componentId).embeddedPart.isEmpty() &&
+                    (!inPlaceComponent.embeddedPart.isEmpty() || !inPlaceComponent.path.isEmpty()) &&
                     !dependencies.count(part.componentId),
-                "Invalid or duplicate in-context component ownership.");
+                "Invalid or duplicate in-place component reference.");
         validateRigidPlacement(part.offset);
         dependencies[part.componentId] = {};
         if (part.linked && !part.support.componentId.empty())

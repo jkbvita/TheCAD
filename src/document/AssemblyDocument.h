@@ -144,6 +144,11 @@ public:
     modeling::assembly::BeltGeometry beltGeometry(const AssemblyBelt&) const;
     std::string createInPlacePart(const PartDocument& part, const AssemblyReference& support,
                                   const gp_Trsf& offset = {});
+    // Associate an independently saved part instance with stable assembly
+    // reference geometry. The part definition remains owned by its .thepart.
+    std::string linkInPlacePart(const std::string& componentId,
+                                const AssemblyReference& support,
+                                const gp_Trsf& offset = {});
     std::string setInPlacePart(InPlacePart definition, const PartDocument& part);
     void updateOwnedPart(const std::string& componentId, const PartDocument& part);
     bool snapMagnetic(const std::string& componentId, double distance, int movingConnector = -1,

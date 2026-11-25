@@ -16,6 +16,7 @@
 #include <BRep_Builder.hxx>
 #include <TopoDS_Compound.hxx>
 #include <Quantity_ColorRGBA.hxx>
+#include <Quantity_Color.hxx>
 #include <StdSelect_BRepOwner.hxx>
 #include <SelectMgr_IndexedMapOfOwner.hxx>
 #include <Prs3d_TypeOfHighlight.hxx>
@@ -170,6 +171,7 @@ void CadViewport::initialize()
         if (!setShape(m_shape)) {
             Standard_Failure::Raise(m_error.toUtf8().constData());
         }
+        renderContextShapes();
         updateSketchPresentation();
         updateReferencePlanes();
         setDatums(m_datums);
@@ -216,6 +218,7 @@ void CadViewport::releaseViewer()
     m_selectedContourPresentations.clear();
     m_sketchPresentation.Nullify();m_constructionPresentation.Nullify();
     m_sketchBatches.clear();m_selectedSolidFace=0;
+    m_contextPresentations.clear();
     m_presentation.Nullify();
     m_graphics.reset();
 }
@@ -302,6 +305,39 @@ bool CadViewport::setShape(const TopoDS_Shape& shape)
     m_shape = shape;
     m_error.clear();
     return true;
+}
+
+void CadViewport::setContextShapes(const std::vector<TopoDS_Shape>& shapes, double transparency)
+{
+    m_contextShapes = shapes;
+    m_contextTransparency = std::clamp(transparency, 0.0, 1.0);
+    if (!isReady())
+        return;
+    renderContextShapes();
+    update();
+}
+
+void CadViewport::renderContextShapes()
+{
+    if (!isReady())
+        return;
+    const auto context = m_graphics.context();
+    for (auto& presentation : m_contextPresentations)
+        if (!presentation.IsNull())
+            context->Remove(presentation, Standard_False);
+    m_contextPresentations.clear();
+    for (const auto& shape : m_contextShapes)
+    {
+        if (shape.IsNull())
+            continue;
+        presentation::prepareSolidTriangulation(shape);
+        auto ghost = presentation::makeSolidPresentation(shape);
+        ghost->SetColor(Quantity_Color(0.58, 0.66, 0.75, Quantity_TOC_RGB));
+        ghost->SetTransparency(m_contextTransparency);
+        context->Display(ghost, AIS_Shaded, -1, Standard_False);
+        context->Deactivate(ghost);
+        m_contextPresentations.push_back(ghost);
+    }
 }
 void CadViewport::beginPlaneSelection()
 {
