@@ -418,6 +418,8 @@ MateSolution dragMates(const std::vector<RigidBody>& bodies, const std::vector<R
 {
     if (!std::isfinite(target.tolerance) || target.tolerance <= 0)
         throw std::runtime_error("Invalid drag precision.");
+    if (!std::isfinite(target.rotationDeadband) || target.rotationDeadband < 0)
+        throw std::runtime_error("Invalid drag rotation allowance.");
     for (const auto& p : {target.localPoint, target.target})
         if (!std::isfinite(p.X()) || !std::isfinite(p.Y()) || !std::isfinite(p.Z()))
             throw std::runtime_error("Invalid drag point.");
@@ -489,6 +491,7 @@ MateSolution dragMates(const std::vector<RigidBody>& bodies, const std::vector<R
     for (const auto& b : bodies)
         scale = std::max(scale, b.size);
     const gp_Vec normal(target.viewNormal);
+    auto desiredPoint = target.target;
     const auto error = [&](const std::vector<gp_Trsf>& poses)
     {
         if (target.rotation)
@@ -502,119 +505,158 @@ MateSolution dragMates(const std::vector<RigidBody>& bodies, const std::vector<R
             return axis * angle;
         }
         auto v =
-            gp_Vec(target.localPoint.Transformed(poses[std::size_t(target.body)]), target.target);
+            gp_Vec(target.localPoint.Transformed(poses[std::size_t(target.body)]), desiredPoint);
         return v - normal * v.Dot(normal);
     };
-    for (int iteration = 0; iteration < (target.rotation ? 10 : 6); ++iteration)
+    const auto advance = [&](bool translationOnly)
     {
-        const auto wanted = error(result.placements);
-        if (wanted.Magnitude() <= target.tolerance)
-            break;
-        State state;
-        state.poses = result.placements;
-        state.coordinates.resize(mates.size());
-        std::vector<Variable> variables;
-        std::vector<double> weights;
-        for (std::size_t b = 0; b < bodies.size(); ++b)
-            if (connected[b] && !bodies[b].fixed)
-                for (int axis = 0; axis < 6; ++axis)
-                {
-                    variables.push_back({int(b), axis, -1});
-                    weights.push_back(axis < 3 ? 1 : 0.03);
-                }
-        for (std::size_t m = 0; m < mates.size(); ++m)
+        bool canTranslate = false;
+        const auto initialOrientation = result.placements[std::size_t(target.body)].GetRotation();
+        for (int iteration = 0; iteration < (target.rotation ? 10 : 6); ++iteration)
         {
-            mates[m].definition->motion = result.motion[m];
-            prepareMate(mates[m], state.poses);
-            state.coordinates[m] = mates[m].definition->motion.coordinates;
-            bool uses = false;
-            for (const auto& r : mates[m].definition->references)
-                uses |= r.body >= 0 && connected[std::size_t(r.body)];
-            if (uses)
-                for (std::size_t q = 0; q < state.coordinates[m].size(); ++q)
-                {
-                    variables.push_back({-1, int(q), int(m)});
-                    weights.push_back(1);
-                }
-        }
-        auto hard = jacobian(state, mates, variables, scale, true, &target);
-        for (int r = 1; r <= hard.RowNumber(); ++r)
-            for (int c = 1; c <= hard.ColNumber(); ++c)
-                hard(r, c) *= weights[std::size_t(c - 1)];
-        const auto basis = rowBasis(hard, 1e-7);
-        const int columns = int(variables.size());
-        math_Matrix point(1, 3, 1, columns, 0.0);
-        for (int c = 0; c < columns; ++c)
-        {
-            if (variables[std::size_t(c)].body != target.body)
-                continue;
-            auto plus = state, minus = state;
-            step(plus, variables[std::size_t(c)], 1e-6, scale, &target);
-            step(minus, variables[std::size_t(c)], -1e-6, scale, &target);
-            const auto derivative =
-                (error(minus.poses) - error(plus.poses)) * (weights[std::size_t(c)] / 2e-6);
-            for (int r = 1; r <= 3; ++r)
-                point(r, c + 1) = derivative.Coord(r);
-        }
-        for (int r = 1; r <= 3; ++r)
-            for (const auto& direction : basis)
-            {
-                double dot = 0;
-                for (int c = 0; c < columns; ++c)
-                    dot += point(r, c + 1) * direction[std::size_t(c)];
-                for (int c = 0; c < columns; ++c)
-                    point(r, c + 1) -= dot * direction[std::size_t(c)];
-            }
-        math_Matrix gram(1, 3, 1, 3, 0.0);
-        for (int r = 1; r <= 3; ++r)
-            for (int c = 1; c <= 3; ++c)
-            {
-                for (int k = 1; k <= columns; ++k)
-                    gram(r, c) += point(r, k) * point(c, k);
-                if (r == c)
-                    gram(r, c) += 1e-8;
-            }
-        math_Vector rhs(1, 3), answer(1, 3, 0.0);
-        for (int r = 1; r <= 3; ++r)
-            rhs(r) = wanted.Coord(r);
-        math_SVD svd(gram);
-        if (!svd.IsDone())
-            break;
-        svd.Solve(rhs, answer, 1e-12);
-        std::vector<double> delta(std::size_t(columns), 0);
-        double limit = 1;
-        for (int c = 0; c < columns; ++c)
-        {
-            for (int r = 1; r <= 3; ++r)
-                delta[std::size_t(c)] += point(r, c + 1) * answer(r);
-            delta[std::size_t(c)] *= weights[std::size_t(c)];
-            limit = std::max(limit, std::abs(delta[std::size_t(c)]) /
-                                        (variables[std::size_t(c)].body >= 0 &&
-                                                 variables[std::size_t(c)].coordinate >= 3
-                                             ? 0.4
-                                             : 0.5));
-        }
-        auto trial = state;
-        for (int c = 0; c < columns; ++c)
-            step(trial, variables[std::size_t(c)], delta[std::size_t(c)] / limit, scale, &target);
-        auto trialBodies = bodies;
-        for (std::size_t b = 0; b < bodies.size(); ++b)
-            trialBodies[b].placement = trial.poses[b];
-        auto trialMates = mates;
-        for (std::size_t m = 0; m < mates.size(); ++m)
-            trialMates[m].definition->motion.coordinates = trial.coordinates[m];
-        try
-        {
-            auto next = solveGeneralMates(trialBodies, trialMates);
-            if (error(next.placements).SquareMagnitude() >= wanted.SquareMagnitude() - 1e-12)
+            const auto wanted = error(result.placements);
+            if (wanted.Magnitude() <= target.tolerance)
                 break;
-            result = std::move(next);
+            State state;
+            state.poses = result.placements;
+            state.coordinates.resize(mates.size());
+            std::vector<Variable> variables;
+            std::vector<double> weights;
+            for (std::size_t b = 0; b < bodies.size(); ++b)
+                if (connected[b] && !bodies[b].fixed)
+                    for (int axis = 0; axis < 6; ++axis)
+                    {
+                        variables.push_back({int(b), axis, -1});
+                        weights.push_back(axis < 3 ? 1 : 0.03);
+                    }
+            for (std::size_t m = 0; m < mates.size(); ++m)
+            {
+                mates[m].definition->motion = result.motion[m];
+                prepareMate(mates[m], state.poses);
+                state.coordinates[m] = mates[m].definition->motion.coordinates;
+                bool uses = false;
+                for (const auto& r : mates[m].definition->references)
+                    uses |= r.body >= 0 && connected[std::size_t(r.body)];
+                if (uses)
+                    for (std::size_t q = 0; q < state.coordinates[m].size(); ++q)
+                    {
+                        variables.push_back({-1, int(q), int(m)});
+                        weights.push_back(1);
+                    }
+            }
+            auto hard = jacobian(state, mates, variables, scale, true, &target);
+            for (int r = 1; r <= hard.RowNumber(); ++r)
+                for (int c = 1; c <= hard.ColNumber(); ++c)
+                    hard(r, c) *= weights[std::size_t(c - 1)];
+            // Hold the grabbed body's orientation for the translation preference
+            // pass. These rows are temporary; the actual mate equations stay intact.
+            math_Matrix constraints(1, hard.RowNumber() + (translationOnly ? 3 : 0),
+                                    1, hard.ColNumber(), 0.0);
+            for (int r = 1; r <= hard.RowNumber(); ++r)
+                for (int c = 1; c <= hard.ColNumber(); ++c)
+                    constraints(r, c) = hard(r, c);
+            if (translationOnly)
+                for (std::size_t c = 0; c < variables.size(); ++c)
+                    if (variables[c].body == target.body && variables[c].coordinate >= 3)
+                        constraints(hard.RowNumber() + variables[c].coordinate - 2, int(c) + 1) = 1;
+            const auto basis = rowBasis(constraints, 1e-7);
+            const int columns = int(variables.size());
+            math_Matrix point(1, 3, 1, columns, 0.0);
+            for (int c = 0; c < columns; ++c)
+            {
+                if (variables[std::size_t(c)].body != target.body)
+                    continue;
+                auto plus = state, minus = state;
+                step(plus, variables[std::size_t(c)], 1e-6, scale, &target);
+                step(minus, variables[std::size_t(c)], -1e-6, scale, &target);
+                const auto derivative =
+                    (error(minus.poses) - error(plus.poses)) * (weights[std::size_t(c)] / 2e-6);
+                for (int r = 1; r <= 3; ++r)
+                    point(r, c + 1) = derivative.Coord(r);
+            }
+            for (int r = 1; r <= 3; ++r)
+                for (const auto& direction : basis)
+                {
+                    double dot = 0;
+                    for (int c = 0; c < columns; ++c)
+                        dot += point(r, c + 1) * direction[std::size_t(c)];
+                    for (int c = 0; c < columns; ++c)
+                        point(r, c + 1) -= dot * direction[std::size_t(c)];
+                }
+            math_Matrix gram(1, 3, 1, 3, 0.0);
+            double visibleFreedom = 0;
+            for (int r = 1; r <= 3; ++r)
+                for (int c = 1; c <= columns; ++c)
+                    visibleFreedom += point(r, c) * point(r, c);
+            canTranslate |= visibleFreedom > scale * scale * 1e-12;
+            for (int r = 1; r <= 3; ++r)
+                for (int c = 1; c <= 3; ++c)
+                {
+                    for (int k = 1; k <= columns; ++k)
+                        gram(r, c) += point(r, k) * point(c, k);
+                    if (r == c)
+                        gram(r, c) += 1e-8;
+                }
+            math_Vector rhs(1, 3), answer(1, 3, 0.0);
+            for (int r = 1; r <= 3; ++r)
+                rhs(r) = wanted.Coord(r);
+            math_SVD svd(gram);
+            if (!svd.IsDone())
+                break;
+            svd.Solve(rhs, answer, 1e-12);
+            std::vector<double> delta(std::size_t(columns), 0);
+            double limit = 1;
+            for (int c = 0; c < columns; ++c)
+            {
+                for (int r = 1; r <= 3; ++r)
+                    delta[std::size_t(c)] += point(r, c + 1) * answer(r);
+                delta[std::size_t(c)] *= weights[std::size_t(c)];
+                limit = std::max(limit, std::abs(delta[std::size_t(c)]) /
+                                            (variables[std::size_t(c)].body >= 0 &&
+                                                     variables[std::size_t(c)].coordinate >= 3
+                                                 ? 0.4
+                                                 : 0.5));
+            }
+            auto trial = state;
+            for (int c = 0; c < columns; ++c)
+                step(trial, variables[std::size_t(c)], delta[std::size_t(c)] / limit, scale, &target);
+            auto trialBodies = bodies;
+            for (std::size_t b = 0; b < bodies.size(); ++b)
+                trialBodies[b].placement = trial.poses[b];
+            auto trialMates = mates;
+            for (std::size_t m = 0; m < mates.size(); ++m)
+                trialMates[m].definition->motion.coordinates = trial.coordinates[m];
+            try
+            {
+                auto next = solveGeneralMates(trialBodies, trialMates);
+                if (translationOnly && std::abs((next.placements[std::size_t(target.body)].GetRotation() *
+                                                initialOrientation.Inverted()).GetRotationAngle()) > 1e-6)
+                    break; // Nonlinear mate repair must not bypass the orientation hold.
+                if (error(next.placements).SquareMagnitude() >= wanted.SquareMagnitude() - 1e-12)
+                    break;
+                result = std::move(next);
+            }
+            catch (const std::exception&)
+            {
+                break;
+            } // A blocked drag retains its last valid placement.
         }
-        catch (const std::exception&)
+        return canTranslate;
+    };
+    if (!target.rotation && target.rotationDeadband > 0)
+    {
+        const auto initial = result;
+        if (advance(true))
         {
-            break;
-        } // A blocked drag retains its last valid placement.
+            const auto remaining = error(result.placements);
+            if (remaining.Magnitude() <= target.rotationDeadband)
+                return result;
+            // Consume the allowance before rotating, avoiding a jump at its edge.
+            desiredPoint.Translate(-remaining.Normalized() * target.rotationDeadband);
+        }
+        else result = initial; // Rotation-only mechanisms keep their normal response.
     }
+    advance(false);
     return result;
 }
 } // namespace thecad::modeling::assembly

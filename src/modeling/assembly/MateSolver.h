@@ -55,6 +55,9 @@ struct ComponentDragTarget
     gp_Dir viewNormal;
     double tolerance = 0.01;
     std::optional<gp_Quaternion> rotation;
+    // Point dragging may prefer translation within this screen-derived distance.
+    // Zero preserves exact point targeting for non-interactive callers.
+    double rotationDeadband = 0;
 };
 MateSolution dragMates(const std::vector<RigidBody>& bodies, const std::vector<ResolvedMate>& mates,
                        const ComponentDragTarget& target);

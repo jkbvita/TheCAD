@@ -53,7 +53,7 @@ signals:
     void dragRotationRequested(const QString& component, const gp_Pnt& localPivot,
                                const gp_Quaternion& rotation);
     void dragPointRequested(const QString& component, const gp_Pnt& local, const gp_Pnt& target,
-                            const gp_Dir& normal, double tolerance);
+                            const gp_Dir& normal, double tolerance, double rotationDeadband);
     void dragFinished(bool accepted);
     void insertionMoved(const gp_Pnt& point);
     void insertionConfirmed();
@@ -102,6 +102,7 @@ private:
     std::optional<gp_Pnt> m_hitPoint;
     QPointF m_dragPrevious;
     double m_dragTolerance = 0.01;
+    double m_dragRotationDeadband = 0;
     Qt::MouseButton m_dragButton = Qt::NoButton;
     QPointF m_rotationCenter;
     double m_rotationRadius = 100;

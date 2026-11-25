@@ -469,8 +469,11 @@ void AssemblyViewport::mousePressEvent(QMouseEvent* event)
         m_press = event->position();
         m_dragPoint = m_hitPoint.value_or(cursorPoint(m_press));
         m_dragLocalPoint = m_dragPoint.Transformed(value.placement.Inverted());
-        m_dragTolerance = std::max(1e-5, 0.5 * m_dragPoint.Distance(
-            cursorPointAtDepth(m_press + QPointF(1, 0), m_dragPoint)));
+        const double unitsPerPixel = cursorPointAtDepth(m_press, m_dragPoint).Distance(
+            cursorPointAtDepth(m_press + QPointF(1, 0), m_dragPoint));
+        m_dragTolerance = std::max(1e-5, 0.5 * unitsPerPixel);
+        // Ignore small transverse hand wobble when the mates also permit sliding.
+        m_dragRotationDeadband = 6.0 * unitsPerPixel;
         m_dragMoved = false;
         m_dragPrevious = m_press;
         if (m_dragButton == Qt::RightButton)
@@ -539,7 +542,7 @@ void AssemblyViewport::updateComponentDrag(const QPointF& position)
     else
         emit dragPointRequested(QString::fromStdString(m_dragId), m_dragLocalPoint,
                                 cursorPointAtDepth(position, m_dragPoint),
-                                camera()->Direction(), m_dragTolerance);
+                                camera()->Direction(), m_dragTolerance, m_dragRotationDeadband);
     m_dragPrevious = position;
 }
 void AssemblyViewport::mouseReleaseEvent(QMouseEvent* event)

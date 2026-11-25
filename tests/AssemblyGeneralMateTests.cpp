@@ -152,6 +152,49 @@ void constrainedDragging()
     require(grab.Transformed(free.placements[1]).Distance(target) < 1e-4,
             "Unmated component must follow a dragged point by translation");
 }
+void stablePointDragging()
+{
+    const auto cylinder = entity(K::Cylinder, {}, gp_Dir(0, 0, 1), 2);
+    const auto plane = entity(K::Plane);
+    const auto concentric = pair(MateKind::Concentric, cylinder, cylinder);
+    for (double zoom : {0.01, 1.0, 100.0})
+    {
+        auto moving = bodies({}, 0);
+        moving[0].size = moving[1].size = 10 * zoom;
+        auto mates = std::vector<ResolvedMate>{concentric};
+        const gp_Pnt grab(4 * zoom, 0, 0);
+        ComponentDragTarget target{1, grab, {}, gp_Dir(1, 0, 0), 0.001 * zoom,
+                                   std::nullopt, 0.5 * zoom};
+        for (int step = 1; step <= 30; ++step)
+        {
+            target.target = {4 * zoom, (step % 2 ? 0.2 : -0.2) * zoom, step * 0.2 * zoom};
+            const auto preview = dragMates(moving, mates, target);
+            require(std::abs(preview.placements[1].GetRotation().GetRotationAngle()) < 1e-5,
+                    "Small cursor wobble must not rotate a sliding concentric component");
+            require(std::abs(preview.placements[1].TranslationPart().Z() - step * 0.2 * zoom) < 0.01 * zoom,
+                    "Translation must remain precise while rotational wobble is ignored");
+            moving[1].placement = preview.placements[1];
+            mates[0].definition->motion = preview.motion[0];
+        }
+        target.target = {4 * zoom, 2 * zoom, 6 * zoom};
+        const auto deliberate = dragMates(moving, mates, target);
+        const auto pick = grab.Transformed(deliberate.placements[1]);
+        require(std::abs(pick.Y() - 1.5 * zoom) < 0.02 * zoom,
+                "Deliberate sideways dragging must rotate smoothly beyond the allowance");
+
+        // Removing axial freedom must retain small, precise hinge rotations.
+        const auto hinge = dragMates(bodies({}, 0),
+            {concentric, pair(MateKind::Coincident, plane, plane)},
+            {1, {4, 0, 0}, {4, 0.2, 0}, gp_Dir(1, 0, 0), 0.001, std::nullopt, 0.5});
+        require(std::abs(gp_Pnt(4, 0, 0).Transformed(hinge.placements[1]).Y() - 0.2) < 0.01,
+                "A rotation-only component must not become sluggish");
+    }
+    const auto sliding = dragMates(bodies({}, 0), {pair(MateKind::Coincident, plane, plane)},
+        {1, {100, 20, 0}, {105, 23, 0}, gp_Dir(0, 0, 1), 0.001, std::nullopt, 0.5});
+    require(std::abs(sliding.placements[1].GetRotation().GetRotationAngle()) < 1e-5 &&
+            gp_Pnt(100, 20, 0).Transformed(sliding.placements[1]).Distance({105, 23, 0}) < 0.01,
+            "A sliding face must prefer accurate translation over rotation");
+}
 void constrainedRotation()
 {
     auto assembly = bodies({}, 0);
@@ -480,6 +523,7 @@ int main()
     {
         standards();
         constrainedDragging();
+        stablePointDragging();
         constrainedRotation();
         advanced();
         mechanical();

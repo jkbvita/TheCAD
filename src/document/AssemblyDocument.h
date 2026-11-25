@@ -125,7 +125,7 @@ public:
     void dragRotation(const std::string& id, const gp_Pnt& localPivot,
                       const gp_Quaternion& rotation);
     void dragPoint(const std::string& id, const gp_Pnt& local, const gp_Pnt& target,
-                   const gp_Dir& viewNormal, double tolerance);
+                   const gp_Dir& viewNormal, double tolerance, double rotationDeadband = 0);
     void setFixed(const std::string& id, bool fixed);
     void setVisible(const std::string& id, bool visible);
     std::string setMate(AssemblyMate mate);

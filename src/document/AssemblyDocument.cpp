@@ -220,9 +220,9 @@ std::string AssemblyDocument::insertComponent(const QString& path, const gp_Trsf
     return added.id;
 }
 void AssemblyDocument::dragPoint(const std::string& id, const gp_Pnt& local, const gp_Pnt& target,
-                                 const gp_Dir& normal, double tolerance)
+                                 const gp_Dir& normal, double tolerance, double rotationDeadband)
 {
-    applyDrag(id, {-1, local, target, normal, tolerance});
+    applyDrag(id, {-1, local, target, normal, tolerance, std::nullopt, rotationDeadband});
 }
 void AssemblyDocument::dragRotation(const std::string& id, const gp_Pnt& localPivot,
                                      const gp_Quaternion& rotation)
