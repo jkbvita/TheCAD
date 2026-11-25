@@ -238,6 +238,7 @@ void CadViewport::paintEvent(QPaintEvent*)
         updateCameraAnnotations();
         if(m_measurePicking) measureCameraUpdate();
         m_graphics.view()->Redraw();
+        emit framePresented();
     }
 }
 

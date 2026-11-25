@@ -96,6 +96,7 @@ void AssemblyViewport::paintEvent(QPaintEvent*)
     {
         m_graphics.synchronizeSurface();
         m_graphics.view()->Redraw();
+        emit framePresented();
     }
 }
 void AssemblyViewport::resizeEvent(QResizeEvent*)

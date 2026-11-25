@@ -46,6 +46,7 @@ public:
     Handle(Graphic3d_Camera) camera() const;
     void applyTheme();
 signals:
+    void framePresented();
     void picked(const QString& component, int face, Qt::KeyboardModifiers modifiers);
     void entityPicked(const QString& component, TopAbs_ShapeEnum kind, int index,
                       Qt::KeyboardModifiers modifiers);

@@ -159,6 +159,11 @@ A future adapter should parse its own input into a stable ID and typed request, 
 
 ## Known limitations and next migration work
 
+* Startup navigation is cataloged under `app.welcome` and `file.open_recent` as
+  legacy-backed UI functionality. `WorkspaceLauncher` creates existing Part/Assembly
+  windows and manages their first-frame loading cover; `RecentDocuments` is a
+  widget-independent preferences service. Neither changes document transactions.
+
 * The command catalog covers named top-level actions but not every dynamic contextual menu item. Some legacy commands have coarse workspace metadata until their handlers move.
 * UI Extrude/Cut and Reference Plane still use existing PropertyManager widgets as their interactive parameter/selection store. The widget-free hosts demonstrate typed execution, but UI and direct hosts are not yet one shared typed draft implementation. Moving those PropertyManagers to a shared application draft would eliminate this remaining duplication.
 * Part and Assembly have separate session/history implementations by design. Sketch mutations, non-extrude features, deletion, Mate and many context commands still use legacy wiring. Their identifiers are discoverable but unavailable through a dispatcher until bound.

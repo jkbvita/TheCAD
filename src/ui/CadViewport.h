@@ -142,6 +142,7 @@ public:
     void setSelectionFeatureIds(std::string body,std::string sketch){m_bodyFeatureId=std::move(body);m_sketchFeatureId=std::move(sketch);}
 
 signals:
+    void framePresented();
     void measureChanged();
     void measurePlanePicked(gp_Pln plane, QString label);
     void measureViewChanged();

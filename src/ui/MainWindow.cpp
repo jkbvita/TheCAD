@@ -1,4 +1,6 @@
 #include "ui/Theme.h"
+#include "ui/startup/WorkspaceLauncher.h"
+#include "application/RecentDocuments.h"
 #include "ui/PreferencesDialog.h"
 #include <QDialogButtonBox>
 #include "modeling/SketchTools.h"
@@ -234,6 +236,7 @@ MainWindow::MainWindow(QWidget* parent)
     addCommand("&New", "actionNew", QKeySequence::New, [this] { newDocument(); });
     addCommand("New &Assembly...", "actionNewAssembly", {}, [] { showAssemblyWindow(); });
     addCommand("&Open...", "actionOpen", QKeySequence::Open, [this] { openDocument(); });
+    addWelcomeActions(fileMenu, this);
     fileMenu->addSeparator();
     addCommand("&Save", "actionSave", QKeySequence::Save, [this] { saveDocument(); });
     addCommand("Save &As...", "actionSaveAs", QKeySequence::SaveAs, [this] { saveDocumentAs(); });
@@ -850,7 +853,9 @@ bool MainWindow::openPartFileImpl(const QString& path,bool promptForEmptyDocumen
         if((promptForEmptyDocument || !pristine) && !maybeSave())return false;
         candidate = document::PartDocument::load(path);
         if(!replaceDocument(std::move(candidate), QFileInfo(path).absoluteFilePath()))return false;
-        setWindowModified(false);return true;
+        setWindowModified(false);
+        application::recordRecentDocument(path);
+        return true;
     } catch (const std::exception& error) { reportError(QString("Cannot open %1:\n%2").arg(QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath()),QString::fromUtf8(error.what()))); }
     return false;
 }
@@ -888,6 +893,7 @@ bool MainWindow::saveToPath(const QString& path)
         m_session.document().save(path);
         m_session.setPath(QFileInfo(path).absoluteFilePath());
         setWindowModified(false);m_session.markSaved();
+        application::recordRecentDocument(path);
         updateDocumentUi();
         statusBar()->showMessage("Saved " + QDir::toNativeSeparators(m_session.path()), 4000);
         return true;

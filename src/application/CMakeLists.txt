@@ -1,4 +1,5 @@
 add_library(thecad_application STATIC
+    RecentDocuments.cpp
     DocumentSession.cpp
     AssemblySession.cpp
     FeatureOperation.cpp

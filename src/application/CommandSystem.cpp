@@ -201,6 +201,8 @@ void registerBuiltInCommands(CommandRegistry& registry) {
         add((std::string("file.") + file).c_str(), file, "File", all, false);
     add("app.preferences", "Preferences", "Application", all, false);
     add("app.about", "About TheCAD", "Application", all, false);
+    add("app.welcome", "Welcome", "Application", all, false);
+    add("file.open_recent", "Browse Recent Documents and Folders", "File", all, false);
     add("sketch.create", "Sketch", "Sketch", part, true);
     add("sketch.finish", "Exit Sketch", "Sketch", sketch, false);
     add("sketch.select", "Select Sketch Entity", "Sketch", sketch, false);

@@ -9,6 +9,8 @@
 #include "ui/MainWindow.h"
 #include "ui/PropertyManagerPage.h"
 #include "ui/Theme.h"
+#include "ui/startup/WorkspaceLauncher.h"
+#include "application/RecentDocuments.h"
 #include "ui/PreferencesDialog.h"
 #include "ui/widgets/CommandBar.h"
 #include "ui/widgets/FeatureCommandBar.h"
@@ -192,11 +194,7 @@ AssemblyWindow::AssemblyWindow(QWidget* parent) : QMainWindow(parent),
                 connect(open, &QAction::triggered, this,
                         [this, id]
                         {
-                            auto* window = new MainWindow;
-                            window->setAttribute(Qt::WA_DeleteOnClose);
-                            window->showMaximized();
-                            if (!window->openPartFile(document().component(id).path))
-                                window->close();
+                            launchWorkspace(application::LaunchDocument::Part, document().component(id).path);
                         });
             }
             if (item->data(0, kindRole).toString() == "mate")
@@ -332,9 +330,7 @@ void AssemblyWindow::buildCommands()
     file->addAction(action("actionNewPart", "New Part",
                            []
                            {
-                               auto* window = new MainWindow;
-                               window->setAttribute(Qt::WA_DeleteOnClose);
-                               window->showMaximized();
+                               launchWorkspace(application::LaunchDocument::Part);
                            }));
     m_open = action("actionOpenAssembly", "Open Assembly...",
                     [this]
@@ -345,6 +341,7 @@ void AssemblyWindow::buildCommands()
                     });
     m_open->setShortcut(QKeySequence::Open);
     file->addAction(m_open);
+    addWelcomeActions(file, this);
     m_save = action("actionSaveAssembly", "Save", [this] { save(); });
     m_save->setShortcut(QKeySequence::Save);
     file->addAction(m_save);
@@ -539,6 +536,7 @@ bool AssemblyWindow::openAssemblyFile(const QString& path)
     try
     {
         m_session.open(path);
+        application::recordRecentDocument(path);
         m_preselection.clear();
         m_selected.clear();
         refresh();
@@ -570,6 +568,7 @@ bool AssemblyWindow::save(bool saveAs)
     try
     {
         m_session.save(path);
+        application::recordRecentDocument(path);
         refresh();
         return true;
     }
@@ -1391,10 +1390,6 @@ bool AssemblyWindow::eventFilter(QObject* object, QEvent* event)
 }
 void showAssemblyWindow(const QString& path)
 {
-    auto* window = new AssemblyWindow;
-    window->setAttribute(Qt::WA_DeleteOnClose);
-    window->showMaximized();
-    if (!path.isEmpty() && !window->openAssemblyFile(path))
-        window->close();
+    launchWorkspace(application::LaunchDocument::Assembly, path);
 }
 } // namespace thecad::ui

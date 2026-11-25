@@ -17,6 +17,7 @@ target_link_libraries(thecad_viewport_widget PUBLIC Qt6::Widgets thecad_applicat
 
 add_library(thecad_ui STATIC
     MainWindow.cpp MainWindow.h EditHistory.cpp UiCommandAdapter.cpp files/NativeFileDialogs.cpp
+    startup/WelcomeWindow.cpp startup/WelcomeWindow.h startup/LoadingScreen.cpp startup/WorkspaceLauncher.cpp
     features/ExtrusionOptionsPanel.cpp features/SplineParametersDialog.cpp features/SolidFeaturePanel.cpp features/SolidFeaturePanel.h features/SweepFeatureForm.cpp SolidFeaturesUi.cpp
     SelectionUi.cpp MeasureUi.cpp MeasurePanel.cpp MeasurePanel.h MeasureIcons.cpp ReferenceGeometryUi.cpp SketchConstraintsUi.cpp
     SmartDimensionUi.cpp SketchToolsUi.cpp SketchModifierUi.cpp RelationsContextUi.cpp

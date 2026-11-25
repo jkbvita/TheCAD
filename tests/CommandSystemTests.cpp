@@ -33,6 +33,9 @@ int main(int argc, char** argv) {
                 "Assembly command lifecycle metadata is wrong");
         require(!commands.availability("feature.revolve").available,
                 "Legacy command falsely advertised as dispatchable");
+        require(commands.registry().find("app.welcome") && commands.registry().find("file.open_recent") &&
+                !commands.availability("app.welcome").available && !commands.availability("file.open_recent").available,
+                "Welcome commands must be cataloged without advertising headless UI support");
         require(!commands.availability("sketch.line").available, "Line available without sketch");
         require(commands.availability("sketch.line").reason.find("workspace") != std::string::npos,
                 "Unavailable command has no reason");

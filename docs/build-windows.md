@@ -115,11 +115,15 @@ DLL/plugin/resource paths yourself. Use MSVC-compatible x64 Release libraries.
 
 ## Native part documents
 
-The application starts maximized with standard Windows controls. Use File > New,
+The application starts with Welcome: choose Part or Assembly, open a recent document,
+or browse a pinned folder. Drawing is reserved and disabled. A simple loading panel
+covers workspace initialization; the document window then opens maximized. Dropping
+a saved document onto the shortcut bypasses Welcome. File > Welcome and Open Recent
+reopen the browser without replacing existing work. Use File > New,
 Open, Save, Save As, or Exit and the standard shortcuts. Native Windows dialogs
 save `.thepart` files and can open legacy `.tcpart` input. Saving a legacy part
 requests a separate `.thepart` destination and leaves its original file unchanged.
-Only parts are implemented; `.theasmb` and `.thedrw` are reserved. See the
+Assemblies use `.theasmb`; `.thedrw` remains reserved. See the
 [file format and compatibility guide](file-formats.md).
 
 ## Graphical sketch creation

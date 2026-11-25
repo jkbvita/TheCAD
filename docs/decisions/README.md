@@ -113,6 +113,7 @@ approved scope do not need repeated approval.
 - [0065. Mate-constrained component drag](0065-mate-constrained-component-drag.md) — move a grabbed point only through the degrees of freedom left by assembly mates.
 - [0066. Right-button component rotation](0066-assembly-right-drag-rotation.md) — rotate through available mate freedom with preview and undo.
 - [0067. Prefer translation during dragging](0067-assembly-drag-translation-preference.md) — tolerate small cursor wobble without accidental rotation.
+- [0068. Welcome and workspace loading](0068-startup-welcome-and-loading.md) — choose a workspace before viewport creation, with recent documents and pinned folders.
 
 ## Pending owner decisions
 

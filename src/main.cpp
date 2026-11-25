@@ -1,5 +1,4 @@
-#include "ui/MainWindow.h"
-#include "ui/assembly/AssemblyWindow.h"
+#include "ui/startup/WorkspaceLauncher.h"
 #include "exchange/ShapeExporter.h"
 
 #include <QApplication>
@@ -33,14 +32,16 @@ int main(int argc, char* argv[])
     }
     thecad::exchange::configureResources(QCoreApplication::applicationDirPath()+"/resources");
     try {
-        if(!files.isEmpty()&&QFileInfo(files.front()).suffix().compare("theasmb",Qt::CaseInsensitive)==0) {
-            thecad::ui::AssemblyWindow window;window.showMaximized();
-            QTimer::singleShot(0,&window,[&application,&window,path=files.front()]{if(!window.openAssemblyFile(path))application.exit(1);});
-            return application.exec();
+        if (files.isEmpty()) {
+            thecad::ui::showWelcomeWindow();
+        } else {
+            const auto type = thecad::application::documentTypeForPath(files.front());
+            if (!type) {
+                QMessageBox::critical(nullptr,"TheCAD startup error","Choose a .thepart, .theasmb or legacy .tcpart document.");
+                return 2;
+            }
+            thecad::ui::launchWorkspace(*type, files.front(), [&application](bool success) { if (!success) application.exit(1); });
         }
-        thecad::ui::MainWindow window;
-        window.showMaximized();
-        if(!files.isEmpty())QTimer::singleShot(0,&window,[&application,&window,path=files.front()]{if(!window.openPartFile(path))application.exit(1);});
         return application.exec();
     } catch (const Standard_Failure& failure) {
         QMessageBox::critical(nullptr, "TheCAD startup error", QString::fromUtf8(failure.GetMessageString()));
