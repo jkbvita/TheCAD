@@ -190,7 +190,20 @@ std::vector<CadViewport::PickCandidate> CadViewport::selectionCandidates(const Q
                         distance = closest->distance;
                     }
                 const double depth=gp_Vec(m_graphics.view()->Camera()->Eye(),hit).Dot(gp_Vec(m_graphics.view()->Camera()->Direction()));
-                if(distance>m_pickingTolerance)continue;
+                // The OCCT viewer selector has already applied the configured
+                // screen-space tolerance before returning this owner. A second
+                // projected-point distance check can reject valid face hits:
+                // for faces, PickedPoint() may be a triangulation sample (and
+                // the exact BRep ray intersection can miss at tolerance-sized
+                // seams), rather than the point under the cursor. Keep the
+                // face candidate and cap only its ordering distance. Edges,
+                // vertices and solids still require the precise hit tests
+                // above because their selectable geometry is one-dimensional
+                // or discrete.
+                if(distance>m_pickingTolerance){
+                    if(type!=TopAbs_FACE)continue;
+                    distance=m_pickingTolerance;
+                }
                 frontDepth=std::min(frontDepth,depth);
                 append({{kind,m_bodyFeatureId,{},modeling::PointRole::First,index,m_shapeGeneration},distance,depth},shape,owner,hit);
             }
