@@ -168,7 +168,28 @@ std::vector<CadViewport::PickCandidate> CadViewport::selectionCandidates(const Q
             const int width=qMax(1,qRound(2*m_pickingTolerance*devicePixelRatioF()));
             if(selector->CustomPixelTolerance()!=width){selector->SetPixelTolerance(width+1);selector->SetPixelTolerance(width);}
             selector->Pick(pixel.x(),pixel.y(),m_graphics.view());
-            double frontDepth=1e100;
+            struct BodySurfaceHit {TopoDS_Face face;gp_Pnt point;double depth=1e100;int faceIndex=0;};
+            IntCurvesFace_ShapeIntersector bodyIntersector;
+            const bool hasSelectorHits=selector->NbPicked()>0;
+            if(hasSelectorHits)bodyIntersector.Load(m_shape,1e-7);
+            const gp_Pnt cameraEye=m_graphics.view()->Camera()->Eye();
+            const gp_Vec cameraDirection(m_graphics.view()->Camera()->Direction());
+            const auto bodySurfaceAt=[&](const QPoint& samplePixel)->std::optional<BodySurfaceHit>{
+                if(!hasSelectorHits)return {};
+                double x,y,z,dx,dy,dz;
+                m_graphics.view()->ConvertWithProj(samplePixel.x(),samplePixel.y(),x,y,z,dx,dy,dz);
+                bodyIntersector.Perform(gp_Lin(gp_Pnt(x,y,z),gp_Dir(dx,dy,dz)),-1e15,1e15);
+                BodySurfaceHit nearest;
+                for(int i=1;i<=bodyIntersector.NbPnt();++i){
+                    const auto& point=bodyIntersector.Pnt(i);
+                    const double depth=gp_Vec(cameraEye,point).Dot(cameraDirection);
+                    if(depth<0||depth>=nearest.depth)continue;
+                    nearest={bodyIntersector.Face(i),point,depth,m_selectionFaces.FindIndex(bodyIntersector.Face(i))};
+                }
+                return nearest.faceIndex>0?std::optional<BodySurfaceHit>(nearest):std::nullopt;
+            };
+            const auto cursorSurface=bodySurfaceAt(pixel);
+            const double depthSlack=std::max(1e-6,m_graphics.view()->Camera()->Scale()/std::max(1,height()));
             for(int n=1;n<=selector->NbPicked();++n){
                 const auto owner=Handle(StdSelect_BRepOwner)::DownCast(selector->Picked(n));
                 if(owner.IsNull()||owner->Selectable()!=m_presentation||!owner->HasShape())continue;
@@ -179,18 +200,20 @@ std::vector<CadViewport::PickCandidate> CadViewport::selectionCandidates(const Q
                 const auto& map=type==TopAbs_FACE?m_selectionFaces:type==TopAbs_EDGE?m_selectionEdges:type==TopAbs_VERTEX?m_selectionVertices:m_selectionBodies;const int index=map.FindIndex(shape);if(index<=0)continue;
                 if((type==TopAbs_EDGE&&m_seamEdges.count(index))||(type==TopAbs_VERTEX&&m_artificialVertices.count(index)))continue;
                 auto hit=type==TopAbs_VERTEX?BRep_Tool::Pnt(TopoDS::Vertex(shape)):selector->PickedPoint(n);bool onFace=false;
-                if(type==TopAbs_FACE||type==TopAbs_SOLID){double x,y,z,dx,dy,dz;m_graphics.view()->ConvertWithProj(pixel.x(),pixel.y(),x,y,z,dx,dy,dz);IntCurvesFace_ShapeIntersector intersection;intersection.Load(shape,1e-7);intersection.Perform(gp_Lin(gp_Pnt(x,y,z),gp_Dir(dx,dy,dz)),-1e15,1e15);double nearest=1e100;for(int k=1;k<=intersection.NbPnt();++k){const auto p=intersection.Pnt(k);const double d=gp_Vec(m_graphics.view()->Camera()->Eye(),p).Dot(gp_Vec(m_graphics.view()->Camera()->Direction()));if(d>=0&&d<nearest){nearest=d;hit=p;onFace=true;}}}
+                if(type==TopAbs_FACE&&cursorSurface&&index==cursorSurface->faceIndex){hit=cursorSurface->point;onFace=true;}
+                else if(type==TopAbs_SOLID&&cursorSurface){hit=cursorSurface->point;onFace=true;}
                 int x,y;m_graphics.view()->Convert(hit.X(),hit.Y(),hit.Z(),x,y);double distance=onFace?0:QLineF(position,QPointF(x/devicePixelRatioF(),y/devicePixelRatioF())).length();
-                // OCCT may report a sampled endpoint instead of the closest
-                // point on a picked curve. Measure against the displayed segments.
-                if (type == TopAbs_EDGE && distance > m_pickingTolerance)
+                // PickedPoint() may be a sample elsewhere on the edge. Always
+                // measure against the displayed segments so depth ordering
+                // uses the actual closest point, not an arbitrary curve sample.
+                if (type == TopAbs_EDGE)
                     if (const auto closest = closestDisplayedEdgePoint(
                             TopoDS::Edge(shape), m_graphics.view(), position, devicePixelRatioF()))
                     {
                         hit = closest->point;
                         distance = closest->distance;
                     }
-                const double depth=gp_Vec(m_graphics.view()->Camera()->Eye(),hit).Dot(gp_Vec(m_graphics.view()->Camera()->Direction()));
+                const double depth=gp_Vec(cameraEye,hit).Dot(cameraDirection);
                 // The OCCT viewer selector has already applied the configured
                 // screen-space tolerance before returning this owner. A second
                 // projected-point distance check can reject valid face hits:
@@ -205,59 +228,28 @@ std::vector<CadViewport::PickCandidate> CadViewport::selectionCandidates(const Q
                     if(type!=TopAbs_FACE)continue;
                     distance=m_pickingTolerance;
                 }
-                frontDepth=std::min(frontDepth,depth);
-                append({{kind,m_bodyFeatureId,{},modeling::PointRole::First,index,m_shapeGeneration},distance,depth},shape,owner,hit);
-            }
-            // If OCCT reported only a rear edge (or a face whose reported
-            // point lies behind that edge), resolve the actual front surface
-            // at this pixel against the complete BRep. Sensitive face
-            // triangulations can have holes or stale samples, so the viewer
-            // selector alone is not sufficient to determine body occlusion.
-            const double slack=std::max(1e-6,m_graphics.view()->Camera()->Scale()/std::max(1,height())*2.0);
-            double nearestBodyDepth=1e100,nearestBodyFaceDepth=1e100;
-            for(const auto& candidate:candidates){
-                const auto& reference=candidate.value.reference;
-                if(reference.featureId!=m_bodyFeatureId||!modeling::isTopology(reference.kind))continue;
-                nearestBodyDepth=std::min(nearestBodyDepth,candidate.value.depth);
-                if(reference.kind==SelectionKind::Face)
-                    nearestBodyFaceDepth=std::min(nearestBodyFaceDepth,candidate.value.depth);
-            }
-            if(nearestBodyDepth<1e99&&nearestBodyFaceDepth>nearestBodyDepth+slack){
-                double x,y,z,dx,dy,dz;
-                m_graphics.view()->ConvertWithProj(pixel.x(),pixel.y(),x,y,z,dx,dy,dz);
-                IntCurvesFace_ShapeIntersector intersection;
-                intersection.Load(m_shape,1e-7);
-                intersection.Perform(gp_Lin(gp_Pnt(x,y,z),gp_Dir(dx,dy,dz)),-1e15,1e15);
-                double nearest=1e100;
-                TopoDS_Face frontFace;
-                gp_Pnt frontPoint;
-                for(int k=1;k<=intersection.NbPnt();++k){
-                    const double depth=gp_Vec(m_graphics.view()->Camera()->Eye(),intersection.Pnt(k))
-                                           .Dot(gp_Vec(m_graphics.view()->Camera()->Direction()));
-                    if(depth<0||depth>=nearest)continue;
-                    nearest=depth;
-                    frontFace=intersection.Face(k);
-                    frontPoint=intersection.Pnt(k);
+                bool occluded=false;
+                if(type==TopAbs_EDGE||type==TopAbs_VERTEX){
+                    int edgeX,edgeY;m_graphics.view()->Convert(hit.X(),hit.Y(),hit.Z(),edgeX,edgeY);
+                    const auto surfaceAtEdge=bodySurfaceAt(QPoint(edgeX,edgeY));
+                    occluded=surfaceAtEdge&&depth>surfaceAtEdge->depth+depthSlack;
+                }else if(type==TopAbs_FACE&&cursorSurface){
+                    occluded=depth>cursorSurface->depth+depthSlack;
                 }
-                const int faceIndex=frontFace.IsNull()?0:m_selectionFaces.FindIndex(frontFace);
-                if(faceIndex>0){
-                    const modeling::SelectionRef reference{SelectionKind::Face,m_bodyFeatureId,{},
-                        modeling::PointRole::First,faceIndex,m_shapeGeneration};
-                    const double depth=nearest;
-                    const PickCandidate frontCandidate{
-                        {{SelectionKind::Face,m_bodyFeatureId,{},modeling::PointRole::First,faceIndex,m_shapeGeneration},0,depth},
-                        frontFace,{},frontPoint};
-                    const auto existing=std::find_if(candidates.begin(),candidates.end(),[&](const auto& candidate){
-                        return candidate.value.reference==reference;
-                    });
-                    if(existing==candidates.end())candidates.push_back(frontCandidate);
-                    else *existing=frontCandidate;
-                    frontDepth=std::min(frontDepth,depth);
-                }
+                append({{kind,m_bodyFeatureId,{},modeling::PointRole::First,index,m_shapeGeneration},distance,depth,occluded},shape,owner,hit);
             }
-            // Tiny depth slack permits shared front edges/vertices. Back edges
-            // remain unavailable on normal clicks even with an edge-only filter.
-            for(auto& candidate:candidates)candidate.value.occluded=candidate.value.depth>frontDepth+slack;
+            if(cursorSurface){
+                const modeling::SelectionRef reference{SelectionKind::Face,m_bodyFeatureId,{},
+                    modeling::PointRole::First,cursorSurface->faceIndex,m_shapeGeneration};
+                PickCandidate frontCandidate{
+                    {{SelectionKind::Face,m_bodyFeatureId,{},modeling::PointRole::First,cursorSurface->faceIndex,m_shapeGeneration},0,cursorSurface->depth},
+                    cursorSurface->face,{},cursorSurface->point};
+                const auto existing=std::find_if(candidates.begin(),candidates.end(),[&](const auto& candidate){
+                    return candidate.value.reference==reference;
+                });
+                if(existing==candidates.end())candidates.push_back(frontCandidate);
+                else {frontCandidate.owner=existing->owner;*existing=frontCandidate;}
+            }
         }
         if((!m_sketchEditing || m_measurePicking) && !m_referenceCandidateKind){
             const auto datumIds=datumIdsAt(position);
