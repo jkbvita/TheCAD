@@ -35,7 +35,7 @@ application::CommandContext MainWindow::commandContext() const {
     context.workspace = m_session.editingSketch() ? application::Workspace::Sketch : application::Workspace::Part;
     context.activeSketchId = m_session.editingSketchId();
     context.activeOperationId = m_commands.activeSessionId();
-    context.modelingMode = featureDraftActive() ? "feature-draft" :
+    context.modelingMode = m_inPlaceFinished ? "edit-in-place" : featureDraftActive() ? "feature-draft" :
         m_session.editingSketch() && m_viewport && m_viewport->sketchTool() ? "sketch.draw" :
         m_session.editingSketch() && m_viewport && m_viewport->smartDimensionActive() ? "sketch.dimension" :
         m_session.editingSketch() ? "sketch.select" : "part";
@@ -91,6 +91,25 @@ void MainWindow::bindCommandHandlers() {
             setMeasureActive(active);
             return application::CommandResult{application::CommandState::Completed,
                 m_measurePanel ? m_measurePanel->readingText().toStdString() : std::string{}};
+        });
+    m_commands.bindImmediate("part.finish_edit_in_place",
+        [this](const application::CommandContext&) {
+            return m_inPlaceFinished && !featureDraftActive()
+                ? yes() : no("This part is not in an editable in-place session", "Edit In Place");
+        },
+        [this](const application::CommandRequest&, const application::CommandContext&) {
+            if (!m_commands.activeSessionId().empty())
+            {
+                if (m_commands.activeCommandId() != "sketch.line")
+                    return application::CommandResult{application::CommandState::Rejected,
+                        "Cancel the active operation before finishing Edit In Place"};
+                m_commands.cancel(m_commands.activeSessionId());
+            }
+            return finishInPlaceEditing()
+                ? application::CommandResult{application::CommandState::Completed,
+                                             "Edit In Place finished", {}, {}, false}
+                : application::CommandResult{application::CommandState::Failed,
+                                             "Could not finish Edit In Place", {}, {}, false};
         });
 }
 application::CommandResult MainWindow::dispatchCommand(const std::string& id) {

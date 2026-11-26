@@ -48,6 +48,7 @@
 #include <QTabWidget>
 #include <QToolBar>
 #include <QToolButton>
+#include <QTimer>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
@@ -191,14 +192,6 @@ AssemblyWindow::AssemblyWindow(QWidget* parent) : QMainWindow(parent),
             {
                 menu.addAction(m_fix);
                 menu.addAction(m_hide);
-                auto* open = menu.addAction("Open part");
-                const auto id = item->data(0, Qt::UserRole).toString().toStdString();
-                open->setEnabled(document().component(id).embeddedPart.isEmpty());
-                connect(open, &QAction::triggered, this,
-                        [this, id]
-                        {
-                            launchWorkspace(application::LaunchDocument::Part, document().component(id).path);
-                        });
             }
             if (item->data(0, kindRole).toString() == "mate")
             {
@@ -441,7 +434,13 @@ void AssemblyWindow::buildCommands()
     insert->addAction(m_magneticAction);
     insert->addAction(snapDistance);
     m_rebuild = action("actionRebuildAssembly", "Rebuild",
-                       [this] { mutate([](auto& doc) { doc.reloadSources(); }); });
+                       [this]
+                       {
+                           const auto result = m_commands.execute({"assembly.refresh_references"});
+                           if (result.state == application::CommandState::Failed ||
+                               result.state == application::CommandState::Rejected)
+                               reportError(QString::fromStdString(result.message));
+                       });
     m_rebuild->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_B));
     edit->addAction(m_rebuild);
     auto* view = menuBar()->addMenu("&View");
@@ -714,6 +713,21 @@ void AssemblyWindow::refresh()
                                  .arg(document().mates().size())
                                  .arg(document().solution().degreesOfFreedom));
     updateActions();
+    if (!draftActive() && !m_pendingSourceRefreshes.isEmpty() && !m_pendingSourceRefreshQueued)
+    {
+        m_pendingSourceRefreshQueued = true;
+        QTimer::singleShot(0, this, [this] { refreshPendingLinkedParts(); });
+    }
+}
+void AssemblyWindow::refreshPendingLinkedParts()
+{
+    m_pendingSourceRefreshQueued = false;
+    if (draftActive() || m_pendingSourceRefreshes.isEmpty())
+        return;
+    QSet<QString> pending;
+    pending.swap(m_pendingSourceRefreshes);
+    for (const auto& path : pending)
+        refreshLinkedPartSource(path);
 }
 void AssemblyWindow::refreshTree()
 {
@@ -1186,10 +1200,40 @@ bool AssemblyWindow::createPartInAssembly(const QString& requestedPath)
     bool fileCreated = false;
     bool assemblyCommitted = false;
     std::string componentId;
+    const auto rollback = [&]
+    {
+        if (assemblyCommitted)
+        {
+            m_session.traverse(false);
+            assemblyCommitted = false;
+            m_selected.clear();
+            m_preselection.clear();
+            try
+            {
+                refresh();
+            }
+            catch (...)
+            {
+                render(document());
+            }
+        }
+        if (fileCreated)
+        {
+            QFile::remove(path);
+            fileCreated = false;
+        }
+    };
     try
     {
-        document::PartDocument::createEmpty().save(path);
+        // Reserve the path atomically so a concurrent create cannot be
+        // overwritten between the existence check and the save.
+        QFile reservation(path);
+        if (!reservation.open(QIODevice::WriteOnly | QIODevice::NewOnly))
+            throw std::runtime_error(
+                "The selected part path could not be created without overwriting an existing file.");
+        reservation.close();
         fileCreated = true;
+        document::PartDocument::createEmpty().save(path);
         auto candidate = document();
         componentId = candidate.insertComponent(path, gp_Trsf{}, false);
         if (m_preselection.size() == 1)
@@ -1201,19 +1245,19 @@ bool AssemblyWindow::createPartInAssembly(const QString& requestedPath)
         m_preselection.clear();
         refresh();
         application::recordRecentDocument(path);
-        openComponentPart(componentId, true);
+        if (!openComponentPart(componentId, true))
+            throw std::runtime_error(
+                "The new part was created, but its Edit In Place session could not be opened.");
         return true;
     }
     catch (const Standard_Failure& error)
     {
-        if (fileCreated && !assemblyCommitted)
-            QFile::remove(path);
+        rollback();
         reportError(QString::fromUtf8(error.GetMessageString()));
     }
     catch (const std::exception& error)
     {
-        if (fileCreated && !assemblyCommitted)
-            QFile::remove(path);
+        rollback();
         reportError(QString::fromUtf8(error.what()));
     }
     return false;
@@ -1236,7 +1280,11 @@ bool AssemblyWindow::openComponentPart(const std::string& id, bool editInPlace)
         return false;
     }
 
-    MainWindow* partWindow = m_editInPlaceWindow;
+    MainWindow* partWindow =
+        m_editInPlaceWindow &&
+                m_editInPlaceWindow->currentPath().compare(component.path, Qt::CaseInsensitive) == 0
+            ? m_editInPlaceWindow.data()
+            : nullptr;
     if (!partWindow)
         for (auto* top : QApplication::topLevelWidgets())
             if (auto* candidate = dynamic_cast<MainWindow*>(top))
@@ -1245,10 +1293,12 @@ bool AssemblyWindow::openComponentPart(const std::string& id, bool editInPlace)
                     partWindow = candidate;
                     break;
                 }
-    if (partWindow && editInPlace && partWindow->hasEditInPlaceContext() &&
-        partWindow != m_editInPlaceWindow)
+    if (partWindow && partWindow->hasEditInPlaceContext() &&
+        (!editInPlace || partWindow != m_editInPlaceWindow))
     {
-        reportError("This part is already being edited in another assembly context.");
+        reportError(editInPlace
+                        ? "This part is already being edited in another assembly context."
+                        : "Finish Edit In Place before opening this part independently.");
         return false;
     }
     if (!partWindow)
@@ -1320,7 +1370,8 @@ void AssemblyWindow::refreshLinkedPartSource(const QString& requestedPath)
         return;
     if (draftActive())
     {
-        statusBar()->showMessage("A linked part changed on disk. Finish the current assembly operation, then use Rebuild.");
+        m_pendingSourceRefreshes.insert(path);
+        statusBar()->showMessage("A linked part changed on disk. It will refresh when the current assembly operation ends.");
         return;
     }
     try
@@ -1568,7 +1619,7 @@ void AssemblyWindow::updateActions()
     m_groundAction->setEnabled(!active);
     m_contextAction->setEnabled(!active);
     m_magneticAction->setEnabled(!m_mate && !m_workflow);
-    m_rebuild->setEnabled(!active && !document().components().empty());
+    m_rebuild->setEnabled(m_commands.availability("assembly.refresh_references").available);
     m_undo->setEnabled(m_commands.availability("edit.undo").available);
     m_redo->setEnabled(m_commands.availability("edit.redo").available);
     for (auto* action : {m_new, m_open, m_save, m_saveAs})

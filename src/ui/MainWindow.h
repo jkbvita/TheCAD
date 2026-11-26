@@ -5,6 +5,7 @@
 #include "application/CommandSystem.h"
 
 #include <QMainWindow>
+#include <QByteArray>
 #include <QPointer>
 #include <optional>
 #include <memory>
@@ -147,7 +148,9 @@ private:
     void traverseHistory(bool redo);
     void updateHistoryActions();
     void applyInPlaceContextVisibility(int mode);
-    void finishInPlaceEditing();
+    bool finishInPlaceEditing();
+    bool sourceRevisionMatches(const QString& path);
+    void rememberSourceRevision(const QString& path);
 
     QAction* m_undo=nullptr;
     QAction* m_redo=nullptr;
@@ -289,6 +292,8 @@ private:
     QComboBox* m_inPlaceVisibility = nullptr;
     std::vector<TopoDS_Shape> m_inPlaceSurroundings, m_inPlaceReferenced;
     std::function<void()> m_inPlaceFinished;
+    QByteArray m_sourceFileDigest;
+    bool m_hasSourceFileDigest = false;
 };
 
 } // namespace thecad::ui

@@ -163,6 +163,43 @@ void dependencyCycleRejected(const QString& folder)
     require(assembly.stateKey() == state,
             "Rejecting a circular dependency changed the assembly state.");
 }
+
+void refreshRetainsInstancesMatesAndPlacements(const QString& folder)
+{
+    const auto sourcePath = folder + "/Shared.thepart";
+    const auto assemblyPath = folder + "/SharedInstances.theasmb";
+    document::PartDocument::createBox({20, 30, 40}).save(sourcePath);
+
+    document::AssemblyDocument assembly;
+    const auto first = assembly.insertComponent(sourcePath);
+    gp_Trsf placement;
+    placement.SetTranslation(gp_Vec(60, 5, -2));
+    const auto second = assembly.insertComponent(sourcePath, placement, false);
+    require(assembly.component(first).part == assembly.component(second).part,
+            "Repeated components did not share their external part definition.");
+
+    document::AssemblyMate mate;
+    mate.kind = document::AssemblyMateKind::Coincident;
+    mate.first = {first, assemblyPlane()};
+    mate.second = {second, assemblyPlane()};
+    const auto mateId = assembly.setMate(mate);
+    assembly.save(assemblyPath);
+    auto reopened = document::AssemblyDocument::load(assemblyPath);
+    const auto savedPose = reopened.component(second).placement;
+    const auto savedMate = reopened.mates().front();
+
+    document::PartDocument::createBox({35, 25, 15}).save(sourcePath);
+    reopened.reloadSources();
+    require(reopened.component(first).part == reopened.component(second).part,
+            "Source refresh split instances that share one part definition.");
+    require(reopened.component(first).part->parameters().width == 35,
+            "Refreshing the source did not load the new part definition.");
+    require(reopened.mates().size() == 1 && reopened.mates().front().id == mateId &&
+                reopened.mates().front().first.componentId == savedMate.first.componentId &&
+                reopened.mates().front().second.componentId == savedMate.second.componentId,
+            "Source refresh removed or remapped an existing mate.");
+    equalPose(reopened.component(second).placement, savedPose);
+}
 } // namespace
 
 int main(int argc, char** argv)
@@ -174,6 +211,7 @@ int main(int argc, char** argv)
         require(folder.isValid(), "Temporary test directory could not be created.");
         externalPartWorkflow(folder.path());
         dependencyCycleRejected(folder.path());
+        refreshRetainsInstancesMatesAndPlacements(folder.path());
         std::cout << "Independent assembly part workflow tests passed\n";
         return 0;
     }

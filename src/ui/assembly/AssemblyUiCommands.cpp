@@ -113,5 +113,29 @@ void AssemblyWindow::bindCommandHandlers() {
     };
     bindOpen("assembly.open_part", false);
     bindOpen("assembly.edit_in_place", true);
+    m_commands.bindImmediate(
+        "assembly.refresh_references",
+        [this, yes, no](const application::CommandContext&)
+        {
+            const bool hasLinkedPart = std::any_of(
+                document().components().begin(), document().components().end(),
+                [](const auto& component)
+                { return component.embeddedPart.isEmpty() && !component.path.isEmpty(); });
+            return !draftActive() && hasLinkedPart
+                       ? yes()
+                       : no("There are no refreshable linked parts, or an assembly operation is active",
+                            "idle assembly with linked parts");
+        },
+        [this](const application::CommandRequest&, const application::CommandContext&)
+        {
+            auto candidate = document();
+            candidate.reloadSources();
+            const bool changed = m_session.commit(std::move(candidate));
+            refresh();
+            return application::CommandResult{
+                application::CommandState::Completed,
+                changed ? "Linked part references refreshed" : "Linked parts are already up to date",
+                {}, {}, changed};
+        });
 }
 } // namespace thecad::ui

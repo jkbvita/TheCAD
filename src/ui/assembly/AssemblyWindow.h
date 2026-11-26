@@ -3,6 +3,7 @@
 #include "application/CommandSystem.h"
 #include <QMainWindow>
 #include <QPointer>
+#include <QSet>
 #include <functional>
 class QAction;
 class QTreeWidget;
@@ -49,6 +50,7 @@ private:
     void refresh();
     void refreshTree();
     void render(const document::AssemblyDocument& document);
+    void refreshPendingLinkedParts();
     void selectTree();
     void picked(const QString& component, int face, Qt::KeyboardModifiers modifiers);
     void pickedEntity(const QString&, TopAbs_ShapeEnum, int, Qt::KeyboardModifiers);
@@ -113,6 +115,8 @@ private:
         *m_save, *m_saveAs, *m_open, *m_new, *m_rebuild;
     QAction *m_beltAction, *m_assetAction, *m_groundAction, *m_contextAction, *m_magneticAction;
     QPointer<MainWindow> m_editInPlaceWindow;
+    QSet<QString> m_pendingSourceRefreshes;
+    bool m_pendingSourceRefreshQueued = false;
 };
 void showAssemblyWindow(const QString& path = {});
 void notifyOpenAssemblyWindowsPartSaved(const QString& path);

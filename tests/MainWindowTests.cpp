@@ -113,6 +113,26 @@ private slots:
         const auto wrongSuffix=directory.filePath("model.theprt");QVERIFY(QFile::copy(first,wrongSuffix));QVERIFY(!window.openPartFile(wrongSuffix));QCOMPARE(window.errors.size(),3);QVERIFY(window.errors.back().contains(".thepart"));QCOMPARE(window.currentPath(),first);
         window.choice=TestWindow::Choice::Save;QVERIFY(window.openPartFile(second));QVERIFY(!window.isWindowModified());QCOMPARE(window.currentPath(),second);QCOMPARE(document::PartDocument::load(first).parameters().width,3.0);
     }
+    void externalPartRevisionIsNotSilentlyOverwritten()
+    {
+        QTemporaryDir directory;
+        const auto path = directory.filePath("shared.thepart");
+        document::PartDocument::createBox({10, 20, 30}).save(path);
+
+        TestWindow editor;
+        QVERIFY(editor.openPartFile(path));
+        QCOMPARE(editor.document().parameters().width, 10.0);
+
+        // Simulate the same file being saved by another open part window.
+        document::PartDocument::createBox({40, 50, 60}).save(path);
+        editor.trigger("actionSave");
+
+        QCOMPARE(editor.errors.size(), 1);
+        QVERIFY(editor.errors.front().contains("changed on disk"));
+        QCOMPARE(editor.document().parameters().width, 10.0);
+        QCOMPARE(document::PartDocument::load(path).parameters().width, 40.0);
+        QVERIFY(editor.close());
+    }
     void aboutMenuDisplaysBundledLogo()
     {
         TestWindow window;

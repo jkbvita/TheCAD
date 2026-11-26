@@ -8,11 +8,10 @@ solver and Part editing services. It does not replace the assembly model or add
 a second part model. A part's `.thepart` file remains authoritative; an
 assembly stores a linked component instance and its placement.
 
-The implementation was developed from local baseline `f7fc5d0`
-(`codex/unified-main-build`). The older root checkout at `89b650d` was not used.
-The separate welcome-screen worktree was left untouched. Changes remain in
-the clean latest worktree because Git could not create a new branch under the
-protected `.git/refs` directory.
+This milestone continues the local unified-workspace baseline `5fbd077`
+(`codex/unified-main-build`) in the dedicated worktree branch
+`codex/assembly-part-creation`. Older and concurrently edited worktrees were
+left untouched.
 
 ## Reference workflow
 
@@ -52,8 +51,11 @@ it has a solid body.
 
 ## User workflow
 
-1. **New Part in Context** asks for a new `.thepart` path. It refuses to
-   overwrite an existing file. One selected stable assembly plane/reference is
+1. **New Part in Context** asks for a new `.thepart` path. It reserves that
+   path atomically and refuses to overwrite an existing file. Canceling the
+   path picker has no effect. If writing, insertion, association, commit or
+   editor startup fails, the component transaction is undone and the newly
+   created file is removed. One selected stable assembly plane/reference is
    used for associative placement; with no selection, the part uses assembly
    origin placement. Ambiguous multi-selection is rejected.
 2. The empty part is saved to disk, inserted as a linked component, and opened
@@ -64,16 +66,26 @@ it has a solid body.
    isolate the part, or show only components referenced by its placement
    association. Context geometry is presentation-only and is not selectable or
    projected into a sketch.
-4. **Finish Editing** saves the active `.thepart`. Saving from the normal Save
-   command also works. Open assembly windows reload linked paths through
+4. **Finish Editing** invokes the `part.finish_edit_in_place` command and saves
+   the active `.thepart`. Saving from the normal Save command also works. Open
+   assembly windows reload linked paths through
    `AssemblyDocument::reloadSources()` and commit the refresh through
    `AssemblySession`, so the refresh has assembly undo/redo history. If source
    regeneration or mate solving fails, the previous assembly state remains
-   committed and an error is reported.
+   committed and an error is reported. If an assembly draft is active when a
+   linked part is saved, refresh is queued until that draft finishes.
 5. **Open Part** opens the linked `.thepart` independently in the normal part
    editor. Saving it notifies open assemblies using the same refresh path.
-   Editing another part in place is blocked while a different EIP session is
-   active in the same assembly window.
+   Existing independent editors are reused to avoid two unsynchronized
+   documents for one path. Opening independently is blocked while that same
+   file is currently being edited in place. Editing another part in place is
+   blocked while a different EIP session is active in the same assembly window.
+
+Part editors record the SHA-256 revision of the file they opened or last saved.
+Saving over that same path is rejected if the file was replaced, changed or
+removed since the editor loaded it. Save As can preserve the local edits as a
+separate part; in Edit In Place it does not silently retarget the assembly
+component.
 
 The assembly viewport no longer fits the camera automatically after every
 component update. Selection and source refresh therefore preserve the view the
@@ -132,14 +144,17 @@ sequenceDiagram
 
 ## Commands and UI entry points
 
-The command catalog includes `assembly.new_part`, `assembly.open_part` and
-`assembly.edit_in_place`. The assembly toolbar action and component context
-menu submit these requests through `CommandDispatcher`; they do not duplicate
-the document update logic. `assembly.new_part` takes a required `path`
-parameter. Open/Edit take a component ID from the request or current selection.
-The current handlers remain UI-bound because they create/show editor windows
-and the toolbar obtains a path from a Qt file dialog. The document-level
-association, refresh and serialization APIs themselves do not require QWidget.
+The command catalog includes `assembly.new_part`, `assembly.open_part`,
+`assembly.edit_in_place`, `assembly.refresh_references` and
+`part.finish_edit_in_place`. The assembly action and component context menu
+submit Open/Edit requests through `CommandDispatcher`; there is one Open Part
+entry, and it does not bypass document/session checks. The Rebuild action uses
+`assembly.refresh_references`. The Edit In Place toolbar's Finish Editing
+action uses `part.finish_edit_in_place`. `assembly.new_part` takes a required
+`path` parameter. Open/Edit take a component ID from the request or current
+selection. The handlers that create/show editor windows remain UI-bound; the
+document-level association, refresh and serialization APIs themselves do not
+require QWidget.
 
 Existing assembly-only embedded-part and generated-feature commands remain
 available through their existing workflow handlers; they are not claimed as
@@ -147,9 +162,10 @@ headless APIs in this milestone.
 
 ## Transaction and failure behavior
 
-- Creating a part writes a new file first, then inserts and solves a candidate
-  assembly. If insertion/association/commit fails, the just-created file is
-  removed. Existing files are never overwritten.
+- Creating a part reserves a new file path without replacement, writes the
+  blank part, then inserts and solves a candidate assembly. If insertion,
+  association, commit or EIP startup fails, the part-file creation and latest
+  assembly history entry are rolled back. Existing files are never overwritten.
 - Linking an in-place support edits a candidate `AssemblyDocument`, validates
   the plane/frame reference and rigid offset, solves, then replaces the
   committed document.
@@ -158,6 +174,11 @@ headless APIs in this milestone.
 - Failed refresh does not replace the last valid assembly document.
 - A successful linked-source refresh is an assembly history transaction. Part
   edits are recorded by the part's existing `DocumentSession` history.
+- Same-path part saves compare the editor's saved file digest with the current
+  file digest before writing. A revision mismatch or missing source blocks the
+  save and reports the conflict, protecting another editor's saved work.
+- Linked-source notifications arriving during an assembly draft are retained
+  and applied automatically when that draft closes or cancels.
 - Canceling the native file dialog performs no document mutation. There is no
   uncommitted geometry preview for creating an empty linked part.
 
@@ -185,11 +206,17 @@ path:
 - moves the support reference and reloads the part source, confirming the
   linked instance follows the updated support;
 - verifies session undo/redo around source refresh;
+- verifies repeated instances share one immutable part definition and that a
+  source update retains existing mate identities and component placement;
 - verifies invalid/stale references and cyclic dependencies reject without
   replacing committed assembly state.
 
-This test exercises document/session operations directly; it does not automate
-the Qt windows. No popup GUI test was run.
+`tests/AssemblyWorkflowTests.cpp` exercises the Create New Part → EIP → Finish →
+reopen assembly → Open Part → source refresh workflow through the command
+dispatcher and Qt adapters. `tests/MainWindowTests.cpp` verifies that a stale
+part editor cannot overwrite a newer on-disk revision. Viewport-dependent
+assembly tests require a real Open CASCADE graphics context; run them on the
+desktop for visual verification.
 
 ## Adding assembly commands
 
@@ -223,6 +250,5 @@ the Qt windows. No popup GUI test was run.
 - EIP is currently one active editor context per assembly window. Context
   presentation does not update live while another source changes until the
   assembly is refreshed.
-- The branch is the existing latest clean branch `codex/unified-main-build`;
-  a dedicated feature branch could not be created because `.git/refs` is
-  protected in this environment. No merge, push or commit was performed.
+- The branch for this milestone is `codex/assembly-part-creation`; it is not
+  merged automatically.

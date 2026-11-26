@@ -48,9 +48,11 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QCryptographicHash>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
+#include <QFile>
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -105,6 +107,21 @@ void dialogButtons(QDialog& dialog, QVBoxLayout* layout)
 bool legacyPath(const QString& path)
 {
     return QFileInfo(path).suffix().compare("tcpart", Qt::CaseInsensitive) == 0;
+}
+
+QByteArray fileDigest(const QString& path, bool* readable = nullptr)
+{
+    QFile file(path);
+    const bool opened = file.open(QIODevice::ReadOnly);
+    if (readable)
+        *readable = opened;
+    return opened ? QCryptographicHash::hash(file.readAll(), QCryptographicHash::Sha256)
+                  : QByteArray{};
+}
+
+QString normalizedPath(const QString& path)
+{
+    return QDir::cleanPath(QFileInfo(path).absoluteFilePath()).toCaseFolded();
 }
 
 QString entityText(const modeling::SketchEntity& entity)
@@ -745,7 +762,13 @@ void MainWindow::setEditInPlaceContext(const QString& componentName,
     finish->setObjectName("actionFinishEditInPlace");
     connect(m_inPlaceVisibility, qOverload<int>(&QComboBox::currentIndexChanged), this,
             &MainWindow::applyInPlaceContextVisibility);
-    connect(finish, &QAction::triggered, this, &MainWindow::finishInPlaceEditing);
+    connect(finish, &QAction::triggered, this, [this]
+            {
+                const auto result = m_commands.execute({"part.finish_edit_in_place"});
+                if (result.state != application::CommandState::Completed &&
+                    !result.message.empty())
+                    statusBar()->showMessage(QString::fromStdString(result.message), 5000);
+            });
     setWindowTitle(QString("Editing %1 — TheCAD").arg(componentName));
     statusBar()->showMessage("Edit In Place · part geometry is saved to its independent .thepart file.");
     applyInPlaceContextVisibility(0);
@@ -764,13 +787,14 @@ void MainWindow::applyInPlaceContextVisibility(int mode)
     m_viewport->setContextShapes(shapes, mode == 1 ? 0.86 : 0.72);
 }
 
-void MainWindow::finishInPlaceEditing()
+bool MainWindow::finishInPlaceEditing()
 {
     if (!m_inPlaceFinished)
-        return;
+        return false;
     if (!saveDocument())
-        return;
+        return false;
     close();
+    return true;
 }
 
 QString MainWindow::chooseOpenPath()
@@ -942,9 +966,12 @@ bool MainWindow::saveDocumentAs(bool allowExport)
 
 bool MainWindow::saveToPath(const QString& path)
 {
+    if (!sourceRevisionMatches(path))
+        return false;
     try {
         m_session.document().save(path);
         m_session.setPath(QFileInfo(path).absoluteFilePath());
+        rememberSourceRevision(m_session.path());
         setWindowModified(false);m_session.markSaved();
         application::recordRecentDocument(path);
         updateDocumentUi();
@@ -975,6 +1002,7 @@ bool MainWindow::replaceDocument(document::PartDocument candidate, const QString
     m_mode = WorkspaceMode::Part;
     m_selectedFace=0;
     m_session.setPath(path);
+    rememberSourceRevision(path);
     m_startupSketchAvailable = false;
     m_session.clearHistory();
     updateDocumentUi();
@@ -983,6 +1011,39 @@ bool MainWindow::replaceDocument(document::PartDocument candidate, const QString
     if(resumeMeasure && m_measure->isEnabled())setMeasureActive(true);
     statusBar()->showMessage("Orbit: middle drag | Pan: Ctrl + middle | Zoom: wheel | Normal To: Ctrl+8 | Fit: F");
     return true;
+}
+
+bool MainWindow::sourceRevisionMatches(const QString& requestedPath)
+{
+    if (m_session.path().isEmpty() ||
+        normalizedPath(requestedPath) != normalizedPath(m_session.path()))
+        return true;
+
+    bool readable = false;
+    const auto current = fileDigest(m_session.path(), &readable);
+    if (readable && m_hasSourceFileDigest && current == m_sourceFileDigest)
+        return true;
+
+    if (readable)
+        reportError(m_inPlaceFinished
+                        ? "This part changed on disk after it was opened. Reload the latest version "
+                          "before saving, so another edit is not overwritten. Save As creates a "
+                          "separate part and does not retarget the assembly component."
+                        : "This part changed on disk after it was opened. Reload the latest version "
+                          "before saving, so another edit is not overwritten.");
+    else
+        reportError(m_inPlaceFinished
+                        ? "The linked source part file is no longer available. Save As creates a "
+                          "separate part and does not retarget the assembly component."
+                        : "The source part file is no longer available. Use Save As to preserve your changes.");
+    return false;
+}
+
+void MainWindow::rememberSourceRevision(const QString& path)
+{
+    bool readable = false;
+    m_sourceFileDigest = path.isEmpty() ? QByteArray{} : fileDigest(path, &readable);
+    m_hasSourceFileDigest = readable;
 }
 
 bool MainWindow::applyModel(document::PartDocument candidate, const std::string& selectedId,bool record)
@@ -1926,8 +1987,11 @@ void MainWindow::closeEvent(QCloseEvent* event)
             }
             QString path=m_session.path();if(path.isEmpty()||legacyPath(path))path=chooseSavePath(false);
             if(path.isEmpty()){event->ignore();return;}
-            if(!path.endsWith(".thepart",Qt::CaseInsensitive))path+=".thepart";snapshot.save(path);
+            if(!path.endsWith(".thepart",Qt::CaseInsensitive))path+=".thepart";
+            if(!sourceRevisionMatches(path)){event->ignore();return;}
+            snapshot.save(path);
             m_session.setPath(QFileInfo(path).absoluteFilePath());
+            rememberSourceRevision(m_session.path());
             m_session.markSaved();
             application::recordRecentDocument(path);
             notifyOpenAssemblyWindowsPartSaved(m_session.path());

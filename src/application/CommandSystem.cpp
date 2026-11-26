@@ -92,7 +92,7 @@ CommandAvailability CommandDispatcher::check(const std::string& id, const Comman
     const bool editDuringLine = m_activeCommandId == "sketch.line" &&
         (id == "edit.undo" || id == "edit.redo");
     if (m_active && id != "command.cancel" && id != "command.confirm" &&
-        !editDuringLine && id.rfind("view.", 0) != 0)
+        id != "part.finish_edit_in_place" && !editDuringLine && id.rfind("view.", 0) != 0)
         return {false, "Finish or cancel the active operation first", {"inactive operation"}};
     return binding->second.available(context);
 }
@@ -237,5 +237,8 @@ void registerBuiltInCommands(CommandRegistry& registry) {
         {{"component", ParameterType::FeatureId, false}});
     add("assembly.open_part", "Open Part", "Assembly", assembly, false,
         {{"component", ParameterType::FeatureId, false}});
+    add("assembly.refresh_references", "Refresh Linked Parts", "Assembly", assembly, false);
+    add("part.finish_edit_in_place", "Finish Edit In Place", "Edit In Place",
+        {Workspace::Part, Workspace::Sketch}, false);
 }
 } // namespace thecad::application

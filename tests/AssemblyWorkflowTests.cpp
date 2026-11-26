@@ -1,4 +1,5 @@
 #include "ui/assembly/AssemblyWindow.h"
+#include "ui/MainWindow.h"
 #include "ui/Theme.h"
 #include "presentation/SelectionAppearance.h"
 #include <Prs3d_TextAspect.hxx>
@@ -28,6 +29,7 @@
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
 #include <QTabBar>
+#include <QToolBar>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <cmath>
 
@@ -36,12 +38,13 @@ namespace thecad::ui
 class AssemblyTestWindow : public AssemblyWindow
 {
 public:
-    QString componentPath, savePath;
+    QString componentPath, newPartPath, savePath;
     QStringList errors, dependentMates;
     bool allowDeletion = false;
 
 protected:
     QString chooseComponentPath() override { return componentPath; }
+    QString chooseNewPartPath() override { return newPartPath; }
     QString chooseAssemblyPath(bool) override { return savePath; }
     bool confirmDiscard() override { return true; }
     bool confirmComponentDeletion(const QStringList&, const QStringList& mates) override
@@ -126,6 +129,116 @@ class AssemblyWorkflowTest final : public QObject
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     }
 private slots:
+    void newPartInAssemblyEditSaveOpenAndRefreshWorkflow()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        AssemblyTestWindow window;
+        window.newPartPath = temp.filePath("Bracket.thepart");
+        window.savePath = temp.filePath("Mount.theasmb");
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        QTRY_VERIFY(window.m_viewport->isReady());
+
+        // Canceling the path picker must leave both the document and history alone.
+        window.newPartPath.clear();
+        command(window, "actionNewInContextPart");
+        QVERIFY(window.document().components().empty());
+        QVERIFY(!window.m_session.canUndo());
+
+        window.newPartPath = temp.filePath("Bracket.thepart");
+        command(window, "actionNewInContextPart");
+        QCOMPARE(window.document().components().size(), std::size_t(1));
+        const auto componentId = window.document().components().front().id;
+        QVERIFY(QFileInfo::exists(window.newPartPath));
+        QVERIFY(window.m_editInPlaceWindow);
+        auto* inPlace = window.m_editInPlaceWindow.data();
+        QVERIFY(inPlace->hasEditInPlaceContext());
+        QCOMPARE(QFileInfo(inPlace->currentPath()).absoluteFilePath(),
+                 QFileInfo(window.newPartPath).absoluteFilePath());
+        QVERIFY(inPlace->findChild<QToolBar*>("editInPlaceToolbar"));
+        QCOMPARE(inPlace->commands().availability("part.finish_edit_in_place").available, true);
+
+        const auto finish = inPlace->commands().execute({"part.finish_edit_in_place"});
+        QCOMPARE(finish.state, application::CommandState::Completed);
+        QTRY_VERIFY(window.m_editInPlaceWindow.isNull());
+        QVERIFY(window.isEnabled());
+        QVERIFY(QFileInfo::exists(window.newPartPath));
+
+        // The assembly persists only the instance reference; opening it again keeps the part link.
+        QVERIFY(window.save());
+        QVERIFY(window.openAssemblyFile(window.savePath));
+        QCOMPARE(window.document().components().size(), std::size_t(1));
+        QCOMPARE(window.document().component(componentId).path,
+                 QFileInfo(window.newPartPath).absoluteFilePath());
+
+        window.selectComponent(componentId);
+        application::CommandRequest open{"assembly.open_part"};
+        open.parameters["component"] = componentId;
+        const auto opened = window.commands().execute(open);
+        QCOMPARE(opened.state, application::CommandState::Completed);
+        MainWindow* standalone = nullptr;
+        QTRY_VERIFY([&]
+        {
+            for (auto* top : QApplication::topLevelWidgets())
+                if (auto* part = dynamic_cast<MainWindow*>(top))
+                    if (QFileInfo(part->currentPath()).absoluteFilePath() ==
+                        QFileInfo(window.newPartPath).absoluteFilePath())
+                        standalone = part;
+            return standalone != nullptr;
+        }());
+        QVERIFY(!standalone->hasEditInPlaceContext());
+        QVERIFY(standalone->close());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+
+        // Model a normal standalone edit/save, then deliver the same source-saved
+        // notification used by MainWindow so every linked instance refreshes.
+        auto modifiedPart = document::PartDocument::createEmpty();
+        modeling::Sketch sketch;
+        modeling::SketchEntity profile;
+        profile.kind = modeling::EntityKind::Circle;
+        profile.id = "mounting-rim";
+        profile.radius = 4;
+        sketch.entities.push_back(profile);
+        const auto sketchId = modifiedPart.addSketch(sketch);
+        modifiedPart.addExtrude(sketchId, {profile.id}, 6, modeling::Direction::Positive);
+        modifiedPart.save(window.newPartPath);
+        notifyOpenAssemblyWindowsPartSaved(window.newPartPath);
+        QCOMPARE(window.document().component(componentId).part->features().size(), std::size_t(2));
+        QVERIFY(!window.document().component(componentId).shape().IsNull());
+        QVERIFY(window.commands().availability("assembly.refresh_references").available);
+        const auto refreshed = window.commands().execute({"assembly.refresh_references"});
+        QCOMPARE(refreshed.state, application::CommandState::Completed);
+        QVERIFY(!refreshed.documentChanged);
+
+        auto candidate = window.document();
+        gp_Trsf secondPlacement;
+        secondPlacement.SetTranslation(gp_Vec(50, 0, 0));
+        const auto secondId = candidate.insertComponent(window.newPartPath, secondPlacement, false);
+        candidate.setVisible(secondId, false);
+        QVERIFY(window.m_session.commit(std::move(candidate)));
+        window.refresh();
+        QVERIFY(window.document().component(componentId).part ==
+                window.document().component(secondId).part);
+        QVERIFY(window.document().component(componentId).references ==
+                window.document().component(secondId).references);
+        QVERIFY(window.save());
+        QVERIFY(window.openAssemblyFile(window.savePath));
+        QCOMPARE(window.document().components().size(), std::size_t(2));
+        QVERIFY(!window.document().component(secondId).visible);
+        QVERIFY(std::abs(window.document().component(secondId).placement.TranslationPart().X() - 50) <
+                1e-7);
+        QCOMPARE(window.document().component(secondId).part->features().size(), std::size_t(2));
+        QVERIFY(window.document().component(componentId).part ==
+                window.document().component(secondId).part);
+        if (qEnvironmentVariable("QT_QPA_PLATFORM") == "offscreen")
+            for (const auto& error : window.errors)
+                QVERIFY(error.contains("ChoosePixelFormat failed"));
+        else
+            QVERIFY2(window.errors.isEmpty(), qPrintable(window.errors.join('\n')));
+        QVERIFY(window.close());
+    }
+
     void assemblyPickingKeepsOccludedRearEdgesBehindFrontFaces()
     {
         AssemblyViewport viewport;
