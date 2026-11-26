@@ -1,11 +1,11 @@
 #pragma once
-#include "ui/input/TouchpadNavigation.h"
 #include "ui/MeasurePresentation.h"
+#include "ui/ViewportWidget.h"
 
 #include "modeling/Sketch.h"
 #include "modeling/SketchModifiers.h"
-#include "viewport/GraphicsScene.h"
 #include "viewport/CameraNavigation.h"
+#include "viewport/BRepScenePicker.h"
 #include "viewport/DimensionPresenter.h"
 #include "viewport/SketchPicker.h"
 #include "application/SketchToolController.h"
@@ -16,7 +16,6 @@
 #include "modeling/Selection.h"
 #include <QPointer>
 #include <array>
-#include <IntCurvesFace_ShapeIntersector.hxx>
 #include <AIS_TextLabel.hxx>
 #include <AIS_Point.hxx>
 #include <AIS_Trihedron.hxx>
@@ -46,14 +45,13 @@ struct ReferencePickItem {modeling::GeometryReference reference;modeling::DatumG
 
 class CadViewportTest;
 
-class CadViewport final : public QWidget {
+class CadViewport final : public ViewportWidget {
     Q_OBJECT
 
 public:
     explicit CadViewport(const TopoDS_Shape& shape, QWidget* parent = nullptr);
     ~CadViewport() override;
 
-    bool isReady() const;
     QString initializationError() const;
     bool setShape(const TopoDS_Shape& shape);
     // Non-pickable surrounding assembly geometry for Edit In Place.
@@ -110,8 +108,7 @@ public:
     std::optional<modeling::EntityKind> sketchTool() const { return m_tools.drawing(); }
     bool smartDimensionActive() const { return m_tools.dimensionPicking(); }
     void fitAll();
-    enum class StandardView { Front, Back, Left, Right, Top, Bottom, Isometric };
-    void setStandardView(StandardView view);
+    using StandardView = ViewportWidget::StandardView;
     void prepareFeatureView(const std::optional<gp_Ax3>& profile = {});
     void resetView();
     void normalTo();
@@ -181,10 +178,7 @@ signals:
     void solidFaceSelected(int index);
 
 protected:
-    QPaintEngine* paintEngine() const override;
-    void showEvent(QShowEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
-    void resizeEvent(QResizeEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
@@ -216,8 +210,7 @@ private:
     void prepareBodyPicking();
     std::uint64_t m_pickCacheGeneration=~std::uint64_t(0);
     TopTools_IndexedMapOfShape m_selectionFaces,m_selectionEdges,m_selectionVertices,m_selectionBodies;
-    IntCurvesFace_ShapeIntersector m_bodySurfaceIntersector;
-    bool m_bodySurfaceIntersectorReady=false;
+    viewport::BRepScenePicker m_scenePicker;
     std::set<int> m_seamEdges,m_artificialVertices;
     std::vector<modeling::SelectionCandidate> sketchEntityCandidates(const QPointF&) const;
     modeling::SelectionPolicy m_selectionPolicy;
@@ -254,13 +247,10 @@ private:
     bool m_contextClick=false;
     bool m_dispatchingSelection=false;
     using Navigation=viewport::CameraNavigation::Mode;
-    void beginNavigation(QMouseEvent*);
-    void moveNavigation(QMouseEvent*);
-    void zoomToward(const QPointF&,double);
-    gp_Pnt navigationPivot(const QPointF&);
-    viewport::CameraNavigation m_camera;
-    TouchpadNavigation m_touchpad;
-    void touchpadZoom(QPointF position, double factor);
+    gp_Pnt navigationPivot(const QPointF&) override;
+    gp_Pnt zoomAnchor(const QPointF&) override;
+    bool cameraNavigationAllowed() const override;
+    void cameraViewChanged() override;
     void initialize();
     void releaseViewer();
     void renderContextShapes();
@@ -338,13 +328,11 @@ private:
     Handle(AIS_Point) m_sketchSplitPreview;
     void pointAtSketchLineEdit(const QPointF& position, bool apply);
     void commitDrawing(modeling::Point2 point, const std::optional<modeling::SketchPointRef>& reference);
-    QPoint nativePosition(const QPointF& position) const;
 
     TopoDS_Shape m_shape;
     std::vector<TopoDS_Shape> m_contextShapes;
     std::vector<Handle(AIS_Shape)> m_contextPresentations;
     double m_contextTransparency = 0.76;
-    viewport::GraphicsScene m_graphics;
     Handle(AIS_Shape) m_presentation;
     Handle(AIS_Shape) m_sketchPresentation;
     Handle(AIS_Shape) m_constructionPresentation;

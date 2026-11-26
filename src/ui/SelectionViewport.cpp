@@ -1,4 +1,3 @@
-#include <IntCurvesFace_ShapeIntersector.hxx>
 #include "presentation/SelectionAppearance.h"
 #include "presentation/SolidPresentation.h"
 #include "ui/CadViewport.h"
@@ -7,7 +6,6 @@
 #include <Graphic3d_Camera.hxx>
 #include <Graphic3d_ZLayerId.hxx>
 #include <Prs3d_PointAspect.hxx>
-#include <Poly_PolygonOnTriangulation.hxx>
 #include <SelectMgr_IndexedMapOfOwner.hxx>
 #include <SelectMgr_ViewerSelector.hxx>
 #include <StdSelect_BRepOwner.hxx>
@@ -22,10 +20,8 @@
 #include <QMenu>
 #include <QShortcut>
 #include <QScopedValueRollback>
-#include <BRepAdaptor_Surface.hxx>
 #include <algorithm>
 #include <cmath>
-#include <limits>
 
 namespace thecad::ui {
 using namespace presentation;
@@ -39,50 +35,6 @@ bool isMeasurementKind(SelectionKind kind)
 
 SelectionKind datumSelectionKind(modeling::DatumKind kind){return kind==modeling::DatumKind::Point?SelectionKind::ReferencePoint:kind==modeling::DatumKind::Axis?SelectionKind::ReferenceAxis:SelectionKind::ReferencePlane;}
 
-struct EdgeHit
-{
-    gp_Pnt point;
-    double distance;
-};
-
-std::optional<EdgeHit> closestDisplayedEdgePoint(const TopoDS_Edge& edge,
-                                                  const Handle(V3d_View)& view,
-                                                  const QPointF& cursor, double ratio)
-{
-    Handle(Poly_PolygonOnTriangulation) polygon;
-    Handle(Poly_Triangulation) mesh;
-    TopLoc_Location location;
-    BRep_Tool::PolygonOnTriangulation(edge, polygon, mesh, location);
-    if (polygon.IsNull() || mesh.IsNull() || polygon->NbNodes() < 2)
-        return {};
-    const auto project = [&](const gp_Pnt& point) {
-        int x, y;
-        view->Convert(point.X(), point.Y(), point.Z(), x, y);
-        return QPointF(x / ratio, y / ratio);
-    };
-    const auto& nodes = polygon->Nodes();
-    const auto transform = location.Transformation();
-    auto a = mesh->Node(nodes.First()).Transformed(transform);
-    auto screenA = project(a);
-    EdgeHit best{a, std::numeric_limits<double>::infinity()};
-    for (int i = nodes.Lower() + 1; i <= nodes.Upper(); ++i)
-    {
-        const auto b = mesh->Node(nodes(i)).Transformed(transform);
-        const auto screenB = project(b);
-        const auto segment = screenB - screenA;
-        const double lengthSquared = QPointF::dotProduct(segment, segment);
-        const double t = lengthSquared > 0
-                             ? std::clamp(QPointF::dotProduct(cursor - screenA, segment) /
-                                              lengthSquared, 0.0, 1.0)
-                             : 0;
-        const double distance = QLineF(cursor, screenA + segment * t).length();
-        if (distance < best.distance)
-            best = {a.Translated(gp_Vec(a, b) * t), distance};
-        a = b;
-        screenA = screenB;
-    }
-    return best;
-}
 }
 std::vector<SelectionRef> CadViewport::selection() const {
     if(m_measurePicking){std::vector<SelectionRef> refs;for(const auto& pick:m_measurePicks)refs.push_back(pick.ref);return refs;}
@@ -114,15 +66,15 @@ void CadViewport::setSelectionFilters(std::uint32_t filters,bool enabled){
 void CadViewport::invalidateBodySelection(){
     m_treeFeatureFaces.clear();
     if(isReady())for(auto& item:m_selectionPresentations)m_graphics.context()->Remove(item,Standard_False);m_selectionPresentations.clear();
-    ++m_shapeGeneration;m_selection.invalidateTopology(m_shapeGeneration);m_nativeSelections.clear();m_selectedSolidFace=0;m_bodySurfaceIntersectorReady=false;
+    ++m_shapeGeneration;m_selection.invalidateTopology(m_shapeGeneration);m_nativeSelections.clear();m_selectedSolidFace=0;m_scenePicker.clear();
     if(isReady())m_graphics.context()->ClearSelected(Standard_False);
     previewCandidate({});if(m_selectOtherMenu)m_selectOtherMenu->close();
 }
 void CadViewport::prepareBodyPicking(){
     if(m_pickCacheGeneration==m_shapeGeneration)return;m_pickCacheGeneration=m_shapeGeneration;
     m_selectionFaces.Clear();m_selectionEdges.Clear();m_selectionVertices.Clear();m_selectionBodies.Clear();m_seamEdges.clear();m_artificialVertices.clear();
-    if(m_shape.IsNull())return;
-    m_bodySurfaceIntersector.Load(m_shape,1e-7);m_bodySurfaceIntersectorReady=true;
+    if(m_shape.IsNull()){m_scenePicker.clear();return;}
+    m_scenePicker.setScene({{"part-body",m_shape,gp_Trsf(),true}});
     TopExp::MapShapes(m_shape,TopAbs_FACE,m_selectionFaces);TopExp::MapShapes(m_shape,TopAbs_EDGE,m_selectionEdges);TopExp::MapShapes(m_shape,TopAbs_VERTEX,m_selectionVertices);TopExp::MapShapes(m_shape,TopAbs_SOLID,m_selectionBodies);
     TopTools_IndexedDataMapOfShapeListOfShape edgeFaces,vertexEdges;
     TopExp::MapShapesAndAncestors(m_shape,TopAbs_EDGE,TopAbs_FACE,edgeFaces);TopExp::MapShapesAndAncestors(m_shape,TopAbs_VERTEX,TopAbs_EDGE,vertexEdges);
@@ -169,24 +121,9 @@ std::vector<CadViewport::PickCandidate> CadViewport::selectionCandidates(const Q
             const int width=qMax(1,qRound(2*m_pickingTolerance*devicePixelRatioF()));
             if(selector->CustomPixelTolerance()!=width){selector->SetPixelTolerance(width+1);selector->SetPixelTolerance(width);}
             selector->Pick(pixel.x(),pixel.y(),m_graphics.view());
-            struct BodySurfaceHit {TopoDS_Face face;gp_Pnt point;double depth=1e100;int faceIndex=0;};
             const gp_Pnt cameraEye=m_graphics.view()->Camera()->Eye();
             const gp_Vec cameraDirection(m_graphics.view()->Camera()->Direction());
-            const auto bodySurfaceAt=[&](const QPoint& samplePixel)->std::optional<BodySurfaceHit>{
-                if(!m_bodySurfaceIntersectorReady)return {};
-                double x,y,z,dx,dy,dz;
-                m_graphics.view()->ConvertWithProj(samplePixel.x(),samplePixel.y(),x,y,z,dx,dy,dz);
-                m_bodySurfaceIntersector.Perform(gp_Lin(gp_Pnt(x,y,z),gp_Dir(dx,dy,dz)),-1e15,1e15);
-                BodySurfaceHit nearest;
-                for(int i=1;i<=m_bodySurfaceIntersector.NbPnt();++i){
-                    const auto& point=m_bodySurfaceIntersector.Pnt(i);
-                    const double depth=gp_Vec(cameraEye,point).Dot(cameraDirection);
-                    if(depth<0||depth>=nearest.depth)continue;
-                    nearest={m_bodySurfaceIntersector.Face(i),point,depth,m_selectionFaces.FindIndex(m_bodySurfaceIntersector.Face(i))};
-                }
-                return nearest.faceIndex>0?std::optional<BodySurfaceHit>(nearest):std::nullopt;
-            };
-            const auto cursorSurface=bodySurfaceAt(pixel);
+            const auto cursorSurface=m_scenePicker.surfaceAt(m_graphics.view(),pixel);
             const double depthSlack=std::max(1e-6,m_graphics.view()->Camera()->Scale()/std::max(1,height()));
             for(int n=1;n<=selector->NbPicked();++n){
                 const auto owner=Handle(StdSelect_BRepOwner)::DownCast(selector->Picked(n));
@@ -205,8 +142,9 @@ std::vector<CadViewport::PickCandidate> CadViewport::selectionCandidates(const Q
                 // measure against the displayed segments so depth ordering
                 // uses the actual closest point, not an arbitrary curve sample.
                 if (type == TopAbs_EDGE)
-                    if (const auto closest = closestDisplayedEdgePoint(
-                            TopoDS::Edge(shape), m_graphics.view(), position, devicePixelRatioF()))
+                    if (const auto closest = viewport::BRepScenePicker::closestDisplayedEdgePoint(
+                            TopoDS::Edge(shape), gp_Trsf(), m_graphics.view(), position,
+                            devicePixelRatioF()))
                     {
                         hit = closest->point;
                         distance = closest->distance;
@@ -228,9 +166,7 @@ std::vector<CadViewport::PickCandidate> CadViewport::selectionCandidates(const Q
                 }
                 bool occluded=false;
                 if(type==TopAbs_EDGE||type==TopAbs_VERTEX){
-                    int edgeX,edgeY;m_graphics.view()->Convert(hit.X(),hit.Y(),hit.Z(),edgeX,edgeY);
-                    const auto surfaceAtEdge=bodySurfaceAt(QPoint(edgeX,edgeY));
-                    occluded=surfaceAtEdge&&depth>surfaceAtEdge->depth+depthSlack;
+                    occluded=m_scenePicker.occludes(m_graphics.view(),hit,depthSlack);
                 }else if(type==TopAbs_FACE&&cursorSurface){
                     occluded=depth>cursorSurface->depth+depthSlack;
                 }

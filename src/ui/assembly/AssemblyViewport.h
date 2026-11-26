@@ -1,13 +1,10 @@
 #pragma once
-#include "viewport/GraphicsScene.h"
-#include "viewport/CameraNavigation.h"
-#include "ui/input/TouchpadNavigation.h"
-#include <QWidget>
+#include "ui/ViewportWidget.h"
+#include "viewport/BRepScenePicker.h"
 #include <AIS_Shape.hxx>
 #include <gp_Trsf.hxx>
 #include <gp_Quaternion.hxx>
 #include <map>
-#include <memory>
 #include <optional>
 #include <vector>
 namespace thecad::ui
@@ -28,13 +25,12 @@ struct AssemblyHit
     TopAbs_ShapeEnum kind = TopAbs_FACE;
     gp_Pnt point;
 };
-class AssemblyViewport final : public QWidget
+class AssemblyViewport final : public ViewportWidget
 {
     Q_OBJECT
 public:
     explicit AssemblyViewport(QWidget* parent = nullptr);
     ~AssemblyViewport() override;
-    bool isReady() const { return m_graphics.ready(); }
     QString initializationError() const { return m_error; }
     void setComponents(const std::vector<AssemblyVisual>& visuals);
     void setSelected(const std::string& id, int face = 0, TopAbs_ShapeEnum kind = TopAbs_FACE);
@@ -45,7 +41,6 @@ public:
     void standardView(int index);
     gp_Pnt cursorPoint(const QPointF& position) const;
     QPoint project(const gp_Pnt& point) const;
-    Handle(Graphic3d_Camera) camera() const;
     void applyTheme();
 signals:
     void framePresented();
@@ -64,9 +59,7 @@ signals:
     void initializationFailed(const QString& message);
 
 protected:
-    QPaintEngine* paintEngine() const override { return nullptr; }
     void paintEvent(QPaintEvent*) override;
-    void resizeEvent(QResizeEvent*) override;
     void showEvent(QShowEvent*) override;
     void mousePressEvent(QMouseEvent*) override;
     void mouseMoveEvent(QMouseEvent*) override;
@@ -78,9 +71,7 @@ protected:
 private:
     friend class TouchpadNavigationTest;
     friend class AssemblyWorkflowTest;
-    struct PickCache;
     void initialize();
-    QPoint native(const QPointF& point) const;
     AssemblyHit hit(const QPointF& point);
     gp_Pnt cursorPointAtDepth(const QPointF& point, const gp_Pnt& planePoint) const;
     TopoDS_Shape selectedShape(const std::string& id, int face,
@@ -88,14 +79,12 @@ private:
     void refreshSelection();
     void hover(const QPointF& point);
     void updateComponentDrag(const QPointF& position);
-    viewport::GraphicsScene m_graphics;
-    viewport::CameraNavigation m_navigation;
-    TouchpadNavigation m_touchpad;
-    gp_Pnt navigationPivot(const QPointF& position);
-    void touchpadZoom(QPointF position, double factor);
+    viewport::BRepScenePicker m_scenePicker;
+    gp_Pnt navigationPivot(const QPointF& position) override;
+    gp_Pnt zoomAnchor(const QPointF& position) override;
+    bool cameraNavigationAllowed() const override;
     std::vector<AssemblyVisual> m_visuals;
     std::map<std::string, Handle(AIS_Shape)> m_presentations;
-    std::map<std::string, std::unique_ptr<PickCache>> m_pickCaches;
     Handle(AIS_Shape) m_highlight, m_hover;
     std::vector<Handle(AIS_Shape)> m_references;
     std::vector<AssemblyVisual> m_referenceVisuals;

@@ -1,9 +1,6 @@
-#include "presentation/ViewportAppearance.h"
 #include "presentation/SelectionAppearance.h"
 #include "presentation/SolidPresentation.h"
 #include "ui/Theme.h"
-#include "ui/input/NavigationInputSettings.h"
-#include <QNativeGestureEvent>
 #include <QToolTip>
 #include "modeling/RelationCommands.h"
 #include "modeling/SketchTools.h"
@@ -55,8 +52,6 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPaintEvent>
-#include <QResizeEvent>
-#include <QShowEvent>
 #include <QWheelEvent>
 
 #include <algorithm>
@@ -113,27 +108,19 @@ Handle(AIS_Trihedron) datumArrow(const gp_Pnt& origin,const gp_Dir& direction,do
 
 
 CadViewport::CadViewport(const TopoDS_Shape& shape, QWidget* parent)
-    : QWidget(parent), m_shape(shape)
+    : ViewportWidget(parent), m_shape(shape)
 {
-    setAttribute(Qt::WA_NativeWindow);
-    setAttribute(Qt::WA_PaintOnScreen);
-    setAttribute(Qt::WA_NoSystemBackground);
     qRegisterMetaType<modeling::SketchEntity>();
     qRegisterMetaType<modeling::Sketch>();
     qRegisterMetaType<modeling::SketchPlane>();
-    setMouseTracking(true);
-    setFocusPolicy(Qt::StrongFocus);
-    setMinimumSize(320, 240);
     setObjectName("cadViewport");
     setAccessibleName("3D CAD viewport");
     connect(&ThemeManager::instance(),&ThemeManager::changed,this,&CadViewport::applyTheme);
-    connect(&NavigationInputSettings::instance(),&NavigationInputSettings::changed,this,[this]{m_touchpad.reset();});
 }
 
 void CadViewport::applyTheme(){
     if(!isReady())return;
-    const bool dark=ThemeManager::instance().isDark();
-    presentation::applyViewportAppearance(m_graphics.view(),dark);
+    applyCommonViewportTheme();
     updateSketchPresentation();updateReferencePlanes();setDatums(m_datums);
     if(!m_referenceCandidates.empty()){const auto candidates=m_referenceCandidates;setReferenceCandidates(candidates,m_referenceCandidateKind);}update();
 }
@@ -143,27 +130,16 @@ CadViewport::~CadViewport()
     releaseViewer();
 }
 
-bool CadViewport::isReady() const
-{
-    return !m_graphics.view().IsNull();
-}
-
 QString CadViewport::initializationError() const
 {
     return m_error;
-}
-
-QPaintEngine* CadViewport::paintEngine() const
-{
-    // OCCT owns the native window's OpenGL surface; Qt must not paint over it.
-    return nullptr;
 }
 
 void CadViewport::initialize()
 {
     m_attemptedInitialization = true;
     try {
-        m_graphics.initialize(reinterpret_cast<Aspect_Handle>(winId()));
+        initializeGraphics();
         applyTheme();
 
 
@@ -220,15 +196,7 @@ void CadViewport::releaseViewer()
     m_sketchBatches.clear();m_selectedSolidFace=0;
     m_contextPresentations.clear();
     m_presentation.Nullify();
-    m_graphics.reset();
-}
-
-void CadViewport::showEvent(QShowEvent* event)
-{
-    QWidget::showEvent(event);
-    // A child's show/resize event can precede the final HWND client geometry.
-    // Initialize and synchronize at paint time, after Qt has laid out the window.
-    update();
+    resetGraphics();
 }
 
 void CadViewport::paintEvent(QPaintEvent*)
@@ -240,16 +208,8 @@ void CadViewport::paintEvent(QPaintEvent*)
         synchronizeSurface();
         updateCameraAnnotations();
         if(m_measurePicking) measureCameraUpdate();
-        m_graphics.view()->Redraw();
+        redrawGraphics();
         emit framePresented();
-    }
-}
-
-void CadViewport::resizeEvent(QResizeEvent* event)
-{
-    QWidget::resizeEvent(event);
-    if (isReady()) {
-        update();
     }
 }
 
@@ -1322,17 +1282,19 @@ std::optional<modeling::Point2> CadViewport::sketchPosition(const QPointF& posit
     const gp_Vec local(axes.Location(), onPlane);
     return modeling::Point2{local.Dot(gp_Vec(axes.XDirection())), local.Dot(gp_Vec(axes.YDirection()))};
 }
-QPoint CadViewport::nativePosition(const QPointF& position) const
-{
-    // Qt events use device-independent coordinates; OCCT uses native pixels.
-    return QPoint(qRound(position.x() * devicePixelRatioF()),
-                  qRound(position.y() * devicePixelRatioF()));
-}
-
 void CadViewport::mousePressEvent(QMouseEvent* event)
 {
     m_touchpad.reset();
-    if(event->button()==Qt::MiddleButton&&isReady()){beginNavigation(event);return;}
+    if(event->button()==Qt::MiddleButton&&isReady()){
+        if (m_pointDrag || m_dimensionDrag) { event->accept(); return; }
+        m_regionClickCandidate = false;
+        m_planeClickCandidate = false;
+        m_contextClick = false;
+        previewCandidate({});
+        resetSketchInference();
+        if (beginCameraNavigation(event)) return;
+        event->accept();return;
+    }
     m_contextClick=event->button()==Qt::RightButton;m_contextPress=event->position();
     m_deleteSequence.invalidate();
     if(m_pointDrag || m_dimensionDrag) {event->accept();return;}
@@ -1503,10 +1465,9 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
 
 void CadViewport::mouseMoveEvent(QMouseEvent* event)
 {
-    if(m_camera.mode()!=Navigation::None){moveNavigation(event);return;}
-    if(m_touchpad.move(event,m_graphics.view(),size(),devicePixelRatioF(),
-        isReady() && isActiveWindow() && !m_pointDrag && !m_dimensionDrag,
-        [this,event]{return navigationPivot(event->position());})) {
+    if(m_camera.mode()!=Navigation::None){moveCameraNavigation(event);return;}
+    if(handleTouchpadPointerMove(event,
+        isActiveWindow() && !m_pointDrag && !m_dimensionDrag)) {
         resetSketchInference();m_contextClick=false;m_planeClickCandidate=false;m_regionClickCandidate=false;
         m_cameraAnnotationsDirty=true;update();return;
     }
@@ -1603,7 +1564,7 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* event)
         updateConstraintPresentation();update();event->accept();return;
     }
     if(event->button()==Qt::LeftButton && m_pointDrag) { updatePointDrag(event->position()); finishPointDrag(); event->accept(); return; }
-    if(event->button()==m_camera.button()&&m_camera.mode()!=Navigation::None){m_camera.stop();updateConstraintPresentation();update();unsetCursor();if(QWidget::mouseGrabber()==this)releaseMouse();event->accept();return;}
+    if(endCameraNavigation(event)){updateConstraintPresentation();return;}
     if (event->button() == Qt::LeftButton) {
         const bool regionClick=m_regionClickCandidate && event->button()==Qt::LeftButton
             && (event->position()-m_regionPressPosition).manhattanLength()<=QApplication::startDragDistance();
@@ -1634,16 +1595,6 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* event)
 
 bool CadViewport::event(QEvent* event)
 {
-    if(event->type()==QEvent::NativeGesture && isReady() && !m_pointDrag && !m_dimensionDrag &&
-       m_camera.mode()==Navigation::None && m_touchpad.gesture(static_cast<QNativeGestureEvent*>(event),
-           m_graphics.view(),devicePixelRatioF(),[this](QPointF point,double factor){touchpadZoom(point,factor);})) {
-        m_cameraAnnotationsDirty=true;update();return true;
-    }
-    if(event->type()==QEvent::Leave || event->type()==QEvent::FocusOut ||
-       event->type()==QEvent::WindowDeactivate || event->type()==QEvent::UngrabMouse ||
-       event->type()==QEvent::DevicePixelRatioChange || event->type()==QEvent::ScreenChangeInternal ||
-       event->type()==QEvent::KeyRelease || event->type()==QEvent::KeyPress)
-        m_touchpad.reset();
     if (event->type() == QEvent::Leave && m_sketchLineEditPicking)
         emit sketchLineEditPointed({}, {}, false);
     if(event->type()==QEvent::Leave)previewCandidate({});
@@ -1660,10 +1611,6 @@ bool CadViewport::event(QEvent* event)
         m_hoveredPlane.reset();
         updatePlaneStyles();
     }
-    if (event->type() == QEvent::DevicePixelRatioChange || event->type() == QEvent::ScreenChangeInternal) {
-        m_graphics.invalidateSize();
-        update();
-    }
     if (event->type() == QEvent::UngrabMouse || event->type() == QEvent::WindowDeactivate) {
         m_deleteSequence.invalidate();cancelPointDrag();cancelDimensionDrag();
         if(m_camera.mode()!=Navigation::None){updateConstraintPresentation();update();}
@@ -1672,7 +1619,7 @@ bool CadViewport::event(QEvent* event)
         m_planeClickCandidate = false;m_regionClickCandidate=false;
         unsetCursor();
     }
-    return QWidget::event(event);
+    return ViewportWidget::event(event);
 }
 
 void CadViewport::wheelEvent(QWheelEvent* event)
@@ -1681,20 +1628,7 @@ void CadViewport::wheelEvent(QWheelEvent* event)
         return;
     }
     resetSketchInference();
-    if(m_touchpad.wheel(event,m_graphics.view(),size(),devicePixelRatioF(),
-        [this,event]{return navigationPivot(event->position());},
-        [this](QPointF point,double factor){touchpadZoom(point,factor);})) {
-        m_cameraAnnotationsDirty=true;update();return;
-    }
-    const double steps = !event->angleDelta().isNull()
-        ? event->angleDelta().y() / 120.0 : event->pixelDelta().y() / 40.0;
-    if(steps==0){event->accept();return;}
-    const double factor = std::pow(1.15, -std::clamp(steps, -10.0, 10.0));
-    if(factor>1)zoomToward(event->position(),factor);
-    else viewport::CameraNavigation::zoomCentered(m_graphics.view(),factor);
-    m_cameraAnnotationsDirty=true;
-    update();
-    event->accept();
+    handleWheelNavigation(event);
 }
 
 void CadViewport::keyPressEvent(QKeyEvent* event)
@@ -1757,11 +1691,8 @@ void CadViewport::cancelSketchMultiSelection(){m_shiftSelectionChanged=false;}
 void CadViewport::fitAll()
 {
     if (isReady()) {
-        synchronizeSurface();
-        m_graphics.view()->FitAll(0.1, Standard_False);
-        m_graphics.view()->ZFitAll();
+        fitScene(0.1);
         updateConstraintPresentation();
-        update();
     }
 }
 

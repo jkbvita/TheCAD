@@ -1,5 +1,6 @@
 add_library(thecad_graphics STATIC
     GraphicsScene.cpp
+    BRepScenePicker.cpp
     CameraNavigation.cpp
     DimensionPresenter.cpp
     SketchPicker.cpp)

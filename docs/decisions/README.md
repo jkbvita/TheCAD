@@ -114,6 +114,7 @@ approved scope do not need repeated approval.
 - [0066. Right-button component rotation](0066-assembly-right-drag-rotation.md) — rotate through available mate freedom with preview and undo.
 - [0067. Prefer translation during dragging](0067-assembly-drag-translation-preference.md) — tolerate small cursor wobble without accidental rotation.
 - [0068. Welcome and workspace loading](0068-startup-welcome-and-loading.md) — choose a workspace before viewport creation, with recent documents and pinned folders.
+- [0070. Shared viewport shell and BRep picking](0070-shared-viewport-architecture.md) — common camera/render lifecycle and solid hit-testing for Part and Assembly.
 
 ## Pending owner decisions
 

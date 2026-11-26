@@ -9,6 +9,7 @@ if(WIN32)
 endif()
 
 add_library(thecad_viewport_widget STATIC
+    ViewportWidget.cpp ViewportWidget.h
     CadViewport.cpp CadViewport.h NavigationViewport.cpp input/TouchpadNavigation.cpp
     ReferenceGeometryViewport.cpp SelectionViewport.cpp SketchReferenceViewport.cpp ArcSlotViewport.cpp SplineViewport.cpp MeasureViewport.cpp MeasureOverlay.cpp RelationSymbols.cpp
     assembly/AssemblyViewport.cpp assembly/AssemblyViewport.h)

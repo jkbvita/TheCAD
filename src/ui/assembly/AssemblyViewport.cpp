@@ -1,9 +1,6 @@
-#include "presentation/ViewportAppearance.h"
 #include "ui/assembly/AssemblyViewport.h"
 #include "viewport/ComponentRotationDrag.h"
 #include "ui/Theme.h"
-#include "ui/input/NavigationInputSettings.h"
-#include <QNativeGestureEvent>
 #include "presentation/SolidPresentation.h"
 #include "presentation/SelectionAppearance.h"
 #include <AIS_Shape.hxx>
@@ -11,19 +8,13 @@
 #include <BRepBndLib.hxx>
 #include <Bnd_Box.hxx>
 #include <Graphic3d_Camera.hxx>
-#include <IntCurvesFace_ShapeIntersector.hxx>
-#include <Poly_PolygonOnTriangulation.hxx>
-#include <Poly_Triangulation.hxx>
-#include <Precision.hxx>
 #include <SelectMgr_ViewerSelector.hxx>
 #include <StdSelect_BRepOwner.hxx>
 #include <Standard_Failure.hxx>
-#include <Standard_Real.hxx>
 #include <TopExp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
-#include <TopoDS_Edge.hxx>
 #include <TopoDS_Vertex.hxx>
 #include <QApplication>
 #include <QKeyEvent>
@@ -32,65 +23,11 @@
 #include <QWheelEvent>
 #include <algorithm>
 #include <cmath>
-#include <limits>
 
 namespace thecad::ui
 {
 namespace
 {
-struct EdgeScreenHit
-{
-    gp_Pnt point;
-    double distance = std::numeric_limits<double>::infinity();
-};
-
-std::optional<EdgeScreenHit> closestDisplayedEdgePoint(const TopoDS_Edge& edge,
-                                                        const gp_Trsf& placement,
-                                                        const Handle(V3d_View)& view,
-                                                        const QPointF& cursor, double ratio)
-{
-    Handle(Poly_PolygonOnTriangulation) polygon;
-    Handle(Poly_Triangulation) triangulation;
-    TopLoc_Location location;
-    BRep_Tool::PolygonOnTriangulation(edge, polygon, triangulation, location);
-    if (polygon.IsNull() || triangulation.IsNull() || polygon->NbNodes() < 2)
-        return {};
-
-    const auto project = [&](const gp_Pnt& point) {
-        int x, y;
-        view->Convert(point.X(), point.Y(), point.Z(), x, y);
-        return QPointF(x / ratio, y / ratio);
-    };
-    const auto toWorld = [&](const gp_Pnt& point) {
-        return point.Transformed(location.Transformation()).Transformed(placement);
-    };
-
-    const auto& nodes = polygon->Nodes();
-    auto a = toWorld(triangulation->Node(nodes.First()));
-    auto screenA = project(a);
-    EdgeScreenHit best;
-    for (int i = nodes.Lower() + 1; i <= nodes.Upper(); ++i)
-    {
-        const auto b = toWorld(triangulation->Node(nodes(i)));
-        const auto screenB = project(b);
-        const auto segment = screenB - screenA;
-        const double lengthSquared = QPointF::dotProduct(segment, segment);
-        const double t = lengthSquared > 0
-                             ? std::clamp(QPointF::dotProduct(cursor - screenA, segment) /
-                                              lengthSquared,
-                                          0.0, 1.0)
-                             : 0.0;
-        const double distance = QLineF(cursor, screenA + segment * t).length();
-        if (distance < best.distance)
-        {
-            best = {a.Translated(gp_Vec(a, b) * t), distance};
-        }
-        a = b;
-        screenA = screenB;
-    }
-    return std::isfinite(best.distance) ? std::optional<EdgeScreenHit>(best) : std::nullopt;
-}
-
 bool samePose(const gp_Trsf& a, const gp_Trsf& b)
 {
     for (int r = 1; r <= 3; ++r)
@@ -101,42 +38,18 @@ bool samePose(const gp_Trsf& a, const gp_Trsf& b)
 }
 } // namespace
 
-struct AssemblyViewport::PickCache
-{
-    TopoDS_Shape shape;
-    TopTools_IndexedMapOfShape faces;
-    std::unique_ptr<IntCurvesFace_ShapeIntersector> surfaceIntersector;
-};
-
-AssemblyViewport::AssemblyViewport(QWidget* parent) : QWidget(parent)
+AssemblyViewport::AssemblyViewport(QWidget* parent) : ViewportWidget(parent)
 {
     setObjectName("assemblyViewport");
-    setAttribute(Qt::WA_NativeWindow);
-    setAttribute(Qt::WA_PaintOnScreen);
-    setAttribute(Qt::WA_NoSystemBackground);
-    setAutoFillBackground(false);
-    setMouseTracking(true);
-    setFocusPolicy(Qt::StrongFocus);
-    setMinimumSize(320, 240);
     connect(&ThemeManager::instance(), &ThemeManager::changed, this, &AssemblyViewport::applyTheme);
-    connect(&NavigationInputSettings::instance(), &NavigationInputSettings::changed, this,
-            [this]{m_touchpad.reset();});
 }
 AssemblyViewport::~AssemblyViewport() = default;
-QPoint AssemblyViewport::native(const QPointF& point) const
-{
-    return {qRound(point.x() * devicePixelRatioF()), qRound(point.y() * devicePixelRatioF())};
-}
-Handle(Graphic3d_Camera) AssemblyViewport::camera() const
-{
-    return isReady() ? m_graphics.view()->Camera() : Handle(Graphic3d_Camera){};
-}
 void AssemblyViewport::initialize()
 {
     m_attempted = true;
     try
     {
-        m_graphics.initialize(reinterpret_cast<Aspect_Handle>(winId()));
+        initializeGraphics();
         applyTheme();
         standardView(6);
         const auto visuals = m_visuals;
@@ -156,10 +69,11 @@ void AssemblyViewport::initialize()
         emit initializationFailed(m_error);
     }
 }
-void AssemblyViewport::showEvent(QShowEvent*)
+void AssemblyViewport::showEvent(QShowEvent* event)
 {
     if (!m_attempted)
         initialize();
+    ViewportWidget::showEvent(event);
 }
 void AssemblyViewport::paintEvent(QPaintEvent*)
 {
@@ -167,23 +81,16 @@ void AssemblyViewport::paintEvent(QPaintEvent*)
         initialize();
     if (isReady())
     {
-        m_graphics.synchronizeSurface();
-        m_graphics.view()->Redraw();
+        synchronizeGraphics();
+        redrawGraphics();
         emit framePresented();
     }
-}
-void AssemblyViewport::resizeEvent(QResizeEvent*)
-{
-    if (isReady())
-        m_graphics.invalidateSize();
-    update();
 }
 void AssemblyViewport::applyTheme()
 {
     if (!isReady())
         return;
-    const bool dark = ThemeManager::instance().isDark();
-    presentation::applyViewportAppearance(m_graphics.view(),dark);
+    applyCommonViewportTheme();
     update();
 }
 void AssemblyViewport::setComponents(const std::vector<AssemblyVisual>& visuals)
@@ -201,40 +108,15 @@ void AssemblyViewport::setComponents(const std::vector<AssemblyVisual>& visuals)
                               a.constrained == b.constrained && samePose(a.placement, b.placement);
                    });
     m_visuals = visuals;
+    std::vector<viewport::PickableBRep> pickable;
+    pickable.reserve(visuals.size());
+    for (const auto& visual : visuals)
+        pickable.push_back({visual.id, visual.shape, visual.placement, visual.visible});
+    m_scenePicker.setScene(std::move(pickable));
     if (!isReady())
         return;
     if (unchanged)
         return;
-
-    for (auto it = m_pickCaches.begin(); it != m_pickCaches.end();)
-    {
-        const auto visual = std::find_if(visuals.begin(), visuals.end(), [&](const auto& value) {
-            return value.id == it->first && !value.shape.IsNull() &&
-                   value.shape.IsSame(it->second->shape);
-        });
-        if (visual == visuals.end())
-            it = m_pickCaches.erase(it);
-        else
-            ++it;
-    }
-    for (const auto& visual : visuals)
-    {
-        if (visual.shape.IsNull())
-            continue;
-        auto found = m_pickCaches.find(visual.id);
-        if (found != m_pickCaches.end() && found->second->shape.IsSame(visual.shape))
-            continue;
-
-        auto cache = std::make_unique<PickCache>();
-        cache->shape = visual.shape;
-        TopExp::MapShapes(visual.shape, TopAbs_FACE, cache->faces);
-        if (cache->faces.Extent() > 0)
-        {
-            cache->surfaceIntersector = std::make_unique<IntCurvesFace_ShapeIntersector>();
-            cache->surfaceIntersector->Load(visual.shape, Precision::Confusion());
-        }
-        m_pickCaches[visual.id] = std::move(cache);
-    }
 
     const auto context = m_graphics.context();
     if (!m_hover.IsNull())
@@ -416,7 +298,7 @@ AssemblyHit AssemblyViewport::hit(const QPointF& point)
     if (!isReady())
         return {};
     m_graphics.synchronizeSurface();
-    const auto pixel = native(point);
+    const auto pixel = nativePosition(point);
     const auto selector = m_graphics.context()->MainSelector();
     const int tolerance = qMax(1, qRound(8 * devicePixelRatioF()));
     if (selector->CustomPixelTolerance() != tolerance)
@@ -431,49 +313,10 @@ AssemblyHit AssemblyViewport::hit(const QPointF& point)
     selector->SetDepthTolerance(SelectMgr_TypeOfDepthTolerance_SensitivityFactor, 0.0);
     selector->Pick(pixel.x(), pixel.y(), m_graphics.view());
 
-    struct SurfaceHit
-    {
-        std::string component;
-        int face = 0;
-        gp_Pnt point;
-        double depth = std::numeric_limits<double>::infinity();
-    };
     const auto view = m_graphics.view();
     const auto viewCamera = camera();
     const gp_Vec cameraDirection(viewCamera->Direction());
-    const auto surfaceAt = [&](const QPoint& sample) -> std::optional<SurfaceHit> {
-        double x, y, z, dx, dy, dz;
-        view->ConvertWithProj(sample.x(), sample.y(), x, y, z, dx, dy, dz);
-        const gp_Lin worldRay(gp_Pnt(x, y, z), gp_Dir(dx, dy, dz));
-        std::optional<SurfaceHit> nearest;
-        for (const auto& visual : m_visuals)
-        {
-            if (!visual.visible || visual.shape.IsNull())
-                continue;
-            const auto cacheIt = m_pickCaches.find(visual.id);
-            if (cacheIt == m_pickCaches.end() || !cacheIt->second->surfaceIntersector)
-                continue;
-            auto& cache = *cacheIt->second;
-            const auto inverse = visual.placement.Inverted();
-            const gp_Lin localRay(worldRay.Location().Transformed(inverse),
-                                  worldRay.Direction().Transformed(inverse));
-            cache.surfaceIntersector->Perform(localRay, -1e15, 1e15);
-            for (int hitIndex = 1; hitIndex <= cache.surfaceIntersector->NbPnt(); ++hitIndex)
-            {
-                const auto worldPoint =
-                    cache.surfaceIntersector->Pnt(hitIndex).Transformed(visual.placement);
-                const double depth = gp_Vec(viewCamera->Eye(), worldPoint).Dot(cameraDirection);
-                if (depth < 0.0 || (nearest && depth >= nearest->depth))
-                    continue;
-                const int faceIndex = cache.faces.FindIndex(cache.surfaceIntersector->Face(hitIndex));
-                if (faceIndex > 0)
-                    nearest = SurfaceHit{visual.id, faceIndex, worldPoint, depth};
-            }
-        }
-        return nearest;
-    };
-
-    const auto cursorSurface = surfaceAt(pixel);
+    const auto cursorSurface = m_scenePicker.surfaceAt(view, pixel);
     const double depthSlack = std::max(1e-6, viewCamera->Scale() / std::max(1, height()));
     for (int index = 1; index <= selector->NbPicked(); ++index)
     {
@@ -505,7 +348,7 @@ AssemblyHit AssemblyViewport::hit(const QPointF& point)
                                       .Transformed(visual->placement);
                 else if (kind == TopAbs_EDGE)
                 {
-                    const auto edgeHit = closestDisplayedEdgePoint(
+                    const auto edgeHit = viewport::BRepScenePicker::closestDisplayedEdgePoint(
                         TopoDS::Edge(owner->Shape()), visual->placement, view, point,
                         devicePixelRatioF());
                     if (edgeHit)
@@ -528,8 +371,8 @@ AssemblyHit AssemblyViewport::hit(const QPointF& point)
                     gp_Vec(viewCamera->Eye(), entityPoint).Dot(cameraDirection);
                 if (kind == TopAbs_FACE)
                 {
-                    const bool isCursorFace = cursorSurface && cursorSurface->component == id &&
-                                              cursorSurface->face == subshapeIndex;
+                    const bool isCursorFace = cursorSurface && cursorSurface->id == id &&
+                                              cursorSurface->faceIndex == subshapeIndex;
                     if (cursorSurface && !isCursorFace &&
                         entityDepth > cursorSurface->depth + depthSlack)
                         continue;
@@ -540,11 +383,7 @@ AssemblyHit AssemblyViewport::hit(const QPointF& point)
                 {
                     if (cursorDistance > 8.0)
                         continue;
-                    int entityX, entityY;
-                    view->Convert(entityPoint.X(), entityPoint.Y(), entityPoint.Z(), entityX,
-                                  entityY);
-                    const auto surfaceAtEntity = surfaceAt(QPoint(entityX, entityY));
-                    if (surfaceAtEntity && entityDepth > surfaceAtEntity->depth + depthSlack)
+                    if (m_scenePicker.occludes(view, entityPoint, depthSlack))
                         continue;
                 }
 
@@ -555,7 +394,7 @@ AssemblyHit AssemblyViewport::hit(const QPointF& point)
     if (cursorSurface)
     {
         m_hitPoint = cursorSurface->point;
-        return {cursorSurface->component, cursorSurface->face, TopAbs_FACE, cursorSurface->point};
+        return {cursorSurface->id, cursorSurface->faceIndex, TopAbs_FACE, cursorSurface->point};
     }
     return {};
 }
@@ -590,7 +429,7 @@ gp_Pnt AssemblyViewport::cursorPoint(const QPointF& point) const
 {
     if (!isReady())
         return {};
-    const auto pixel = native(point);
+    const auto pixel = nativePosition(point);
     double x, y, z;
     m_graphics.view()->Convert(pixel.x(), pixel.y(), x, y, z);
     return {x, y, z};
@@ -599,7 +438,7 @@ gp_Pnt AssemblyViewport::cursorPointAtDepth(const QPointF& point, const gp_Pnt& 
 {
     if (!isReady())
         return {};
-    const auto pixel = native(point);
+    const auto pixel = nativePosition(point);
     double x, y, z, dx, dy, dz;
     m_graphics.view()->ConvertWithProj(pixel.x(), pixel.y(), x, y, z, dx, dy, dz);
     const gp_Pnt projected(x, y, z);
@@ -630,26 +469,13 @@ void AssemblyViewport::fitAll()
         return;
     }
     m_fitPending = false;
-    m_navigation.resetAnchor();
-    m_graphics.view()->FitAll(0.05, false);
-    m_graphics.view()->ZFitAll();
-    update();
+    fitScene(0.1);
 }
 void AssemblyViewport::standardView(int index)
 {
-    if (!isReady())
-        return;
-    const gp_Dir normals[]{gp_Dir(0, 0, 1), gp_Dir(0, 0, -1), gp_Dir(-1, 0, 0), gp_Dir(1, 0, 0),
-                           gp_Dir(0, 1, 0), gp_Dir(0, -1, 0), gp_Dir(1, 1, 1)};
     if (index < 0 || index > 6)
         return;
-    auto view = camera();
-    view->SetDirection(normals[index].Reversed());
-    view->SetUp(index == 4 ? gp_Dir(0, 0, -1) : index == 5 ? gp_Dir(0, 0, 1) : gp_Dir(0, 1, 0));
-    view->OrthogonalizeUp();
-    m_navigation.resetAnchor();
-    m_graphics.view()->ZFitAll();
-    update();
+    setStandardView(ViewportWidget::StandardView(index));
 }
 void AssemblyViewport::mousePressEvent(QMouseEvent* event)
 {
@@ -659,14 +485,8 @@ void AssemblyViewport::mousePressEvent(QMouseEvent* event)
     setFocus(Qt::MouseFocusReason);
     if (event->button() == Qt::MiddleButton && m_dragId.empty())
     {
-        auto pivot = camera()->Center();
-        (void)hit(event->position());
-        const auto selector = m_graphics.context()->MainSelector();
-        if (selector->NbPicked())
-            pivot = selector->PickedPoint(1);
-        m_navigation.begin(event->modifiers(), event->position(), native(event->position()), pivot,
-                           pivot);
-        grabMouse();
+        if (beginCameraNavigation(event))
+            return;
         event->accept();
         return;
     }
@@ -719,17 +539,14 @@ void AssemblyViewport::mouseMoveEvent(QMouseEvent* event)
 {
     if (!isReady())
         return;
-    if (m_navigation.mode() != viewport::CameraNavigation::Mode::None)
+    if (m_camera.mode() != viewport::CameraNavigation::Mode::None)
     {
-        m_navigation.move(m_graphics.view(), event->position(), native(event->position()), size(),
-                          {});
-        update();
+        moveCameraNavigation(event);
         return;
     }
-    if (m_touchpad.move(event,m_graphics.view(),size(),devicePixelRatioF(),
-        isActiveWindow() && m_dragId.empty(),[this,event]{return navigationPivot(event->position());}))
+    if (handleTouchpadPointerMove(event, isActiveWindow() && m_dragId.empty()))
     {
-        update();return;
+        return;
     }
     if (m_inserting)
     {
@@ -775,13 +592,8 @@ void AssemblyViewport::updateComponentDrag(const QPointF& position)
 }
 void AssemblyViewport::mouseReleaseEvent(QMouseEvent* event)
 {
-    if (event->button() == Qt::MiddleButton)
-    {
-        m_navigation.stop();
-        if (QWidget::mouseGrabber() == this)
-            releaseMouse();
+    if (endCameraNavigation(event))
         return;
-    }
     if (event->button() == m_dragButton && !m_dragId.empty())
     {
         const bool moved = m_dragMoved;
@@ -799,46 +611,25 @@ void AssemblyViewport::mouseReleaseEvent(QMouseEvent* event)
 void AssemblyViewport::wheelEvent(QWheelEvent* event)
 {
     if (!m_dragId.empty()) { event->accept(); return; }
-    if (!isReady())
-        return;
-    if (m_touchpad.wheel(event,m_graphics.view(),size(),devicePixelRatioF(),
-        [this,event]{return navigationPivot(event->position());},
-        [this](QPointF point,double factor){touchpadZoom(point,factor);}))
-    { update();return; }
-    if (!event->angleDelta().y()) return;
-    const double factor = std::pow(1.15, -event->angleDelta().y() / 120.0);
-    if (factor > 1)
-        viewport::CameraNavigation::zoom(m_graphics.view(), native(event->position()), factor,
-                                         cursorPoint(event->position()));
-    else
-        viewport::CameraNavigation::zoomCentered(m_graphics.view(), factor);
-    update();
-    event->accept();
+    handleWheelNavigation(event);
 }
 gp_Pnt AssemblyViewport::navigationPivot(const QPointF& position)
 {
     (void)hit(position);
-    const auto selector = m_graphics.context()->MainSelector();
-    return selector->NbPicked() ? selector->PickedPoint(1) : camera()->Center();
+    return m_hitPoint.value_or(camera()->Center());
 }
-void AssemblyViewport::touchpadZoom(QPointF position,double factor)
+gp_Pnt AssemblyViewport::zoomAnchor(const QPointF& position)
 {
-    if (factor>1) viewport::CameraNavigation::zoom(m_graphics.view(),native(position),factor,cursorPoint(position));
-    else viewport::CameraNavigation::zoomCentered(m_graphics.view(),factor);
+    (void)hit(position);
+    return m_hitPoint.value_or(camera()->Center());
+}
+bool AssemblyViewport::cameraNavigationAllowed() const
+{
+    return m_dragId.empty();
 }
 bool AssemblyViewport::event(QEvent* event)
 {
-    if (event->type()==QEvent::NativeGesture && isReady() && m_dragId.empty() &&
-        m_navigation.mode()==viewport::CameraNavigation::Mode::None &&
-        m_touchpad.gesture(static_cast<QNativeGestureEvent*>(event),m_graphics.view(),devicePixelRatioF(),
-            [this](QPointF point,double factor){touchpadZoom(point,factor);}))
-    {update();return true;}
-    if (event->type()==QEvent::Leave || event->type()==QEvent::FocusOut ||
-        event->type()==QEvent::WindowDeactivate || event->type()==QEvent::UngrabMouse ||
-        event->type()==QEvent::DevicePixelRatioChange || event->type()==QEvent::ScreenChangeInternal ||
-        event->type()==QEvent::KeyRelease || event->type()==QEvent::KeyPress)
-        m_touchpad.reset();
-    return QWidget::event(event);
+    return ViewportWidget::event(event);
 }
 void AssemblyViewport::keyPressEvent(QKeyEvent* event)
 {

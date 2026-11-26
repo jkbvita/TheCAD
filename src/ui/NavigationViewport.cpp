@@ -1,121 +1,135 @@
 #include "ui/CadViewport.h"
-#include <Graphic3d_Camera.hxx>
-#include <SelectMgr_ViewerSelector.hxx>
+
 #include <BRep_Tool.hxx>
 #include <BRepAdaptor_Surface.hxx>
+#include <Graphic3d_Camera.hxx>
+#include <QScopedValueRollback>
 #include <TopoDS.hxx>
 #include <gp_Trsf.hxx>
-#include <QMouseEvent>
-#include <QScopedValueRollback>
-#include <cmath>
 #include <algorithm>
-namespace thecad::ui {
-gp_Pnt CadViewport::navigationPivot(const QPointF& position){
-    const QScopedValueRollback<bool> editing(m_sketchEditing,false);
-    const auto candidates=selectionCandidates(position);
-    if(!candidates.empty()){
-        const auto& picked=candidates.front();if(picked.hit)return *picked.hit;if(picked.shape.ShapeType()==TopAbs_VERTEX)return BRep_Tool::Pnt(TopoDS::Vertex(picked.shape));
-        const auto selector=m_graphics.context()->MainSelector();for(int n=1;n<=selector->NbPicked();++n)if(!picked.owner.IsNull()&&selector->Picked(n)==picked.owner)return selector->PickedPoint(n);
+#include <cmath>
+
+namespace thecad::ui
+{
+gp_Pnt CadViewport::navigationPivot(const QPointF& position)
+{
+    const QScopedValueRollback<bool> editing(m_sketchEditing, false);
+    const auto candidates = selectionCandidates(position);
+    if (!candidates.empty())
+    {
+        const auto& picked = candidates.front();
+        if (picked.hit)
+            return *picked.hit;
+        if (picked.shape.ShapeType() == TopAbs_VERTEX)
+            return BRep_Tool::Pnt(TopoDS::Vertex(picked.shape));
+        const auto selector = m_graphics.context()->MainSelector();
+        for (int n = 1; n <= selector->NbPicked(); ++n)
+            if (!picked.owner.IsNull() && selector->Picked(n) == picked.owner)
+                return selector->PickedPoint(n);
     }
-    return m_camera.anchor().value_or(m_graphics.view()->Camera()->Center());
+    return m_camera.anchor().value_or(camera()->Center());
 }
-void CadViewport::beginNavigation(QMouseEvent* event){
-    if(m_pointDrag||m_dimensionDrag){event->accept();return;}
-    const auto mode=viewport::CameraNavigation::modeFor(event->modifiers());
-    const auto pivot=mode==Navigation::Orbit?navigationPivot(event->position()):gp_Pnt();
-    const auto zoomDepth=mode==Navigation::Zoom&&!m_graphics.view()->Camera()->IsOrthographic()?navigationPivot(event->position()):m_graphics.view()->Camera()->Center();
-    m_camera.begin(event->modifiers(),event->position(),nativePosition(event->position()),pivot,zoomDepth);
-    m_regionClickCandidate=false;m_planeClickCandidate=false;m_contextClick=false;previewCandidate({});resetSketchInference();setFocus(Qt::MouseFocusReason);grabMouse();setCursor(mode==Navigation::Pan?Qt::ClosedHandCursor:Qt::SizeAllCursor);event->accept();
-}
-void CadViewport::moveNavigation(QMouseEvent* event){
-    std::optional<gp_Pnt> depth;
-    if(m_camera.mode()==Navigation::Zoom&&m_sketchEditing&&m_sketch){
-        depth=m_graphics.view()->Camera()->Center();
-        if(const auto point=sketchPosition(m_camera.position()))depth=modeling::sketchPoint(*m_sketch,*point);
+
+gp_Pnt CadViewport::zoomAnchor(const QPointF& position)
+{
+    if (m_sketchEditing && m_sketch)
+        if (const auto point = sketchPosition(position))
+            return modeling::sketchPoint(*m_sketch, *point);
+    if (!camera()->IsOrthographic())
+    {
+        const auto candidates = selectionCandidates(position);
+        if (!candidates.empty() && candidates.front().hit)
+            return *candidates.front().hit;
     }
-    m_camera.move(m_graphics.view(),event->position(),nativePosition(event->position()),size(),depth);
-    m_cameraAnnotationsDirty=true;update();event->accept();
+    return camera()->Center();
 }
-void CadViewport::zoomToward(const QPointF& position,double factor){
-    if(!isReady())return;
-    auto depth=m_graphics.view()->Camera()->Center();
-    if(m_sketchEditing&&m_sketch){if(const auto point=sketchPosition(position))depth=modeling::sketchPoint(*m_sketch,*point);}
-    else if(!m_graphics.view()->Camera()->IsOrthographic()){
-        const auto candidates=selectionCandidates(position);if(!candidates.empty()&&candidates.front().hit)depth=*candidates.front().hit;
-    }
-    viewport::CameraNavigation::zoom(m_graphics.view(),nativePosition(position),factor,depth);
+
+bool CadViewport::cameraNavigationAllowed() const
+{
+    return !m_pointDrag && !m_dimensionDrag;
 }
-void CadViewport::touchpadZoom(QPointF position,double factor){
-    if(factor>1)zoomToward(position,factor);
-    else viewport::CameraNavigation::zoomCentered(m_graphics.view(),factor);
+
+void CadViewport::cameraViewChanged()
+{
+    m_cameraAnnotationsDirty = true;
 }
-void CadViewport::updateCameraAnnotations(){
-    if(!m_cameraAnnotationsDirty||!isReady())return;
-    m_cameraAnnotationsDirty=false;
-    if(!m_sketch)return;
-    const double unit=m_graphics.view()->Camera()->Scale()/std::max(1,height());
-    // Dimension text/geometry already lives on the sketch plane. Orbit/pan only
-    // changes its projection; rebuild pixel-sized arrows when zoom changes.
-    if(std::abs(unit-m_dimensions.unit())>std::abs(unit)*1e-10)
+
+void CadViewport::updateCameraAnnotations()
+{
+    if (!m_cameraAnnotationsDirty || !isReady())
+        return;
+    m_cameraAnnotationsDirty = false;
+    if (!m_sketch)
+        return;
+    const double unit = m_graphics.view()->Camera()->Scale() / std::max(1, height());
+    if (std::abs(unit - m_dimensions.unit()) > std::abs(unit) * 1e-10)
         updateConstraintPresentation(false);
     updateRelationPositions();
-}
-void CadViewport::setStandardView(StandardView orientation)
-{
-    if (!isReady()) return;
-    gp_Dir towardViewer(0, 0, 1);
-    gp_Dir up(0, 1, 0);
-    switch (orientation) {
-    case StandardView::Front: break;
-    case StandardView::Back: towardViewer = gp_Dir(0, 0, -1); break;
-    case StandardView::Left: towardViewer = gp_Dir(-1, 0, 0); break;
-    case StandardView::Right: towardViewer = gp_Dir(1, 0, 0); break;
-    case StandardView::Top: towardViewer = gp_Dir(0, 1, 0); up = gp_Dir(0, 0, -1); break;
-    case StandardView::Bottom: towardViewer = gp_Dir(0, -1, 0); up = gp_Dir(0, 0, 1); break;
-    case StandardView::Isometric: towardViewer = gp_Dir(1, 1, 1); break;
-    }
-    m_camera.resetAnchor();
-    const auto view = m_graphics.view();
-    const auto camera = view->Camera();
-    camera->SetDirection(towardViewer.Reversed());
-    camera->SetUp(up);
-    camera->OrthogonalizeUp();
-    view->ZFitAll();
-    m_cameraAnnotationsDirty = true;
-    update();
 }
 
 void CadViewport::prepareFeatureView(const std::optional<gp_Ax3>& profile)
 {
-    if (!isReady()) return;
-    const auto camera = m_graphics.view()->Camera();
+    if (!isReady())
+        return;
+    const auto cameraObject = camera();
     const gp_Ax3 frame = profile.value_or(gp_Ax3());
-    const auto direction = camera->Direction();
+    const auto direction = cameraObject->Direction();
     const double normalAlignment = std::abs(direction.Dot(frame.Direction()));
-    // A profile needs both its area and its depth visible. For features without
-    // a profile, leave arbitrary 3D views alone and only leave flat standard views.
     const bool needsAngle = profile ? normalAlignment > 0.95 || normalAlignment < 0.2
-        : std::max({normalAlignment, std::abs(direction.Dot(frame.XDirection())),
-                    std::abs(direction.Dot(frame.YDirection()))}) > 0.95;
-    if (!needsAngle) return;
+                                    : std::max({normalAlignment,
+                                                std::abs(direction.Dot(frame.XDirection())),
+                                                std::abs(direction.Dot(frame.YDirection()))}) > 0.95;
+    if (!needsAngle)
+        return;
     m_camera.resetAnchor();
     const gp_Dir towardViewer(gp_Vec(frame.XDirection()) + gp_Vec(frame.YDirection()) +
                               gp_Vec(frame.Direction()));
-    camera->SetDirection(towardViewer.Reversed());
-    camera->SetUp(frame.YDirection());
-    camera->OrthogonalizeUp();
+    cameraObject->SetDirection(towardViewer.Reversed());
+    cameraObject->SetUp(frame.YDirection());
+    cameraObject->OrthogonalizeUp();
     m_graphics.view()->ZFitAll();
-    m_cameraAnnotationsDirty = true;
+    cameraViewChanged();
     update();
 }
 
-void CadViewport::normalTo(){
-    if(!isReady())return;m_camera.resetAnchor();
-    if(m_sketch&&(m_sketchEditing||m_regionSelecting)){orientSketch();update();return;}
+void CadViewport::normalTo()
+{
+    if (!isReady())
+        return;
+    m_camera.resetAnchor();
+    if (m_sketch && (m_sketchEditing || m_regionSelecting))
+    {
+        orientSketch();
+        update();
+        return;
+    }
     std::optional<gp_Ax3> frame;
-    if(m_selectedPlane)frame=modeling::sketchAxes(*m_selectedPlane);
-    for(const auto& d:m_datums)if(d.id==m_selectedDatum&&d.geometry.kind==modeling::DatumKind::Plane)frame=d.geometry.frame;
-    if(m_selectedSolidFace>0){prepareBodyPicking();if(m_selectedSolidFace<=m_selectionFaces.Extent()){BRepAdaptor_Surface surface(TopoDS::Face(m_selectionFaces(m_selectedSolidFace)));if(surface.GetType()==GeomAbs_Plane)frame=modeling::planarFaceAxes(TopoDS::Face(m_selectionFaces(m_selectedSolidFace)));}}
-    if(frame){const auto n=frame->Direction(),u=frame->YDirection();const auto p=frame->Location();m_graphics.view()->SetAt(p.X(),p.Y(),p.Z());m_graphics.view()->SetProj(n.X(),n.Y(),n.Z());m_graphics.view()->SetUp(u.X(),u.Y(),u.Z());m_graphics.view()->Camera()->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);update();}
+    if (m_selectedPlane)
+        frame = modeling::sketchAxes(*m_selectedPlane);
+    for (const auto& datum : m_datums)
+        if (datum.id == m_selectedDatum && datum.geometry.kind == modeling::DatumKind::Plane)
+            frame = datum.geometry.frame;
+    if (m_selectedSolidFace > 0)
+    {
+        prepareBodyPicking();
+        if (m_selectedSolidFace <= m_selectionFaces.Extent())
+        {
+            BRepAdaptor_Surface surface(TopoDS::Face(m_selectionFaces(m_selectedSolidFace)));
+            if (surface.GetType() == GeomAbs_Plane)
+                frame = modeling::planarFaceAxes(TopoDS::Face(m_selectionFaces(m_selectedSolidFace)));
+        }
+    }
+    if (frame)
+    {
+        const auto normal = frame->Direction();
+        const auto up = frame->YDirection();
+        const auto location = frame->Location();
+        m_graphics.view()->SetAt(location.X(), location.Y(), location.Z());
+        m_graphics.view()->SetProj(normal.X(), normal.Y(), normal.Z());
+        m_graphics.view()->SetUp(up.X(), up.Y(), up.Z());
+        camera()->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);
+        cameraViewChanged();
+        update();
+    }
 }
-}
+} // namespace thecad::ui
