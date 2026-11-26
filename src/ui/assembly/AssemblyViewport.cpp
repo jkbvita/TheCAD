@@ -7,26 +7,90 @@
 #include "presentation/SolidPresentation.h"
 #include "presentation/SelectionAppearance.h"
 #include <AIS_Shape.hxx>
+#include <BRep_Tool.hxx>
 #include <BRepBndLib.hxx>
 #include <Bnd_Box.hxx>
 #include <Graphic3d_Camera.hxx>
+#include <IntCurvesFace_ShapeIntersector.hxx>
+#include <Poly_PolygonOnTriangulation.hxx>
+#include <Poly_Triangulation.hxx>
+#include <Precision.hxx>
 #include <SelectMgr_ViewerSelector.hxx>
 #include <StdSelect_BRepOwner.hxx>
 #include <Standard_Failure.hxx>
+#include <Standard_Real.hxx>
 #include <TopExp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopLoc_Location.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Edge.hxx>
+#include <TopoDS_Vertex.hxx>
 #include <QApplication>
 #include <QKeyEvent>
+#include <QLineF>
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace thecad::ui
 {
 namespace
 {
+struct EdgeScreenHit
+{
+    gp_Pnt point;
+    double distance = std::numeric_limits<double>::infinity();
+};
+
+std::optional<EdgeScreenHit> closestDisplayedEdgePoint(const TopoDS_Edge& edge,
+                                                        const gp_Trsf& placement,
+                                                        const Handle(V3d_View)& view,
+                                                        const QPointF& cursor, double ratio)
+{
+    Handle(Poly_PolygonOnTriangulation) polygon;
+    Handle(Poly_Triangulation) triangulation;
+    TopLoc_Location location;
+    BRep_Tool::PolygonOnTriangulation(edge, polygon, triangulation, location);
+    if (polygon.IsNull() || triangulation.IsNull() || polygon->NbNodes() < 2)
+        return {};
+
+    const auto project = [&](const gp_Pnt& point) {
+        int x, y;
+        view->Convert(point.X(), point.Y(), point.Z(), x, y);
+        return QPointF(x / ratio, y / ratio);
+    };
+    const auto toWorld = [&](const gp_Pnt& point) {
+        return point.Transformed(location.Transformation()).Transformed(placement);
+    };
+
+    const auto& nodes = polygon->Nodes();
+    auto a = toWorld(triangulation->Node(nodes.First()));
+    auto screenA = project(a);
+    EdgeScreenHit best;
+    for (int i = nodes.Lower() + 1; i <= nodes.Upper(); ++i)
+    {
+        const auto b = toWorld(triangulation->Node(nodes(i)));
+        const auto screenB = project(b);
+        const auto segment = screenB - screenA;
+        const double lengthSquared = QPointF::dotProduct(segment, segment);
+        const double t = lengthSquared > 0
+                             ? std::clamp(QPointF::dotProduct(cursor - screenA, segment) /
+                                              lengthSquared,
+                                          0.0, 1.0)
+                             : 0.0;
+        const double distance = QLineF(cursor, screenA + segment * t).length();
+        if (distance < best.distance)
+        {
+            best = {a.Translated(gp_Vec(a, b) * t), distance};
+        }
+        a = b;
+        screenA = screenB;
+    }
+    return std::isfinite(best.distance) ? std::optional<EdgeScreenHit>(best) : std::nullopt;
+}
+
 bool samePose(const gp_Trsf& a, const gp_Trsf& b)
 {
     for (int r = 1; r <= 3; ++r)
@@ -36,6 +100,14 @@ bool samePose(const gp_Trsf& a, const gp_Trsf& b)
     return true;
 }
 } // namespace
+
+struct AssemblyViewport::PickCache
+{
+    TopoDS_Shape shape;
+    TopTools_IndexedMapOfShape faces;
+    std::unique_ptr<IntCurvesFace_ShapeIntersector> surfaceIntersector;
+};
+
 AssemblyViewport::AssemblyViewport(QWidget* parent) : QWidget(parent)
 {
     setObjectName("assemblyViewport");
@@ -50,6 +122,7 @@ AssemblyViewport::AssemblyViewport(QWidget* parent) : QWidget(parent)
     connect(&NavigationInputSettings::instance(), &NavigationInputSettings::changed, this,
             [this]{m_touchpad.reset();});
 }
+AssemblyViewport::~AssemblyViewport() = default;
 QPoint AssemblyViewport::native(const QPointF& point) const
 {
     return {qRound(point.x() * devicePixelRatioF()), qRound(point.y() * devicePixelRatioF())};
@@ -132,6 +205,37 @@ void AssemblyViewport::setComponents(const std::vector<AssemblyVisual>& visuals)
         return;
     if (unchanged)
         return;
+
+    for (auto it = m_pickCaches.begin(); it != m_pickCaches.end();)
+    {
+        const auto visual = std::find_if(visuals.begin(), visuals.end(), [&](const auto& value) {
+            return value.id == it->first && !value.shape.IsNull() &&
+                   value.shape.IsSame(it->second->shape);
+        });
+        if (visual == visuals.end())
+            it = m_pickCaches.erase(it);
+        else
+            ++it;
+    }
+    for (const auto& visual : visuals)
+    {
+        if (visual.shape.IsNull())
+            continue;
+        auto found = m_pickCaches.find(visual.id);
+        if (found != m_pickCaches.end() && found->second->shape.IsSame(visual.shape))
+            continue;
+
+        auto cache = std::make_unique<PickCache>();
+        cache->shape = visual.shape;
+        TopExp::MapShapes(visual.shape, TopAbs_FACE, cache->faces);
+        if (cache->faces.Extent() > 0)
+        {
+            cache->surfaceIntersector = std::make_unique<IntCurvesFace_ShapeIntersector>();
+            cache->surfaceIntersector->Load(visual.shape, Precision::Confusion());
+        }
+        m_pickCaches[visual.id] = std::move(cache);
+    }
+
     const auto context = m_graphics.context();
     if (!m_hover.IsNull())
         context->Remove(m_hover, false);
@@ -320,26 +424,138 @@ AssemblyHit AssemblyViewport::hit(const QPointF& point)
         selector->SetPixelTolerance(tolerance + 1);
         selector->SetPixelTolerance(tolerance);
     }
-    selector->SetPickClosest(false);
-    selector->SetDepthTolerance(SelectMgr_TypeOfDepthTolerance_UniformPixels,
-                                8 * devicePixelRatioF());
+    // Keep the screen-space tolerance for usability, but let real depth decide
+    // which overlapping component is in front. A pixel-based depth allowance
+    // made rear edges compete with visible faces as if they were coplanar.
+    selector->SetPickClosest(true);
+    selector->SetDepthTolerance(SelectMgr_TypeOfDepthTolerance_SensitivityFactor, 0.0);
     selector->Pick(pixel.x(), pixel.y(), m_graphics.view());
+
+    struct SurfaceHit
+    {
+        std::string component;
+        int face = 0;
+        gp_Pnt point;
+        double depth = std::numeric_limits<double>::infinity();
+    };
+    const auto view = m_graphics.view();
+    const auto viewCamera = camera();
+    const gp_Vec cameraDirection(viewCamera->Direction());
+    const auto surfaceAt = [&](const QPoint& sample) -> std::optional<SurfaceHit> {
+        double x, y, z, dx, dy, dz;
+        view->ConvertWithProj(sample.x(), sample.y(), x, y, z, dx, dy, dz);
+        const gp_Lin worldRay(gp_Pnt(x, y, z), gp_Dir(dx, dy, dz));
+        std::optional<SurfaceHit> nearest;
+        for (const auto& visual : m_visuals)
+        {
+            if (!visual.visible || visual.shape.IsNull())
+                continue;
+            const auto cacheIt = m_pickCaches.find(visual.id);
+            if (cacheIt == m_pickCaches.end() || !cacheIt->second->surfaceIntersector)
+                continue;
+            auto& cache = *cacheIt->second;
+            const auto inverse = visual.placement.Inverted();
+            const gp_Lin localRay(worldRay.Location().Transformed(inverse),
+                                  worldRay.Direction().Transformed(inverse));
+            cache.surfaceIntersector->Perform(localRay, -1e15, 1e15);
+            for (int hitIndex = 1; hitIndex <= cache.surfaceIntersector->NbPnt(); ++hitIndex)
+            {
+                const auto worldPoint =
+                    cache.surfaceIntersector->Pnt(hitIndex).Transformed(visual.placement);
+                const double depth = gp_Vec(viewCamera->Eye(), worldPoint).Dot(cameraDirection);
+                if (depth < 0.0 || (nearest && depth >= nearest->depth))
+                    continue;
+                const int faceIndex = cache.faces.FindIndex(cache.surfaceIntersector->Face(hitIndex));
+                if (faceIndex > 0)
+                    nearest = SurfaceHit{visual.id, faceIndex, worldPoint, depth};
+            }
+        }
+        return nearest;
+    };
+
+    const auto cursorSurface = surfaceAt(pixel);
+    const double depthSlack = std::max(1e-6, viewCamera->Scale() / std::max(1, height()));
     for (int index = 1; index <= selector->NbPicked(); ++index)
     {
         const auto owner = Handle(StdSelect_BRepOwner)::DownCast(selector->Picked(index));
-        if (owner.IsNull())
+        if (owner.IsNull() || !owner->HasShape())
             continue;
         for (const auto& [id, item] : m_presentations)
             if (owner->Selectable() == item && m_graphics.context()->IsDisplayed(item))
             {
-                TopTools_IndexedMapOfShape faces;
                 const auto kind = owner->Shape().ShapeType();
                 if (kind != TopAbs_VERTEX && kind != TopAbs_EDGE && kind != TopAbs_FACE)
                     continue;
-                TopExp::MapShapes(item->Shape(), kind, faces);
-                m_hitPoint = selector->PickedPoint(index);
-                return {id, faces.FindIndex(owner->Shape()), kind};
+                TopTools_IndexedMapOfShape subshapes;
+                TopExp::MapShapes(item->Shape(), kind, subshapes);
+                const int subshapeIndex = subshapes.FindIndex(owner->Shape());
+                if (subshapeIndex <= 0)
+                    continue;
+                const auto visual = std::find_if(m_visuals.begin(), m_visuals.end(),
+                                                 [&](const auto& value) {
+                                                     return value.id == id && value.visible;
+                                                 });
+                if (visual == m_visuals.end())
+                    continue;
+
+                gp_Pnt entityPoint = selector->PickedPoint(index);
+                double cursorDistance = 0.0;
+                if (kind == TopAbs_VERTEX)
+                    entityPoint = BRep_Tool::Pnt(TopoDS::Vertex(owner->Shape()))
+                                      .Transformed(visual->placement);
+                else if (kind == TopAbs_EDGE)
+                {
+                    const auto edgeHit = closestDisplayedEdgePoint(
+                        TopoDS::Edge(owner->Shape()), visual->placement, view, point,
+                        devicePixelRatioF());
+                    if (edgeHit)
+                    {
+                        entityPoint = edgeHit->point;
+                        cursorDistance = edgeHit->distance;
+                    }
+                    else
+                    {
+                        int entityX, entityY;
+                        view->Convert(entityPoint.X(), entityPoint.Y(), entityPoint.Z(), entityX,
+                                      entityY);
+                        cursorDistance = QLineF(
+                            point, QPointF(entityX / devicePixelRatioF(),
+                                           entityY / devicePixelRatioF())).length();
+                    }
+                }
+
+                const double entityDepth =
+                    gp_Vec(viewCamera->Eye(), entityPoint).Dot(cameraDirection);
+                if (kind == TopAbs_FACE)
+                {
+                    const bool isCursorFace = cursorSurface && cursorSurface->component == id &&
+                                              cursorSurface->face == subshapeIndex;
+                    if (cursorSurface && !isCursorFace &&
+                        entityDepth > cursorSurface->depth + depthSlack)
+                        continue;
+                    if (isCursorFace)
+                        entityPoint = cursorSurface->point;
+                }
+                else
+                {
+                    if (cursorDistance > 8.0)
+                        continue;
+                    int entityX, entityY;
+                    view->Convert(entityPoint.X(), entityPoint.Y(), entityPoint.Z(), entityX,
+                                  entityY);
+                    const auto surfaceAtEntity = surfaceAt(QPoint(entityX, entityY));
+                    if (surfaceAtEntity && entityDepth > surfaceAtEntity->depth + depthSlack)
+                        continue;
+                }
+
+                m_hitPoint = entityPoint;
+                return {id, subshapeIndex, kind};
             }
+    }
+    if (cursorSurface)
+    {
+        m_hitPoint = cursorSurface->point;
+        return {cursorSurface->component, cursorSurface->face, TopAbs_FACE, cursorSurface->point};
     }
     return {};
 }

@@ -7,6 +7,7 @@
 #include <gp_Trsf.hxx>
 #include <gp_Quaternion.hxx>
 #include <map>
+#include <memory>
 #include <optional>
 #include <vector>
 namespace thecad::ui
@@ -32,6 +33,7 @@ class AssemblyViewport final : public QWidget
     Q_OBJECT
 public:
     explicit AssemblyViewport(QWidget* parent = nullptr);
+    ~AssemblyViewport() override;
     bool isReady() const { return m_graphics.ready(); }
     QString initializationError() const { return m_error; }
     void setComponents(const std::vector<AssemblyVisual>& visuals);
@@ -76,6 +78,7 @@ protected:
 private:
     friend class TouchpadNavigationTest;
     friend class AssemblyWorkflowTest;
+    struct PickCache;
     void initialize();
     QPoint native(const QPointF& point) const;
     AssemblyHit hit(const QPointF& point);
@@ -92,6 +95,7 @@ private:
     void touchpadZoom(QPointF position, double factor);
     std::vector<AssemblyVisual> m_visuals;
     std::map<std::string, Handle(AIS_Shape)> m_presentations;
+    std::map<std::string, std::unique_ptr<PickCache>> m_pickCaches;
     Handle(AIS_Shape) m_highlight, m_hover;
     std::vector<Handle(AIS_Shape)> m_references;
     std::vector<AssemblyVisual> m_referenceVisuals;

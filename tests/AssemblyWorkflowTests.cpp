@@ -28,6 +28,7 @@
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
 #include <QTabBar>
+#include <BRepPrimAPI_MakeBox.hxx>
 #include <cmath>
 
 namespace thecad::ui
@@ -125,6 +126,33 @@ class AssemblyWorkflowTest final : public QObject
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     }
 private slots:
+    void assemblyPickingKeepsOccludedRearEdgesBehindFrontFaces()
+    {
+        AssemblyViewport viewport;
+        viewport.resize(800, 600);
+        viewport.show();
+        QTRY_VERIFY(viewport.isReady());
+
+        const auto frontPlate = BRepPrimAPI_MakeBox(100, 100, 10).Shape();
+        const auto rearBlock = BRepPrimAPI_MakeBox(20, 20, 20).Shape();
+        gp_Trsf rearPlacement;
+        rearPlacement.SetTranslation(gp_Vec(40, 40, -30));
+        viewport.setComponents({{"front", frontPlate, gp_Trsf(), true, false, false, false, false},
+                                {"rear", rearBlock, rearPlacement, true, false, false, false,
+                                 false}});
+        viewport.standardView(0);
+        viewport.fitAll();
+        QApplication::processEvents();
+
+        // This is on a rear-component edge, but its screen ray passes through
+        // the middle of the visible plate face. The face must win selection.
+        const auto cursor = viewport.project(gp_Pnt(40, 50, -10));
+        const auto selected = viewport.hit(cursor);
+        QCOMPARE(selected.first, std::string("front"));
+        QCOMPARE(selected.kind, TopAbs_FACE);
+        QVERIFY(selected.second > 0);
+    }
+
     void assemblyUsesPartWorkspaceAppearance()
     {
         QTemporaryDir folder;const auto path=folder.filePath("part.thepart");document::PartDocument::createBox({20,30,40}).save(path);
