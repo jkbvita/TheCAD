@@ -16,6 +16,7 @@
 #include "modeling/Selection.h"
 #include <QPointer>
 #include <array>
+#include <IntCurvesFace_ShapeIntersector.hxx>
 #include <AIS_TextLabel.hxx>
 #include <AIS_Point.hxx>
 #include <AIS_Trihedron.hxx>
@@ -215,6 +216,8 @@ private:
     void prepareBodyPicking();
     std::uint64_t m_pickCacheGeneration=~std::uint64_t(0);
     TopTools_IndexedMapOfShape m_selectionFaces,m_selectionEdges,m_selectionVertices,m_selectionBodies;
+    IntCurvesFace_ShapeIntersector m_bodySurfaceIntersector;
+    bool m_bodySurfaceIntersectorReady=false;
     std::set<int> m_seamEdges,m_artificialVertices;
     std::vector<modeling::SelectionCandidate> sketchEntityCandidates(const QPointF&) const;
     modeling::SelectionPolicy m_selectionPolicy;

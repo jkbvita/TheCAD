@@ -114,7 +114,7 @@ void CadViewport::setSelectionFilters(std::uint32_t filters,bool enabled){
 void CadViewport::invalidateBodySelection(){
     m_treeFeatureFaces.clear();
     if(isReady())for(auto& item:m_selectionPresentations)m_graphics.context()->Remove(item,Standard_False);m_selectionPresentations.clear();
-    ++m_shapeGeneration;m_selection.invalidateTopology(m_shapeGeneration);m_nativeSelections.clear();m_selectedSolidFace=0;
+    ++m_shapeGeneration;m_selection.invalidateTopology(m_shapeGeneration);m_nativeSelections.clear();m_selectedSolidFace=0;m_bodySurfaceIntersectorReady=false;
     if(isReady())m_graphics.context()->ClearSelected(Standard_False);
     previewCandidate({});if(m_selectOtherMenu)m_selectOtherMenu->close();
 }
@@ -122,6 +122,7 @@ void CadViewport::prepareBodyPicking(){
     if(m_pickCacheGeneration==m_shapeGeneration)return;m_pickCacheGeneration=m_shapeGeneration;
     m_selectionFaces.Clear();m_selectionEdges.Clear();m_selectionVertices.Clear();m_selectionBodies.Clear();m_seamEdges.clear();m_artificialVertices.clear();
     if(m_shape.IsNull())return;
+    m_bodySurfaceIntersector.Load(m_shape,1e-7);m_bodySurfaceIntersectorReady=true;
     TopExp::MapShapes(m_shape,TopAbs_FACE,m_selectionFaces);TopExp::MapShapes(m_shape,TopAbs_EDGE,m_selectionEdges);TopExp::MapShapes(m_shape,TopAbs_VERTEX,m_selectionVertices);TopExp::MapShapes(m_shape,TopAbs_SOLID,m_selectionBodies);
     TopTools_IndexedDataMapOfShapeListOfShape edgeFaces,vertexEdges;
     TopExp::MapShapesAndAncestors(m_shape,TopAbs_EDGE,TopAbs_FACE,edgeFaces);TopExp::MapShapesAndAncestors(m_shape,TopAbs_VERTEX,TopAbs_EDGE,vertexEdges);
@@ -169,22 +170,19 @@ std::vector<CadViewport::PickCandidate> CadViewport::selectionCandidates(const Q
             if(selector->CustomPixelTolerance()!=width){selector->SetPixelTolerance(width+1);selector->SetPixelTolerance(width);}
             selector->Pick(pixel.x(),pixel.y(),m_graphics.view());
             struct BodySurfaceHit {TopoDS_Face face;gp_Pnt point;double depth=1e100;int faceIndex=0;};
-            IntCurvesFace_ShapeIntersector bodyIntersector;
-            const bool hasSelectorHits=selector->NbPicked()>0;
-            if(hasSelectorHits)bodyIntersector.Load(m_shape,1e-7);
             const gp_Pnt cameraEye=m_graphics.view()->Camera()->Eye();
             const gp_Vec cameraDirection(m_graphics.view()->Camera()->Direction());
             const auto bodySurfaceAt=[&](const QPoint& samplePixel)->std::optional<BodySurfaceHit>{
-                if(!hasSelectorHits)return {};
+                if(!m_bodySurfaceIntersectorReady)return {};
                 double x,y,z,dx,dy,dz;
                 m_graphics.view()->ConvertWithProj(samplePixel.x(),samplePixel.y(),x,y,z,dx,dy,dz);
-                bodyIntersector.Perform(gp_Lin(gp_Pnt(x,y,z),gp_Dir(dx,dy,dz)),-1e15,1e15);
+                m_bodySurfaceIntersector.Perform(gp_Lin(gp_Pnt(x,y,z),gp_Dir(dx,dy,dz)),-1e15,1e15);
                 BodySurfaceHit nearest;
-                for(int i=1;i<=bodyIntersector.NbPnt();++i){
-                    const auto& point=bodyIntersector.Pnt(i);
+                for(int i=1;i<=m_bodySurfaceIntersector.NbPnt();++i){
+                    const auto& point=m_bodySurfaceIntersector.Pnt(i);
                     const double depth=gp_Vec(cameraEye,point).Dot(cameraDirection);
                     if(depth<0||depth>=nearest.depth)continue;
-                    nearest={bodyIntersector.Face(i),point,depth,m_selectionFaces.FindIndex(bodyIntersector.Face(i))};
+                    nearest={m_bodySurfaceIntersector.Face(i),point,depth,m_selectionFaces.FindIndex(m_bodySurfaceIntersector.Face(i))};
                 }
                 return nearest.faceIndex>0?std::optional<BodySurfaceHit>(nearest):std::nullopt;
             };
