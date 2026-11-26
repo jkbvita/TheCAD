@@ -8,6 +8,7 @@
 #include <Graphic3d_ZLayerId.hxx>
 #include <Prs3d_PointAspect.hxx>
 #include <Poly_PolygonOnTriangulation.hxx>
+#include <SelectMgr_IndexedMapOfOwner.hxx>
 #include <SelectMgr_ViewerSelector.hxx>
 #include <StdSelect_BRepOwner.hxx>
 #include <TopExp.hxx>
@@ -207,9 +208,55 @@ std::vector<CadViewport::PickCandidate> CadViewport::selectionCandidates(const Q
                 frontDepth=std::min(frontDepth,depth);
                 append({{kind,m_bodyFeatureId,{},modeling::PointRole::First,index,m_shapeGeneration},distance,depth},shape,owner,hit);
             }
+            // If OCCT reported only a rear edge (or a face whose reported
+            // point lies behind that edge), resolve the actual front surface
+            // at this pixel against the complete BRep. Sensitive face
+            // triangulations can have holes or stale samples, so the viewer
+            // selector alone is not sufficient to determine body occlusion.
+            const double slack=std::max(1e-6,m_graphics.view()->Camera()->Scale()/std::max(1,height())*2.0);
+            double nearestBodyDepth=1e100,nearestBodyFaceDepth=1e100;
+            for(const auto& candidate:candidates){
+                const auto& reference=candidate.value.reference;
+                if(reference.featureId!=m_bodyFeatureId||!modeling::isTopology(reference.kind))continue;
+                nearestBodyDepth=std::min(nearestBodyDepth,candidate.value.depth);
+                if(reference.kind==SelectionKind::Face)
+                    nearestBodyFaceDepth=std::min(nearestBodyFaceDepth,candidate.value.depth);
+            }
+            if(nearestBodyDepth<1e99&&nearestBodyFaceDepth>nearestBodyDepth+slack){
+                double x,y,z,dx,dy,dz;
+                m_graphics.view()->ConvertWithProj(pixel.x(),pixel.y(),x,y,z,dx,dy,dz);
+                IntCurvesFace_ShapeIntersector intersection;
+                intersection.Load(m_shape,1e-7);
+                intersection.Perform(gp_Lin(gp_Pnt(x,y,z),gp_Dir(dx,dy,dz)),-1e15,1e15);
+                double nearest=1e100;
+                TopoDS_Face frontFace;
+                gp_Pnt frontPoint;
+                for(int k=1;k<=intersection.NbPnt();++k){
+                    const double depth=gp_Vec(m_graphics.view()->Camera()->Eye(),intersection.Pnt(k))
+                                           .Dot(gp_Vec(m_graphics.view()->Camera()->Direction()));
+                    if(depth<0||depth>=nearest)continue;
+                    nearest=depth;
+                    frontFace=intersection.Face(k);
+                    frontPoint=intersection.Pnt(k);
+                }
+                const int faceIndex=frontFace.IsNull()?0:m_selectionFaces.FindIndex(frontFace);
+                if(faceIndex>0){
+                    const modeling::SelectionRef reference{SelectionKind::Face,m_bodyFeatureId,{},
+                        modeling::PointRole::First,faceIndex,m_shapeGeneration};
+                    const double depth=nearest;
+                    const PickCandidate frontCandidate{
+                        {{SelectionKind::Face,m_bodyFeatureId,{},modeling::PointRole::First,faceIndex,m_shapeGeneration},0,depth},
+                        frontFace,{},frontPoint};
+                    const auto existing=std::find_if(candidates.begin(),candidates.end(),[&](const auto& candidate){
+                        return candidate.value.reference==reference;
+                    });
+                    if(existing==candidates.end())candidates.push_back(frontCandidate);
+                    else *existing=frontCandidate;
+                    frontDepth=std::min(frontDepth,depth);
+                }
+            }
             // Tiny depth slack permits shared front edges/vertices. Back edges
             // remain unavailable on normal clicks even with an edge-only filter.
-            const double slack=std::max(1e-6,m_graphics.view()->Camera()->Scale()/std::max(1,height())*2.0);
             for(auto& candidate:candidates)candidate.value.occluded=candidate.value.depth>frontDepth+slack;
         }
         if((!m_sketchEditing || m_measurePicking) && !m_referenceCandidateKind){
@@ -313,6 +360,18 @@ void CadViewport::selectCandidate(const PickCandidate& item,bool toggle,bool dir
     const QScopedValueRollback<bool> dispatch(m_dispatchingSelection,true);
     const auto& ref=item.value.reference;
     if(modeling::isTopology(ref.kind)&&ref.generation!=m_shapeGeneration)return;
+    auto resolvedItem=item;
+    if(resolvedItem.owner.IsNull()&&ref.kind==SelectionKind::Face&&!resolvedItem.shape.IsNull()){
+        Handle(SelectMgr_IndexedMapOfOwner) faceOwners;
+        m_graphics.context()->EntityOwners(faceOwners,m_presentation,AIS_Shape::SelectionMode(TopAbs_FACE));
+        if(!faceOwners.IsNull())for(int i=1;i<=faceOwners->Extent();++i){
+            const auto owner=Handle(StdSelect_BRepOwner)::DownCast(faceOwners->FindKey(i));
+            if(!owner.IsNull()&&owner->HasShape()&&owner->Shape().IsSame(resolvedItem.shape)){
+                resolvedItem.owner=owner;
+                break;
+            }
+        }
+    }
     m_treeBodySelected=false; m_treeFeatureFaces.clear();
     if (m_measurePicking)
     {
@@ -338,7 +397,7 @@ void CadViewport::selectCandidate(const PickCandidate& item,bool toggle,bool dir
         updatePointPresentation();updateConstraintPresentation();
     }
     if(!toggle)m_nativeSelections.clear();m_selection.select(ref,toggle);
-    if(!item.owner.IsNull()&&std::none_of(m_nativeSelections.begin(),m_nativeSelections.end(),[&](const auto& c){return c.value.reference==ref;}))m_nativeSelections.push_back(item);
+    if(!resolvedItem.owner.IsNull()&&std::none_of(m_nativeSelections.begin(),m_nativeSelections.end(),[&](const auto& c){return c.value.reference==ref;}))m_nativeSelections.push_back(resolvedItem);
     m_selectedSolidFace=0;m_selectedDatum.clear();m_selectedPlane.reset();
     for(const auto& selected:m_selection.items()){
         if(selected.kind==SelectionKind::ReferencePlane||selected.kind==SelectionKind::ReferenceAxis||selected.kind==SelectionKind::ReferencePoint)m_selectedDatum=selected.featureId;
