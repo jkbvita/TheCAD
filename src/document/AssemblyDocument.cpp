@@ -71,6 +71,7 @@ AssemblyDocument AssemblyDocument::load(const QString& path)
 void AssemblyDocument::save(const QString& path) const
 {
     AssemblyFileStore::save(*this, path);
+    m_ownerPath = QFileInfo(path).absoluteFilePath();
 }
 AssemblyComponent AssemblyDocument::loadSource(const QString& source)
 {
@@ -584,6 +585,13 @@ void AssemblyDocument::reloadSources()
     {
         if (!c.embeddedPart.isEmpty())
             continue;
+        QFile sourceFile(c.path);
+        require(sourceFile.open(QIODevice::ReadOnly),
+                "Cannot read component part: " + c.path.toStdString());
+        const auto currentDigest = QCryptographicHash::hash(sourceFile.readAll(), QCryptographicHash::Sha256).toHex();
+        sourceFile.close();
+        if (QString::fromLatin1(currentDigest) == c.digest)
+            continue; // Preserve the current in-memory definition when another linked part changes.
         auto found = cache.find(c.path.toCaseFolded());
         if (found == cache.end())
             found = cache.emplace(c.path.toCaseFolded(), loadSource(c.path)).first;

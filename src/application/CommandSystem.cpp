@@ -23,6 +23,10 @@ std::string validateParameters(const CommandDescriptor& descriptor, const Comman
              std::holds_alternative<std::string>(value)) ||
             (parameter->type == ParameterType::Reference && std::holds_alternative<modeling::SelectionRef>(value)) ||
             (parameter->type == ParameterType::Regions && std::holds_alternative<modeling::RegionReferences>(value)) ||
+            (parameter->type == ParameterType::References && std::holds_alternative<std::vector<std::string>>(value) &&
+             std::all_of(std::get<std::vector<std::string>>(value).begin(),
+                         std::get<std::vector<std::string>>(value).end(),
+                         [](const auto& id) { return !id.empty() && id.size() <= 512; })) ||
             (parameter->type == ParameterType::DatumDefinition && std::holds_alternative<modeling::DatumDefinition>(value));
         if (!valid) return "Invalid parameter type or value: " + name;
     }
@@ -211,6 +215,10 @@ void registerBuiltInCommands(CommandRegistry& registry) {
         add((std::string("sketch.") + tool).c_str(), tool, "Sketch", sketch, true);
     for (const char* modifier : {"trim", "extend", "split", "convert", "offset", "mirror", "linear_pattern", "circular_pattern", "relations", "construction"})
         add((std::string("sketch.") + modifier).c_str(), modifier, "Sketch", sketch, true);
+    add("sketch.external_reference", "External Sketch Reference", "Sketch", sketch, true,
+        {{"sources", ParameterType::References, false}, {"associative", ParameterType::Boolean, false}});
+    add("sketch.break_external_reference", "Break External Sketch Reference", "Sketch", sketch, false,
+        {{"sketch", ParameterType::FeatureId, true}, {"entity", ParameterType::FeatureId, true}});
     add("feature.extrude", "Extruded Boss/Base", "Feature", partSketch, true, {{"depth", ParameterType::Length, false}, {"sketch", ParameterType::FeatureId, false}, {"regions", ParameterType::Regions, false}});
     add("feature.extruded_cut", "Extruded Cut", "Feature", partSketch, true, {{"depth", ParameterType::Length, false}, {"sketch", ParameterType::FeatureId, false}, {"regions", ParameterType::Regions, false}});
     for (const char* feature : {"revolve", "revolved_cut", "sweep", "swept_cut", "fillet", "chamfer", "linear_pattern", "circular_pattern", "mirror"})

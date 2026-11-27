@@ -66,6 +66,19 @@ const Sketch::Projection* sketchProjection(const Sketch& sketch, const std::stri
     return found == sketch.projections.end() ? nullptr : &*found;
 }
 
+const ExternalSketchReference* externalSketchProjection(const Sketch& sketch,
+                                                         const std::string& entityId)
+{
+    const auto found = std::find_if(sketch.externalReferences.begin(), sketch.externalReferences.end(),
+                                    [&](const auto& link) { return link.entityId == entityId; });
+    return found == sketch.externalReferences.end() ? nullptr : &*found;
+}
+
+bool isSketchProjection(const Sketch& sketch, const std::string& entityId)
+{
+    return sketchProjection(sketch, entityId) || externalSketchProjection(sketch, entityId);
+}
+
 std::string useSketchProjection(Sketch& sketch, const SketchProjection& option, bool construction)
 {
     for (const auto& link : sketch.projections)
@@ -88,6 +101,60 @@ std::string useSketchProjection(Sketch& sketch, const SketchProjection& option, 
     return link.entityId;
 }
 
+std::string useExternalSketchProjection(Sketch& sketch, SketchEntity geometry,
+                                        ExternalSketchReference reference)
+{
+    for (const auto& link : sketch.externalReferences)
+        if (link.associative == reference.associative && link.componentId == reference.componentId &&
+            link.sourceKind == reference.sourceKind && link.sourceFeatureId == reference.sourceFeatureId &&
+            link.sourceEntityId == reference.sourceEntityId && link.role == reference.role)
+            return link.entityId;
+    require(sketch.entities.size() < 1000, "The sketch already has the maximum 1000 entities.");
+    geometry.id = nextId(sketch, "external-");
+    geometry.construction = true;
+    reference.entityId = geometry.id;
+    sketch.entities.push_back(std::move(geometry));
+    sketch.externalReferences.push_back(std::move(reference));
+    return sketch.entities.back().id;
+}
+
+bool breakExternalSketchProjection(Sketch& sketch, const std::string& entityId)
+{
+    const auto oldSize = sketch.externalReferences.size();
+    sketch.externalReferences.erase(
+        std::remove_if(sketch.externalReferences.begin(), sketch.externalReferences.end(),
+                       [&](const auto& link) { return link.entityId == entityId; }),
+        sketch.externalReferences.end());
+    return sketch.externalReferences.size() != oldSize;
+}
+
+void updateExternalSketchProjections(
+    Sketch& sketch, const std::vector<ExternalSketchProjectionUpdate>& updates)
+{
+    auto candidate = sketch;
+    std::set<std::string> seen;
+    for (const auto& update : updates)
+    {
+        require(seen.insert(update.entityId).second,
+                "An external sketch entity was updated more than once.");
+        auto link = std::find_if(candidate.externalReferences.begin(), candidate.externalReferences.end(),
+                                 [&](const auto& item) { return item.entityId == update.entityId; });
+        require(link != candidate.externalReferences.end() && link->associative,
+                "The associative sketch reference is unavailable.");
+        auto entity = std::find_if(candidate.entities.begin(), candidate.entities.end(),
+                                   [&](const auto& item) { return item.id == update.entityId; });
+        require(entity != candidate.entities.end() && entity->kind == update.geometry.kind,
+                "The source geometry changed type. Reselect the intended reference.");
+        auto replacement = update.geometry;
+        replacement.id = entity->id;
+        replacement.construction = true;
+        *entity = std::move(replacement);
+        link->sourceDigest = update.sourceDigest;
+    }
+    validateSketchModifiers(candidate);
+    sketch = std::move(candidate);
+}
+
 void validateSketchModifiers(const Sketch& sketch)
 {
     std::set<std::string> derived;
@@ -101,6 +168,38 @@ void validateSketchModifiers(const Sketch& sketch)
                     derived.insert(link.entityId).second &&
                     links.emplace(link.sourceFeature, link.edgeName).second,
                 "Invalid or duplicate projected sketch geometry.");
+    }
+    for (const auto& link : sketch.externalReferences)
+    {
+        const auto& item = entity(sketch, link.entityId);
+        const auto validId = [](const std::string& value) {
+            return !value.empty() && value.size() <= 128 &&
+                std::all_of(value.begin(), value.end(), [](unsigned char c) {
+                    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                           (c >= '0' && c <= '9') || c == '-' || c == '_';
+                });
+        };
+        const bool builtIn = link.sourceKind == ExternalReferenceKind::Origin ||
+                             link.sourceKind == ExternalReferenceKind::BasePlane ||
+                             link.sourceKind == ExternalReferenceKind::BaseAxis;
+        const bool sketchPoint = link.sourceKind == ExternalReferenceKind::SketchPoint;
+        const bool sketchLine = link.sourceKind == ExternalReferenceKind::SketchLine;
+        const bool datum = link.sourceKind == ExternalReferenceKind::Datum;
+        const int kind = int(link.sourceKind);
+        require(kind >= int(ExternalReferenceKind::Origin) && kind <= int(ExternalReferenceKind::SketchLine) &&
+                    (item.kind == EntityKind::Point || item.kind == EntityKind::Line) && item.construction &&
+                    validId(link.entityId) && derived.insert(link.entityId).second &&
+                    link.assemblyPath.size() <= 4096 && link.sourcePartPath.size() <= 4096 &&
+                    (!link.associative || (!link.assemblyPath.empty() && validId(link.componentId))) &&
+                    (builtIn ? link.sourceFeatureId.empty() && link.sourceEntityId.empty()
+                             : validId(link.sourceFeatureId)) &&
+                    ((sketchPoint || sketchLine) ? validId(link.sourceEntityId) : link.sourceEntityId.empty()) &&
+                    (!sketchLine || link.role == PointRole::First) &&
+                    (link.sourceDigest.empty() ||
+                     (link.sourceDigest.size() == 64 && std::all_of(link.sourceDigest.begin(), link.sourceDigest.end(),
+                         [](unsigned char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); }))) &&
+                    (datum || sketchPoint || sketchLine || builtIn),
+                "Invalid or duplicate external sketch reference.");
     }
     std::map<std::string, std::size_t> targets;
     for (std::size_t i = 0; i < sketch.replications.size(); ++i)

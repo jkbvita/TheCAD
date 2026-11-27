@@ -16,7 +16,7 @@ namespace thecad::application {
 
 enum class DocumentType { Part, Assembly, Drawing };
 enum class Workspace { Part, Sketch, Assembly, Drawing };
-enum class ParameterType { Length, Angle, Count, Direction, Boolean, Enumeration, Reference, FeatureId, FilePath, Regions, DatumDefinition };
+enum class ParameterType { Length, Angle, Count, Direction, Boolean, Enumeration, Reference, FeatureId, FilePath, Regions, References, DatumDefinition };
 enum class CommandState { Rejected, Completed, Started, WaitingForSelection, WaitingForParameters,
                           PreviewReady, Committed, Canceled, Failed };
 
@@ -38,6 +38,7 @@ struct Count { int value = 0; };
 struct Direction { int value = 1; };
 using CommandValue = std::variant<Length, Angle, Count, Direction, bool, std::string,
                                   modeling::SelectionRef, modeling::RegionReferences,
+                                  std::vector<std::string>,
                                   modeling::DatumDefinition>;
 struct CommandContext {
     std::string documentId;

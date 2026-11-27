@@ -117,6 +117,11 @@ application::CommandResult MainWindow::dispatchCommand(const std::string& id) {
         (id == "sketch.line" || (id != "edit.undo" && id != "edit.redo" && id.rfind("view.", 0) != 0)))
         m_commands.cancel(m_commands.activeSessionId());
     const auto result = m_commands.execute({id});
+    if (id == "sketch.external_reference" && result.state == application::CommandState::Started &&
+        m_sketchModifier && m_sketchModifier->kind == modeling::SketchModifier::ExternalReference) {
+        m_sketchModifier->commandSessionId = result.sessionId;
+        updateExternalReferenceSession();
+    }
     if (result.state == application::CommandState::Rejected && m_viewport)
         statusBar()->showMessage(QString::fromStdString(result.message), 3000);
     return result;

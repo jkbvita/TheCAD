@@ -100,6 +100,22 @@ struct AssemblyReferenceOption
     TopoDS_Shape shape;
     modeling::assembly::MateGeometry mateGeometry;
 };
+enum class ExternalReferenceState { Valid, OutOfDate, MissingSource, InvalidReference,
+                                    AmbiguousReference, FailedRegeneration };
+struct ExternalReferenceDiagnostic
+{
+    std::string dependentComponentId, dependentFeatureId, projectedEntityId;
+    std::string sourceComponentId, sourceFeatureId, sourceEntityId;
+    ExternalReferenceState state = ExternalReferenceState::Valid;
+    std::string message;
+};
+struct ExternalSketchReferenceOption
+{
+    std::string id, label;
+    modeling::ExternalSketchReference reference;
+    modeling::SketchEntity projectedGeometry;
+    TopoDS_Shape selectionShape; // Source geometry expressed in the edited part's local space.
+};
 class AssemblyFileStore;
 class AssemblyDocument final
 {
@@ -156,6 +172,15 @@ public:
     modeling::DatumGeometry referenceGeometry(const AssemblyReference&, bool world = true) const;
     modeling::assembly::MateGeometry mateGeometry(const AssemblyReference&) const;
     std::vector<AssemblyReferenceOption> referenceOptions(const std::string& componentId) const;
+    std::vector<ExternalSketchReferenceOption> externalSketchReferenceOptions(
+        const std::string& targetComponentId, const std::string& sketchFeatureId) const;
+    std::vector<ExternalSketchReferenceOption> externalSketchReferenceOptions(
+        const std::string& targetComponentId, const PartDocument& targetPart,
+        const std::string& sketchFeatureId) const;
+    bool validateExternalReferenceGraph(const std::string& targetComponentId,
+                                        const PartDocument& candidatePart,
+                                        std::string* diagnostic = nullptr) const;
+    std::vector<ExternalReferenceDiagnostic> externalReferenceDiagnostics() const;
     QByteArray stateKey() const;
 
 private:
@@ -164,6 +189,10 @@ private:
     static AssemblyComponent ownedSource(const QByteArray& data);
     static void prepareSource(AssemblyComponent&);
     bool updateGeneratedParts();
+    bool updateExternalReferences(const std::string& targetComponentId);
+    bool validateExternalReferenceDependencyGraph(
+        const std::string& targetComponentId, const PartDocument* candidatePart,
+        std::string* diagnostic) const;
     void updateGroundMates();
     modeling::assembly::MateGeometry connectorGeometry(const AssemblyReference&) const;
     void solve(const std::string& driven = {}, int generatedPass = 0,
@@ -178,5 +207,7 @@ private:
         m_beltLayoutKeys; // Transient, copied with candidate snapshots.
     modeling::assembly::MateSolution m_solution;
     bool m_sourcesChanged = false;
+    mutable QString m_ownerPath; // Transient resolver context, not serialized in .theasmb.
+    std::vector<ExternalReferenceDiagnostic> m_externalReferenceDiagnostics;
 };
 } // namespace thecad::document

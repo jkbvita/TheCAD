@@ -402,6 +402,9 @@ MainWindow::MainWindow(QWidget* parent)
     commandButton(action("Circular Sketch Pattern", "actionCircularSketchPattern",
                          [this] { startSketchModifier(Modifier::CircularPattern); }), modifyGrid, 1, 2);
     commandButton(unavailable("Move Entities", "actionMoveEntities"), modifyGrid, 2, 2);
+    m_externalSketchReferences = action("External References", "actionExternalSketchReferences",
+        [this] { dispatchCommand("sketch.external_reference"); });
+    commandButton(m_externalSketchReferences, modifyGrid, 2, 3);
     commandGroup(sketchButtons, "Relations / inspection", relationGrid);
     commandButton(action("Display/Delete Relations", "actionDisplayDeleteRelations", [this]{startConstraints();}), relationGrid, 0, 0);
     commandButton(unavailable("Repair Sketch", "actionRepairSketch"), relationGrid, 1, 0);
@@ -633,6 +636,33 @@ MainWindow::MainWindow(QWidget* parent)
     });
     connect(m_viewport,&CadViewport::sketchSelectionChanged,this,[this]{hideRelationsContext();updateActions();if(m_constraints && m_viewport->selectedSketchRelation().empty())updateConstraintDraft();if(m_sketchModifier)refreshSketchModifier(true);});
     connect(m_viewport,&CadViewport::sketchModifierEntityPicked,this,&MainWindow::pickSketchMirrorEntity);
+    connect(m_viewport, &CadViewport::externalReferencePicked, this,
+            [this](const QString& id, bool toggle) {
+                if (!m_sketchModifier || m_sketchModifier->kind != modeling::SketchModifier::ExternalReference)
+                    return;
+                auto& list = m_sketchModifier->externalReferences;
+                for (int row = 0; row < list->count(); ++row)
+                {
+                    auto* item = list->item(row);
+                    if (item->data(Qt::UserRole).toString() != id) continue;
+                    item->setSelected(toggle ? !item->isSelected() : true);
+                    updateExternalReferenceSession();
+                    return;
+                }
+            });
+    connect(m_viewport, &CadViewport::externalReferenceHovered, this,
+            [this](const QString& id) {
+                if (!m_sketchModifier || m_sketchModifier->kind != modeling::SketchModifier::ExternalReference)
+                    return;
+                const auto item = std::find_if(m_sketchModifier->externalOptions.begin(),
+                    m_sketchModifier->externalOptions.end(), [&](const auto& option) {
+                        return QString::fromStdString(option.id) == id;
+                    });
+                if (item == m_sketchModifier->externalOptions.end())
+                    m_sketchModifier->page->setStatus("Select a visible reference point, line, axis or plane from another component.");
+                else
+                    m_sketchModifier->page->setStatus(QString::fromStdString(item->label));
+            });
     connect(m_viewport, &CadViewport::sketchLineEditPointed, this, &MainWindow::updateSketchLineEdit);
     connect(m_viewport,&CadViewport::relationsContextRequested,this,&MainWindow::showRelationsContext);
     qApp->installEventFilter(this);
@@ -711,6 +741,7 @@ MainWindow::MainWindow(QWidget* parent)
     bindCommandHandlers();
     bindOperationCommands();
     bindReferenceCommands();
+    bindExternalReferenceCommand();
     setWindowModified(true);
     updateDocumentUi();
     m_viewport->showReferencePlanes(true);
@@ -740,11 +771,19 @@ QString MainWindow::currentPath() const { return m_session.path(); }
 void MainWindow::setEditInPlaceContext(const QString& componentName,
                                       const std::vector<TopoDS_Shape>& surroundings,
                                       const std::vector<TopoDS_Shape>& referencedSurroundings,
-                                      std::function<void()> finished)
+                                      std::function<void()> finished,
+                                      std::string componentId,
+                                      std::function<std::vector<document::ExternalSketchReferenceOption>(const std::string&, const document::PartDocument&)> referenceOptions,
+                                      std::function<bool(const document::PartDocument&, std::string*)> referenceValidator,
+                                      std::function<std::vector<document::ExternalReferenceDiagnostic>()> diagnostics)
 {
     m_inPlaceSurroundings = surroundings;
     m_inPlaceReferenced = referencedSurroundings;
     m_inPlaceFinished = std::move(finished);
+    m_inPlaceComponentId = std::move(componentId);
+    m_externalReferenceOptions = std::move(referenceOptions);
+    m_externalReferenceValidator = std::move(referenceValidator);
+    m_externalReferenceDiagnostics = std::move(diagnostics);
     m_inPlaceToolbar = addToolBar("Edit In Place");
     m_inPlaceToolbar->setObjectName("editInPlaceToolbar");
     m_inPlaceToolbar->setMovable(false);
@@ -1213,7 +1252,7 @@ void MainWindow::updateActions()
     const std::array modifierNames{"actionConvertEntities", "actionMirrorEntities",
                                    "actionLinearSketchPattern", "actionCircularSketchPattern",
                                    "actionTrimEntities", "actionExtendEntities", "actionSplitEntities",
-                                   "actionOffsetEntities"};
+                                   "actionOffsetEntities", "actionExternalSketchReferences"};
     for (std::size_t i = 0; i < modifierNames.size(); ++i)
     {
         auto* command = findChild<QAction*>(modifierNames[i]);
@@ -1221,7 +1260,8 @@ void MainWindow::updateActions()
         command->setCheckable(true);
         command->setChecked(active);
         command->setEnabled(active || (editing && !operation && !(m_smartDimension && m_smartDimension->editor) &&
-                                      (i != 0 || !m_session.document().shape().IsNull())));
+                                      (i == 8 ? (hasEditInPlaceContext() && bool(m_externalReferenceOptions))
+                                              : (i != 0 || !m_session.document().shape().IsNull()))));
     }
     for(auto* reference:{m_referencePoint,m_referenceAxis,m_referencePlane})reference->setEnabled(!operation&&!m_session.editingSketch()&&!selecting);
     m_tabs->setEnabled(!operation);

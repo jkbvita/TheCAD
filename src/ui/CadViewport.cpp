@@ -185,6 +185,16 @@ void CadViewport::releaseViewer()
     m_measureLabel.Nullify();
     m_measureSpan.Nullify();
     m_measureDecorations.clear();m_measureHighlights.clear();
+    if (isReady())
+        for (const auto& item : m_externalReferenceHighlights)
+            if (!item.IsNull()) m_graphics.context()->Remove(item, Standard_False);
+    m_externalReferenceHighlights.clear();
+    m_externalReferencePicker.clear();
+    m_contextScenePicker.clear();
+    m_externalReferenceCandidates.clear();
+    m_externalReferenceSelected.clear();
+    m_externalReferenceHoverId.clear();
+    m_externalReferencePicking = false;
     m_inferenceGuides.clear();
     m_selectedEntityPresentation.Nullify();
     m_hoveredEntityPresentation.Nullify();
@@ -270,6 +280,11 @@ bool CadViewport::setShape(const TopoDS_Shape& shape)
 void CadViewport::setContextShapes(const std::vector<TopoDS_Shape>& shapes, double transparency)
 {
     m_contextShapes = shapes;
+    std::vector<viewport::PickableBRep> scene;
+    for (std::size_t index = 0; index < m_contextShapes.size(); ++index)
+        if (!m_contextShapes[index].IsNull())
+            scene.push_back({"context-" + std::to_string(index), m_contextShapes[index], gp_Trsf(), true});
+    m_contextScenePicker.setScene(std::move(scene));
     m_contextTransparency = std::clamp(transparency, 0.0, 1.0);
     if (!isReady())
         return;
@@ -720,6 +735,7 @@ void CadViewport::setDimensionSelection(const std::vector<std::string>& entities
 void CadViewport::setConstraintErrors(const std::vector<std::string>& ids){m_constraintErrors=ids;updateConstraintPresentation();update();}
 void CadViewport::setConstraintPicking(bool enabled) {selectSketchTool();m_tools.relations(enabled);emit sketchToolChanged();}
 void CadViewport::mouseDoubleClickEvent(QMouseEvent* event) {
+    if(m_externalReferencePicking){event->accept();return;}
     if(m_measurePicking){event->accept();return;}
     if(event->button()==Qt::LeftButton && m_sketchEditing && m_tools.drawing()==modeling::EntityKind::Spline) {
         finishSpline(); event->accept(); return;
@@ -1301,6 +1317,14 @@ void CadViewport::mousePressEvent(QMouseEvent* event)
     if (!isReady() || m_camera.mode() != Navigation::None) {
         return;
     }
+    if (event->button() == Qt::LeftButton && m_externalReferencePicking) {
+        setFocus(Qt::MouseFocusReason);
+        m_externalPickClick = true;
+        m_externalPickPress = event->position();
+        updateExternalReferenceHover(event->position());
+        event->accept();
+        return;
+    }
     if (event->button()==Qt::LeftButton && m_measurePicking) {
         setFocus(Qt::MouseFocusReason);
         m_planeClickCandidate = true;
@@ -1471,6 +1495,11 @@ void CadViewport::mouseMoveEvent(QMouseEvent* event)
         resetSketchInference();m_contextClick=false;m_planeClickCandidate=false;m_regionClickCandidate=false;
         m_cameraAnnotationsDirty=true;update();return;
     }
+    if (m_externalReferencePicking && m_camera.mode() == Navigation::None) {
+        updateExternalReferenceHover(event->position());
+        event->accept();
+        return;
+    }
     if((event->position()-m_contextPress).manhattanLength()>QApplication::startDragDistance())m_contextClick=false;
     if(m_measurePicking) {
         if(m_dragMeasureLabel>=0){
@@ -1565,6 +1594,22 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* event)
     }
     if(event->button()==Qt::LeftButton && m_pointDrag) { updatePointDrag(event->position()); finishPointDrag(); event->accept(); return; }
     if(endCameraNavigation(event)){updateConstraintPresentation();return;}
+    if (event->button() == Qt::LeftButton && m_externalReferencePicking) {
+        const bool click = m_externalPickClick &&
+            (event->position() - m_externalPickPress).manhattanLength() <= QApplication::startDragDistance();
+        m_externalPickClick = false;
+        if (click) {
+            const int index = externalReferenceAt(event->position());
+            if (index >= 0) {
+                const auto& item = m_externalReferenceCandidates[std::size_t(index)];
+                const bool toggle = event->modifiers().testFlag(Qt::ControlModifier) ||
+                                    event->modifiers().testFlag(Qt::ShiftModifier);
+                emit externalReferencePicked(QString::fromStdString(item.id), toggle);
+            }
+        }
+        event->accept();
+        return;
+    }
     if (event->button() == Qt::LeftButton) {
         const bool regionClick=m_regionClickCandidate && event->button()==Qt::LeftButton
             && (event->position()-m_regionPressPosition).manhattanLength()<=QApplication::startDragDistance();
@@ -1595,6 +1640,11 @@ void CadViewport::mouseReleaseEvent(QMouseEvent* event)
 
 bool CadViewport::event(QEvent* event)
 {
+    if(event->type()==QEvent::Leave && m_externalReferencePicking){
+        m_externalReferenceHoverId.clear();
+        renderExternalReferenceHighlights();
+        emit externalReferenceHovered({});
+    }
     if (event->type() == QEvent::Leave && m_sketchLineEditPicking)
         emit sketchLineEditPointed({}, {}, false);
     if(event->type()==QEvent::Leave)previewCandidate({});

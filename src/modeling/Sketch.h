@@ -34,6 +34,24 @@ inline Point2 circularCenter(const SketchEntity& entity)
 enum class PointRole { Origin, First, Second, Center, Midpoint, SplineInterior = 100 }; // Midpoint is derived; spline interiors use stable consecutive slots.
 inline PointRole splinePointRole(std::size_t index) { return PointRole(int(PointRole::SplineInterior)+int(index)); }
 inline bool isSplinePoint(PointRole role) { return int(role)>=int(PointRole::SplineInterior); }
+enum class ExternalReferenceKind { Origin, BasePlane, BaseAxis, Datum, SketchPoint, SketchLine };
+// A projected sketch entity may be linked to a stable source in another part
+// instance. The projected entity keeps the last valid local geometry so a part
+// remains editable if its assembly source is unavailable. Paths and component
+// IDs bind the link to its exact assembly context; feature/entity IDs identify
+// stable non-topological geometry within the source part.
+struct ExternalSketchReference {
+    std::string entityId;
+    std::string assemblyPath;
+    std::string componentId;
+    std::string sourcePartPath;
+    std::string sourceDigest;
+    ExternalReferenceKind sourceKind = ExternalReferenceKind::SketchPoint;
+    std::string sourceFeatureId;
+    std::string sourceEntityId;
+    PointRole role = PointRole::First;
+    bool associative = true;
+};
 struct SketchPointRef {
     std::string entityId;
     PointRole role = PointRole::Origin;
@@ -83,6 +101,7 @@ struct Sketch {
         std::string entityId, sourceFeature, edgeName, startVertex;
     };
     std::vector<Projection> projections;
+    std::vector<ExternalSketchReference> externalReferences;
     struct Replication {
         std::string source, target, mirrorLine;
         Point2 offset;

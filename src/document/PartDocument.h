@@ -97,6 +97,13 @@ public:
     std::vector<ReferenceOption> edgeOptions(bool sharpOnly = false) const;
     PartDocument beforeFeature(const std::string& id) const;
     std::string addSketch(const modeling::Sketch& sketch);
+    void updateExternalSketchReferences(
+        const std::string& sketchFeatureId,
+        const std::vector<modeling::ExternalSketchProjectionUpdate>& updates);
+    void updateExternalSketchReferences(
+        const std::map<std::string, std::vector<modeling::ExternalSketchProjectionUpdate>>& updates);
+    void breakExternalSketchReference(const std::string& sketchFeatureId,
+                                      const std::string& entityId);
     std::string addExtrude(const std::string& sketchId, const std::vector<std::string>& contour, double length, modeling::Direction direction);
     std::string addCut(const std::string& sketchId, const std::vector<std::string>& contour, double depth, bool throughAll, modeling::Direction direction);
     std::string addExtrudeRegions(const std::string& sketchId,const modeling::RegionReferences& contours,double length,modeling::Direction direction);

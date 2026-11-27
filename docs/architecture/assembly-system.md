@@ -1,5 +1,54 @@
 # Assembly architecture and workflow
 
+## Milestone 2: associative cross-part sketch references
+
+This milestone extends Edit In Place with explicit references from a linked
+part's sketch to stable geometry in another visible linked component. The
+active part remains an ordinary `.thepart`; the assembly continues to own
+component instances, transforms and mates.
+
+The supported source geometry is:
+
+- Base origin, planes and axes.
+- User datum planes, axes and points.
+- Persistent sketch points, including circle centers and line endpoints or
+  midpoints.
+- Persistent straight sketch lines.
+
+Solid faces and BRep edges are deliberately excluded. Their kernel topology
+indices can change after regeneration, and this milestone does not add
+persistent topology naming.
+
+The **External References** sketch PropertyManager is available only while
+editing a linked part in an assembly. It lets the user pick source geometry in
+the context viewport or select it from the list, and explicitly choose
+**Associative** or **Copy** mode. Associative references retain their source
+component instance, source part path, source feature/entity IDs, point role,
+source revision digest and owning assembly path. A copy stores projected
+construction geometry without an update dependency. Breaking an associative
+link removes only its link metadata and keeps the projected sketch geometry.
+
+The source component's rigid transform is composed into assembly space, then
+into the target component's local sketch frame before projection. Consequently,
+multiple instances of the same `.thepart` remain distinct, and source and
+target rotations/translations are accounted for. Sketch projections are
+construction geometry and do not form profile boundaries.
+
+On assembly rebuild or linked-source refresh, associative references are
+resolved by exact component instance and stable source IDs. Updates run in
+dependency order before affected features and mates regenerate. A missing or
+changed source entity produces a diagnostic and preserves the last valid
+dependent model; no fallback to another component or geometric neighbor is
+allowed. Cyclic dependencies are rejected.
+
+`ExternalSketchReference` metadata is stored in `.thepart` schema version 28.
+Versions 1–27 remain readable. `.theasmb` was not changed. Document identity
+continues to use the canonical linked part path plus the assembly component
+instance ID, while feature/entity IDs identify geometry. A replaced file at
+the same path is treated as the current definition of that component; its
+stable source IDs and geometry type are revalidated. A future immutable
+document UUID could distinguish replacement from edit more strongly.
+
 ## Milestone 1 scope
 
 This document describes the independent-part assembly workflow added on top of
@@ -64,8 +113,10 @@ it has a solid body.
    part viewport as context geometry.
 3. Context display can show surroundings, make them transparent, hide them,
    isolate the part, or show only components referenced by its placement
-   association. Context geometry is presentation-only and is not selectable or
-   projected into a sketch.
+   association. Ordinary context remains presentation-only. While the explicit
+   External References command is active, supported datum and sketch geometry
+   from other visible components can be selected as a source; this mode cannot
+   edit the source component.
 4. **Finish Editing** invokes the `part.finish_edit_in_place` command and saves
    the active `.thepart`. Saving from the normal Save command also works. Open
    assembly windows reload linked paths through
@@ -145,7 +196,8 @@ sequenceDiagram
 ## Commands and UI entry points
 
 The command catalog includes `assembly.new_part`, `assembly.open_part`,
-`assembly.edit_in_place`, `assembly.refresh_references` and
+`assembly.edit_in_place`, `assembly.refresh_references`,
+`sketch.external_reference`, `sketch.break_external_reference` and
 `part.finish_edit_in_place`. The assembly action and component context menu
 submit Open/Edit requests through `CommandDispatcher`; there is one Open Part
 entry, and it does not bypass document/session checks. The Rebuild action uses
@@ -218,6 +270,11 @@ part editor cannot overwrite a newer on-disk revision. Viewport-dependent
 assembly tests require a real Open CASCADE graphics context; run them on the
 desktop for visual verification.
 
+The cross-part tests cover sketch-point and datum associativity, sketch-line
+copies, circle-center references, source-instance identity for repeated parts,
+rotation/translation between component frames, source edits, copy isolation,
+save/reopen, failed-update retention and circular-reference rejection.
+
 ## Adding assembly commands
 
 1. Add a stable descriptor to `src/application/CommandSystem.cpp` and its typed
@@ -233,8 +290,9 @@ desktop for visual verification.
 
 ## Deferred work and limitations
 
-- Cross-part sketch projections and arbitrary geometry links are not
-  implemented. Surrounding bodies are non-pickable viewport context only.
+- Arbitrary body-face and BRep-edge associativity remains unsupported. Stable
+  datum and sketch sources are supported by the explicit reference workflow;
+  surrounding body shading itself remains non-pickable.
 - Only stable plane/frame support association driving component placement is
   implemented. Solid face references still reject uncertain regeneration;
   persistent topology naming is explicitly out of scope.
@@ -243,12 +301,15 @@ desktop for visual verification.
   hierarchical instance-path design.
 - A missing external source can still prevent assembly load; an unresolved
   component placeholder and relink UI are future work.
-- The format has no immutable part-document UUID. Existing path + digest
-  behavior is retained; no `.thepart` or `.theasmb` version change was made.
+- The format has no immutable part-document UUID. This milestone identifies the
+  source through its canonical linked path and exact assembly instance ID, then
+  validates stable feature/entity IDs. Replacing a source at the same path is
+  treated as an edit to that component; UUID-based replacement detection is a
+  possible future file-format change.
 - Mate solver/status behavior is retained. This milestone does not add new
   mate types or a solver redesign.
 - EIP is currently one active editor context per assembly window. Context
   presentation does not update live while another source changes until the
   assembly is refreshed.
-- The branch for this milestone is `codex/assembly-part-creation`; it is not
-  merged automatically.
+- The cross-part reference milestone is developed on
+  `codex/assembly-cross-part-references`; it is not merged automatically.

@@ -3,6 +3,8 @@
 #include "document/storage/AssemblyMateData.h"
 #include <QCryptographicHash>
 #include <QDataStream>
+#include <QDir>
+#include <QFileInfo>
 #include <QIODevice>
 #include <QJsonDocument>
 #include <QUuid>
@@ -476,6 +478,7 @@ bool AssemblyDocument::updateGeneratedParts()
     require(m_assets.size() <= 64 && m_belts.size() <= 64 && m_inPlaces.size() <= 64,
             "Too many generated assembly workflows.");
     bool changed = false;
+    m_externalReferenceDiagnostics.clear();
     std::set<std::string> assetOwners;
     for (const auto& asset : m_assets)
     {
@@ -534,24 +537,72 @@ bool AssemblyDocument::updateGeneratedParts()
     for (const auto& c : m_components)
         require(c.embeddedPart.isEmpty() || dependencies.count(c.id),
                 "An owned component is missing its generating workflow.");
-    std::map<std::string, int> visits;
-    std::vector<std::string> order;
-    std::function<void(const std::string&)> visit = [&](const auto& id)
+    const auto topologicalOrder = [&](const auto& graph, std::vector<std::string>& result)
     {
-        (void)component(id);
-        if (!dependencies.count(id))
-            return;
-        require(visits[id] != 1, "Generated component references contain a cycle.");
-        if (visits[id] == 2)
-            return;
-        visits[id] = 1;
-        for (const auto& dependency : dependencies[id])
-            visit(dependency);
-        visits[id] = 2;
-        order.push_back(id);
+        std::map<std::string, int> visits;
+        std::function<bool(const std::string&)> visit = [&](const auto& id)
+        {
+            (void)component(id);
+            if (!graph.count(id) || visits[id] == 2) return true;
+            if (visits[id] == 1) return false;
+            visits[id] = 1;
+            for (const auto& dependency : graph.at(id))
+                if (!visit(dependency)) return false;
+            visits[id] = 2;
+            result.push_back(id);
+            return true;
+        };
+        for (const auto& [id, refs] : graph)
+        {
+            (void)refs;
+            if (!visit(id)) return false;
+        }
+        return true;
     };
-    for (const auto& [id, refs] : dependencies)
-        visit(id);
+    std::vector<std::string> order;
+    require(topologicalOrder(dependencies, order), "Generated component references contain a cycle.");
+    auto allDependencies = dependencies;
+    bool externalReferenceCycle = false;
+    for (const auto& dependent : m_components)
+    {
+        for (const auto& feature : dependent.part->features())
+        {
+            if (feature.kind != FeatureKind::Sketch) continue;
+            for (const auto& reference : feature.sketch.externalReferences)
+            {
+                if (!reference.associative || m_ownerPath.isEmpty() ||
+                    QDir::cleanPath(QFileInfo(QString::fromStdString(reference.assemblyPath)).absoluteFilePath())
+                        .compare(QDir::cleanPath(QFileInfo(m_ownerPath).absoluteFilePath()), Qt::CaseInsensitive) != 0)
+                    continue;
+                const auto source = std::find_if(m_components.begin(), m_components.end(),
+                    [&](const auto& candidate) { return candidate.id == reference.componentId; });
+                if (source == m_components.end() || !source->embeddedPart.isEmpty() ||
+                    QDir::cleanPath(QFileInfo(source->path).absoluteFilePath())
+                        .compare(QDir::cleanPath(QFileInfo(QString::fromStdString(reference.sourcePartPath)).absoluteFilePath()), Qt::CaseInsensitive) != 0)
+                    continue;
+                allDependencies[dependent.id].push_back(source->id);
+            }
+        }
+    }
+    std::vector<std::string> allOrder;
+    if (allDependencies != dependencies && topologicalOrder(allDependencies, allOrder))
+    {
+        dependencies = std::move(allDependencies);
+        order = std::move(allOrder);
+    }
+    else if (allDependencies != dependencies)
+    {
+        externalReferenceCycle = true;
+        for (const auto& dependent : m_components)
+            for (const auto& feature : dependent.part->features())
+                if (feature.kind == FeatureKind::Sketch)
+                    for (const auto& reference : feature.sketch.externalReferences)
+                        if (reference.associative)
+                            m_externalReferenceDiagnostics.push_back({dependent.id, feature.id, reference.entityId,
+                                reference.componentId, reference.sourceFeatureId, reference.sourceEntityId,
+                                ExternalReferenceState::FailedRegeneration,
+                                "Circular cross-part references are not allowed. The last valid dependent geometry was retained."});
+    }
     const auto updateBelt = [&](AssemblyBelt& belt)
     {
         for (const auto& mate : m_mates)
@@ -643,6 +694,13 @@ bool AssemblyDocument::updateGeneratedParts()
     };
     for (const auto& id : order)
     {
+        // Do not partially refresh a cyclic graph in an arbitrary fallback order.
+        // Keeping all committed projections unchanged is safer than allowing one
+        // side of a cycle to observe a half-updated source.
+        if (!externalReferenceCycle)
+            changed |= updateExternalReferences(id);
+        const auto belt = std::find_if(m_belts.begin(), m_belts.end(),
+                                       [&](const auto& item) { return item.componentId == id; });
         const auto context = std::find_if(m_inPlaces.begin(), m_inPlaces.end(),
                                           [&](const auto& p) { return p.componentId == id; });
         if (context != m_inPlaces.end())
@@ -670,10 +728,8 @@ bool AssemblyDocument::updateGeneratedParts()
                               {{"first", {context->support}}, {"second", {{id, {}}}}}),
                 move);
         }
-        else
+        else if (belt != m_belts.end())
         {
-            auto belt = std::find_if(m_belts.begin(), m_belts.end(),
-                                     [&](const auto& b) { return b.componentId == id; });
             updateBelt(*belt);
         }
     }
@@ -812,6 +868,13 @@ AssemblyDocument::componentDependencyNames(const std::vector<std::string>& ids) 
                 if (selected.insert(part.componentId).second)
                     changed = true;
             }
+        for (const auto& dependent : m_components)
+            for (const auto& feature : dependent.part->features())
+                if (feature.kind == FeatureKind::Sketch)
+                    for (const auto& reference : feature.sketch.externalReferences)
+                        if (reference.associative && selected.count(reference.componentId))
+                            features.insert(dependent.name + " / " + feature.name +
+                                            " (external sketch reference)");
     }
     if (m_groundPlane && selected.count(m_groundPlane->componentId))
         features.insert("Assembly Ground Plane");

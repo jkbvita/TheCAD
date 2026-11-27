@@ -100,6 +100,7 @@ AssemblyDocument AssemblyFileStore::load(const QString& path)
                 root["mates"].isArray() && root["mates"].toArray().size() <= 256,
             "Invalid assembly component/mate list.");
     AssemblyDocument result;
+    result.m_ownerPath = QFileInfo(path).absoluteFilePath();
     const QDir directory(QFileInfo(path).absolutePath());
     std::map<QString, AssemblyComponent> cache;
     for (const auto& value : root["components"].toArray())

@@ -157,7 +157,7 @@ Sketch editSketchLine(const Sketch& sketch, SketchModifier kind, const std::stri
                                     [&](const auto& item) { return item.id == id; });
     require(found != sketch.entities.end() && found->kind == EntityKind::Line,
             "Pick a straight sketch line.");
-    require(!sketchProjection(sketch, id) && !polygonForEntity(sketch, id) &&
+    require(!isSketchProjection(sketch, id) && !polygonForEntity(sketch, id) &&
                 std::none_of(sketch.replications.begin(), sketch.replications.end(), [&](const auto& copy) {
                     return copy.source == id || copy.target == id || copy.mirrorLine == id;
                 }) &&

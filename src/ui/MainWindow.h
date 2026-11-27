@@ -1,6 +1,7 @@
 #pragma once
 
 #include "document/PartDocument.h"
+#include "document/AssemblyDocument.h"
 #include "application/DocumentSession.h"
 #include "application/CommandSystem.h"
 
@@ -57,7 +58,11 @@ public:
     void setEditInPlaceContext(const QString& componentName,
                                const std::vector<TopoDS_Shape>& surroundings,
                                const std::vector<TopoDS_Shape>& referencedSurroundings,
-                               std::function<void()> finished);
+                               std::function<void()> finished,
+                               std::string componentId = {},
+                               std::function<std::vector<document::ExternalSketchReferenceOption>(const std::string&, const document::PartDocument&)> referenceOptions = {},
+                               std::function<bool(const document::PartDocument&, std::string*)> referenceValidator = {},
+                               std::function<std::vector<document::ExternalReferenceDiagnostic>()> diagnostics = {});
     application::CommandDispatcher& commands() { return m_commands; }
 
 protected:
@@ -189,6 +194,14 @@ private:
     void pickSketchMirrorEntity(const QString& id);
     void updateSketchLineEdit(const QString& id, modeling::Point2 point, bool apply);
     void finishSketchModifier(bool accepted);
+    void finishSketchModifierLocally(bool accepted);
+    void bindExternalReferenceCommand();
+    application::CommandResult updateExternalReferenceCommand(const application::CommandRequest& request);
+    application::CommandResult confirmExternalReferenceCommand();
+    application::CommandResult cancelExternalReferenceCommand();
+    void updateExternalReferenceSession();
+    void syncExternalReferencePicker();
+    void breakSelectedExternalReference();
     bool sketchModifierEvent(QObject* watched, QEvent* event);
     struct SketchModifierDraft {
         modeling::SketchModifier kind = modeling::SketchModifier::Convert;
@@ -201,6 +214,12 @@ private:
         QSpinBox* count = nullptr;
         QCheckBox *reverse = nullptr, *innerLoops = nullptr, *construction = nullptr;
         QCheckBox *bothSides = nullptr, *selectChain = nullptr;
+        QComboBox* externalMode = nullptr;
+        QListWidget* externalReferences = nullptr;
+        QListWidget* existingExternalReferences = nullptr;
+        QPushButton* breakExternalReference = nullptr;
+        std::vector<document::ExternalSketchReferenceOption> externalOptions;
+        std::string commandSessionId;
         std::vector<std::string> seeds;
         std::optional<modeling::Sketch> candidate;
     };
@@ -274,6 +293,7 @@ private:
     QAction* m_spline = nullptr;
     QAction* m_straightSlot = nullptr;
     QAction *m_point=nullptr,*m_centerline=nullptr,*m_polygon=nullptr,*m_construction=nullptr;
+    QAction* m_externalSketchReferences = nullptr;
     QAction* m_selectEntity = nullptr;
     QGroupBox* m_propertyPanel = nullptr;
     QLabel* m_entitySummary = nullptr;
@@ -292,6 +312,10 @@ private:
     QComboBox* m_inPlaceVisibility = nullptr;
     std::vector<TopoDS_Shape> m_inPlaceSurroundings, m_inPlaceReferenced;
     std::function<void()> m_inPlaceFinished;
+    std::string m_inPlaceComponentId;
+    std::function<std::vector<document::ExternalSketchReferenceOption>(const std::string&, const document::PartDocument&)> m_externalReferenceOptions;
+    std::function<bool(const document::PartDocument&, std::string*)> m_externalReferenceValidator;
+    std::function<std::vector<document::ExternalReferenceDiagnostic>()> m_externalReferenceDiagnostics;
     QByteArray m_sourceFileDigest;
     bool m_hasSourceFileDigest = false;
 };

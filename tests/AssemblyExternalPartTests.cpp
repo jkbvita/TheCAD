@@ -1,4 +1,5 @@
 #include "application/AssemblySession.h"
+#include "document/storage/PartFileStore.h"
 #include <QCoreApplication>
 #include <QFileInfo>
 #include <QTemporaryDir>
@@ -31,6 +32,61 @@ modeling::GeometryReference assemblyPlane()
     ref.source = modeling::ReferenceSource::BasePlane;
     ref.index = 0;
     return ref;
+}
+
+gp_Trsf translated(double x, double y = 0, double z = 0)
+{
+    gp_Trsf transform;
+    transform.SetTranslation(gp_Vec(x, y, z));
+    return transform;
+}
+
+gp_Trsf rotatedTranslated(double x, double y, double z, double radians)
+{
+    gp_Trsf transform;
+    transform.SetRotation(gp_Quaternion(gp_Vec(0, 0, 1), radians));
+    transform.SetTranslationPart({x, y, z});
+    return transform;
+}
+
+const document::ExternalSketchReferenceOption& externalOption(
+    const std::vector<document::ExternalSketchReferenceOption>& options,
+    const std::string& componentId, modeling::ReferenceSource source,
+    const std::string& featureId, const std::string& entityId = {})
+{
+    const auto found = std::find_if(options.begin(), options.end(), [&](const auto& option) {
+        return option.reference.componentId == componentId &&
+               option.reference.sourceKind == modeling::ExternalReferenceKind(int(source)) &&
+               option.reference.sourceFeatureId == featureId &&
+               option.reference.sourceEntityId == entityId;
+    });
+    if (found == options.end())
+        throw std::runtime_error("A requested stable external reference was not offered.");
+    return *found;
+}
+
+void attachExternalReference(document::PartDocument& part, const std::string& sketchId,
+                             const document::ExternalSketchReferenceOption& option,
+                             bool associative, const std::string& coincidentEntity = {})
+{
+    auto feature = *std::find_if(part.features().begin(), part.features().end(), [&](const auto& item) {
+        return item.id == sketchId && item.kind == document::FeatureKind::Sketch;
+    });
+    auto reference = option.reference;
+    reference.associative = associative;
+    const auto projectedId = modeling::useExternalSketchProjection(
+        feature.sketch, option.projectedGeometry, std::move(reference));
+    if (!coincidentEntity.empty())
+    {
+        modeling::SketchRelation relation;
+        relation.id = "external-coincident";
+        relation.kind = modeling::RelationKind::Coincident;
+        relation.first = {coincidentEntity, modeling::PointRole::Center};
+        relation.second = {projectedId, modeling::PointRole::First};
+        feature.sketch.relations.push_back(relation);
+    }
+    modeling::validateSketchModifiers(feature.sketch);
+    part.replaceFeature(feature);
 }
 
 double translationZ(const gp_Trsf& transform)
@@ -200,6 +256,313 @@ void refreshRetainsInstancesMatesAndPlacements(const QString& folder)
             "Source refresh removed or remapped an existing mate.");
     equalPose(reopened.component(second).placement, savedPose);
 }
+
+void associativeCrossPartReferences(const QString& folder)
+{
+    using namespace modeling;
+    const auto sourcePath = folder + "/ReferenceHousing.thepart";
+    const auto associativePath = folder + "/AssociativeBracket.thepart";
+    const auto copyPath = folder + "/CopyBracket.thepart";
+    const auto datumPath = folder + "/DatumBracket.thepart";
+    const auto assemblyPath = folder + "/CrossPartReferences.theasmb";
+
+    auto housing = document::PartDocument::createBox({100, 60, 20});
+    Sketch sourceSketch;
+    SketchEntity sourcePoint;
+    sourcePoint.kind = EntityKind::Point;
+    sourcePoint.id = "mount-center";
+    sourcePoint.first = {5, 7};
+    sourceSketch.entities.push_back(sourcePoint);
+    SketchEntity sourceLine;
+    sourceLine.kind = EntityKind::Line;
+    sourceLine.id = "mount-edge";
+    sourceLine.first = {-3, 4};
+    sourceLine.second = {9, 4};
+    sourceSketch.entities.push_back(sourceLine);
+    SketchEntity sourceCircle;
+    sourceCircle.kind = EntityKind::Circle;
+    sourceCircle.id = "mount-hole";
+    sourceCircle.first = {11, 13};
+    sourceCircle.radius = 2;
+    sourceSketch.entities.push_back(sourceCircle);
+    const auto sourceSketchId = housing.addSketch(sourceSketch);
+    DatumDefinition datumDefinition;
+    datumDefinition.method = DatumMethod::PointXYZ;
+    datumDefinition.position = gp_Pnt(2, 3, 0);
+    const auto datumId = housing.addReferenceGeometry(datumDefinition);
+    housing.save(sourcePath);
+    auto sourceRoundTrip = document::PartDocument::load(sourcePath);
+    require(sourceRoundTrip.features().size() == 3,
+            "Stable source sketch and datum geometry did not persist in the part file.");
+    const auto sourceReferences = sourceRoundTrip.referenceOptions(false, false, false);
+    require(std::any_of(sourceReferences.begin(), sourceReferences.end(), [&](const auto& option) {
+                return option.reference.source == ReferenceSource::SketchPoint &&
+                       option.reference.featureId == sourceSketchId &&
+                       option.reference.entityId == sourceCircle.id &&
+                       option.reference.role == PointRole::Center;
+            }) &&
+                std::any_of(sourceReferences.begin(), sourceReferences.end(), [&](const auto& option) {
+                    return option.reference.source == ReferenceSource::SketchLine &&
+                           option.reference.featureId == sourceSketchId &&
+                           option.reference.entityId == sourceLine.id;
+                }),
+            "Stable sketch point, circle-center or line references did not survive save/reopen.");
+
+    auto associative = document::PartDocument::createEmpty();
+    Sketch associativeSketch;
+    SketchEntity circle;
+    circle.kind = EntityKind::Circle;
+    circle.id = "bracket-hole";
+    circle.first = {15, 5};
+    circle.radius = 2;
+    associativeSketch.entities.push_back(circle);
+    const auto associativeSketchId = associative.addSketch(associativeSketch);
+    associative.addExtrude(associativeSketchId, {circle.id}, 4, Direction::Positive);
+    associative.save(associativePath);
+
+    auto copied = document::PartDocument::createBox({10, 10, 5});
+    Sketch copiedSketch;
+    SketchEntity copiedAnchor;
+    copiedAnchor.kind = EntityKind::Point;
+    copiedAnchor.id = "copied-anchor";
+    copiedAnchor.first = {-4, -4};
+    copiedSketch.entities.push_back(copiedAnchor);
+    const auto copiedSketchId = copied.addSketch(copiedSketch);
+    copied.save(copyPath);
+
+    auto datumDependent = document::PartDocument::createBox({10, 10, 5});
+    Sketch datumSketch;
+    SketchEntity datumAnchor;
+    datumAnchor.kind = EntityKind::Point;
+    datumAnchor.id = "datum-anchor";
+    datumAnchor.first = {-2, -3};
+    datumSketch.entities.push_back(datumAnchor);
+    const auto datumSketchId = datumDependent.addSketch(datumSketch);
+    datumDependent.save(datumPath);
+
+    document::AssemblyDocument assembly;
+    const auto associativeInstance = assembly.insertComponent(
+        associativePath, rotatedTranslated(0, 2, 0, 1.5707963267948966), false);
+    const auto housingNear = assembly.insertComponent(sourcePath, translated(10));
+    const auto housingFar = assembly.insertComponent(sourcePath, translated(40), false);
+    const auto copyInstance = assembly.insertComponent(copyPath, {}, false);
+    const auto datumInstance = assembly.insertComponent(datumPath, translated(0, 4), false);
+    assembly.save(assemblyPath); // Establishes an owning assembly identity for associative links.
+
+    const auto associativeOptions = assembly.externalSketchReferenceOptions(
+        associativeInstance, *assembly.component(associativeInstance).part, associativeSketchId);
+    const auto& nearPoint = externalOption(associativeOptions, housingNear,
+        ReferenceSource::SketchPoint, sourceSketchId, sourcePoint.id);
+    const auto& farPoint = externalOption(associativeOptions, housingFar,
+        ReferenceSource::SketchPoint, sourceSketchId, sourcePoint.id);
+    require(nearPoint.reference.componentId != farPoint.reference.componentId &&
+                std::abs(farPoint.projectedGeometry.first.x - nearPoint.projectedGeometry.first.x) < 1e-7 &&
+                std::abs(farPoint.projectedGeometry.first.y - nearPoint.projectedGeometry.first.y + 30) < 1e-7,
+            "Repeated instances of one part were not distinguished in transformed references.");
+    const auto circleCenter = std::find_if(associativeOptions.begin(), associativeOptions.end(),
+        [&](const auto& option) {
+            return option.reference.componentId == housingNear &&
+                   option.reference.sourceKind == ExternalReferenceKind::SketchPoint &&
+                   option.reference.sourceFeatureId == sourceSketchId &&
+                   option.reference.sourceEntityId == sourceCircle.id &&
+                   option.reference.role == PointRole::Center;
+        });
+    require(circleCenter != associativeOptions.end(),
+            "The persistent center of a sketch circle was not exposed as an external reference.");
+    attachExternalReference(associative, associativeSketchId, nearPoint, true, circle.id);
+    const auto linkedCircle = std::find_if(associative.features().begin(), associative.features().end(),
+        [&](const auto& feature) { return feature.id == associativeSketchId; });
+    const auto projectedCircle = std::find_if(linkedCircle->sketch.entities.begin(), linkedCircle->sketch.entities.end(),
+        [&](const auto& entity) { return entity.id != circle.id; });
+    require(std::abs(sketchPointValue(linkedCircle->sketch, {circle.id, PointRole::Center}).x - 5) < 1e-7 &&
+                std::abs(sketchPointValue(linkedCircle->sketch, {circle.id, PointRole::Center}).y + 15) < 1e-7 &&
+                std::abs(projectedCircle->first.x - 5) < 1e-7 &&
+                std::abs(projectedCircle->first.y + 15) < 1e-7,
+            "Associative sketch projection or its coincident constraint used the wrong local coordinates.");
+    const auto beforeRejectedUpdate = document::PartFileStore::encode(associative);
+    modeling::ExternalSketchProjectionUpdate invalidUpdate;
+    invalidUpdate.entityId = linkedCircle->sketch.externalReferences.front().entityId;
+    invalidUpdate.geometry.kind = EntityKind::Line;
+    bool invalidUpdateRejected = false;
+    try
+    {
+        associative.updateExternalSketchReferences(associativeSketchId, {invalidUpdate});
+    }
+    catch (const std::exception&)
+    {
+        invalidUpdateRejected = true;
+    }
+    require(invalidUpdateRejected && beforeRejectedUpdate == document::PartFileStore::encode(associative),
+            "A failed external-reference regeneration modified the committed part.");
+    associative.save(associativePath);
+
+    const auto copyOptions = assembly.externalSketchReferenceOptions(
+        copyInstance, copied, copiedSketchId);
+    attachExternalReference(copied, copiedSketchId,
+        externalOption(copyOptions, housingFar, ReferenceSource::SketchPoint,
+                       sourceSketchId, sourcePoint.id), false);
+    attachExternalReference(copied, copiedSketchId,
+        externalOption(copyOptions, housingFar, ReferenceSource::SketchLine,
+                       sourceSketchId, sourceLine.id), false);
+    copied.save(copyPath);
+
+    const auto datumOptions = assembly.externalSketchReferenceOptions(
+        datumInstance, datumDependent, datumSketchId);
+    attachExternalReference(datumDependent, datumSketchId,
+        externalOption(datumOptions, housingNear, ReferenceSource::Datum, datumId), true);
+    datumDependent.save(datumPath);
+
+    assembly.reloadSources();
+    assembly.save(assemblyPath);
+
+    auto reopened = document::AssemblyDocument::load(assemblyPath);
+    const auto reopenedAssociative = std::find_if(reopened.component(associativeInstance).part->features().begin(),
+        reopened.component(associativeInstance).part->features().end(),
+        [&](const auto& feature) { return feature.id == associativeSketchId; });
+    require(reopenedAssociative != reopened.component(associativeInstance).part->features().end() &&
+                reopenedAssociative->sketch.externalReferences.size() == 1 &&
+                reopenedAssociative->sketch.externalReferences.front().componentId == housingNear &&
+                reopenedAssociative->sketch.externalReferences.front().associative,
+            "Associative source identity and mode did not persist after save/reopen.");
+
+    auto changedHousing = document::PartDocument::load(sourcePath);
+    auto changedSketch = *std::find_if(changedHousing.features().begin(), changedHousing.features().end(),
+        [&](const auto& feature) { return feature.id == sourceSketchId; });
+    changedSketch.sketch.entities.front().first = {8, 9};
+    changedHousing.replaceFeature(changedSketch);
+    auto changedDatum = *std::find_if(changedHousing.features().begin(), changedHousing.features().end(),
+        [&](const auto& feature) { return feature.id == datumId; });
+    changedDatum.reference.position = gp_Pnt(4, 5, 0);
+    changedHousing.replaceFeature(changedDatum);
+    changedHousing.save(sourcePath);
+    reopened.reloadSources();
+
+
+    const auto& refreshedAssociative = reopened.component(associativeInstance).part->features();
+    const auto refreshedSketch = std::find_if(refreshedAssociative.begin(), refreshedAssociative.end(),
+        [&](const auto& feature) { return feature.id == associativeSketchId; });
+    const auto& newCircleCenter = sketchPointValue(refreshedSketch->sketch,
+        {circle.id, PointRole::Center});
+    require(std::abs(newCircleCenter.x - 7) < 1e-7 && std::abs(newCircleCenter.y + 18) < 1e-7,
+            "A changed source sketch point did not drive dependent constrained geometry.");
+    require(!reopened.component(associativeInstance).shape().IsNull(),
+            "Associative sketch changes did not regenerate its downstream solid feature.");
+
+    const auto& refreshedCopy = reopened.component(copyInstance).part->features();
+    const auto copyFeature = std::find_if(refreshedCopy.begin(), refreshedCopy.end(),
+        [&](const auto& feature) { return feature.id == copiedSketchId; });
+    const auto copyReference = std::find_if(copyFeature->sketch.externalReferences.begin(),
+        copyFeature->sketch.externalReferences.end(), [](const auto& reference) { return !reference.associative; });
+    const auto copyGeometry = std::find_if(copyFeature->sketch.entities.begin(), copyFeature->sketch.entities.end(),
+        [&](const auto& entity) { return copyReference != copyFeature->sketch.externalReferences.end() &&
+                                        entity.id == copyReference->entityId; });
+    require(copyReference != copyFeature->sketch.externalReferences.end() &&
+                std::abs(copyGeometry->first.x - 45) < 1e-7 &&
+                std::abs(copyGeometry->first.y - 7) < 1e-7,
+            "A non-associative sketch copy changed when its source changed.");
+    const auto copiedLineReference = std::find_if(copyFeature->sketch.externalReferences.begin(),
+        copyFeature->sketch.externalReferences.end(), [&](const auto& reference) {
+            return reference.sourceKind == ExternalReferenceKind::SketchLine &&
+                   reference.sourceEntityId == sourceLine.id;
+        });
+    const auto copiedLine = std::find_if(copyFeature->sketch.entities.begin(), copyFeature->sketch.entities.end(),
+        [&](const auto& entity) { return copiedLineReference != copyFeature->sketch.externalReferences.end() &&
+                                        entity.id == copiedLineReference->entityId; });
+    require(copiedLineReference != copyFeature->sketch.externalReferences.end() &&
+                std::abs(copiedLine->first.x - 37) < 1e-7 &&
+                std::abs(copiedLine->second.x - 49) < 1e-7 &&
+                std::abs(copiedLine->first.y - 4) < 1e-7,
+            "Stable source sketch line geometry was not transformed into target part space.");
+
+    const auto& refreshedDatumPart = reopened.component(datumInstance).part->features();
+    const auto refreshedDatumSketch = std::find_if(refreshedDatumPart.begin(), refreshedDatumPart.end(),
+        [&](const auto& feature) { return feature.id == datumSketchId; });
+    const auto datumReference = refreshedDatumSketch->sketch.externalReferences.front();
+    const auto projectedDatum = std::find_if(refreshedDatumSketch->sketch.entities.begin(),
+        refreshedDatumSketch->sketch.entities.end(), [&](const auto& entity) {
+            return entity.id == datumReference.entityId;
+        });
+    require(std::abs(projectedDatum->first.x - 14) < 1e-7 &&
+                std::abs(projectedDatum->first.y - 1) < 1e-7,
+            "A dependent datum reference did not update through component and target transforms.");
+
+    const auto priorDependentCenter = newCircleCenter;
+    changedHousing = document::PartDocument::load(sourcePath);
+    changedSketch = *std::find_if(changedHousing.features().begin(), changedHousing.features().end(),
+        [&](const auto& feature) { return feature.id == sourceSketchId; });
+    changedSketch.sketch.entities.clear(); // The old stable point ID is now genuinely missing.
+    changedHousing.replaceFeature(changedSketch);
+    changedHousing.save(sourcePath);
+    reopened.reloadSources();
+    const auto invalidDiagnostics = reopened.externalReferenceDiagnostics();
+    require(std::any_of(invalidDiagnostics.begin(), invalidDiagnostics.end(), [&](const auto& diagnostic) {
+                return diagnostic.dependentComponentId == associativeInstance &&
+                       diagnostic.sourceComponentId == housingNear &&
+                       diagnostic.state == document::ExternalReferenceState::InvalidReference;
+            }), "A missing stable source entity did not produce an invalid-reference diagnostic.");
+    const auto& retained = reopened.component(associativeInstance).part->features();
+    const auto retainedSketch = std::find_if(retained.begin(), retained.end(),
+        [&](const auto& feature) { return feature.id == associativeSketchId; });
+    const auto& retainedCenter = sketchPointValue(retainedSketch->sketch,
+        {circle.id, PointRole::Center});
+    require(std::abs(retainedCenter.x - priorDependentCenter.x) < 1e-7 &&
+                std::abs(retainedCenter.y - priorDependentCenter.y) < 1e-7,
+            "A failed external-reference regeneration overwrote the last valid dependent model.");
+}
+
+void externalReferenceCycleRejected(const QString& folder)
+{
+    const auto firstPath = folder + "/CycleA.thepart";
+    const auto secondPath = folder + "/CycleB.thepart";
+    const auto assemblyPath = folder + "/Cycle.theasmb";
+    auto firstPart = document::PartDocument::createBox({2, 2, 2});
+    modeling::Sketch sketch;
+    modeling::SketchEntity point;
+    point.kind = modeling::EntityKind::Point;
+    point.id = "stable-point";
+    point.first = {1, 1};
+    sketch.entities.push_back(point);
+    const auto firstSketchId = firstPart.addSketch(sketch);
+    auto secondPart = firstPart;
+    firstPart.save(firstPath);
+    secondPart.save(secondPath);
+
+    document::AssemblyDocument assembly;
+    const auto first = assembly.insertComponent(firstPath);
+    const auto second = assembly.insertComponent(secondPath, gp_Trsf{}, false);
+    assembly.save(assemblyPath);
+    const auto makeReferencePart = [&](const document::PartDocument& source,
+                                       const std::string& sourceId,
+                                       const QString& sourceFile) {
+        auto candidate = source;
+        auto feature = *std::find_if(candidate.features().begin(), candidate.features().end(),
+            [](const auto& item) { return item.kind == document::FeatureKind::Sketch; });
+        modeling::ExternalSketchReference reference;
+        reference.assemblyPath = assemblyPath.toStdString();
+        reference.componentId = sourceId;
+        reference.sourcePartPath = QFileInfo(sourceFile).absoluteFilePath().toStdString();
+        reference.sourceKind = modeling::ExternalReferenceKind::SketchPoint;
+        reference.sourceFeatureId = firstSketchId;
+        reference.sourceEntityId = point.id;
+        modeling::SketchEntity projection;
+        projection.kind = modeling::EntityKind::Point;
+        projection.id = "external-cycle";
+        projection.construction = true;
+        modeling::useExternalSketchProjection(feature.sketch, projection, reference);
+        candidate.replaceFeature(feature);
+        return candidate;
+    };
+    const auto firstCandidate = makeReferencePart(*assembly.component(first).part, second, secondPath);
+    std::string diagnostic;
+    require(assembly.validateExternalReferenceGraph(first, firstCandidate, &diagnostic),
+            "A one-way cross-part reference was incorrectly rejected.");
+    firstCandidate.save(firstPath);
+    assembly.reloadSources();
+    auto secondCandidate = makeReferencePart(*assembly.component(second).part, first, firstPath);
+    require(!assembly.validateExternalReferenceGraph(second, secondCandidate, &diagnostic) &&
+                diagnostic.find("circular") != std::string::npos,
+            ("A two-part circular external-reference dependency was not rejected clearly: " + diagnostic).c_str());
+}
 } // namespace
 
 int main(int argc, char** argv)
@@ -212,6 +575,8 @@ int main(int argc, char** argv)
         externalPartWorkflow(folder.path());
         dependencyCycleRejected(folder.path());
         refreshRetainsInstancesMatesAndPlacements(folder.path());
+        associativeCrossPartReferences(folder.path());
+        externalReferenceCycleRejected(folder.path());
         std::cout << "Independent assembly part workflow tests passed\n";
         return 0;
     }

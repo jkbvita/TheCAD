@@ -145,8 +145,23 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
                 }
                 // Legacy equalities must already be internally consistent; dimensional
                 // targets and the new solver relations may intentionally require a solve.
+                // An associative sketch projection is a fixed solver input, so equalities
+                // that touch it must reach the solver before their dependent point moves.
                 auto legacy=feature.sketch;legacy.dimensions.clear();
-                legacy.relations.erase(std::remove_if(legacy.relations.begin(),legacy.relations.end(),[](const auto& r){return r.kind!=modeling::RelationKind::Coincident && r.kind!=modeling::RelationKind::Horizontal && r.kind!=modeling::RelationKind::Vertical;}),legacy.relations.end());
+                const auto touchesExternalReference = [&](const modeling::SketchRelation& relation) {
+                    return std::any_of(feature.sketch.externalReferences.begin(),
+                                       feature.sketch.externalReferences.end(), [&](const auto& link) {
+                        return relation.first.entityId == link.entityId ||
+                               relation.second.entityId == link.entityId;
+                    });
+                };
+                legacy.relations.erase(std::remove_if(legacy.relations.begin(),legacy.relations.end(),
+                    [&](const auto& relation) {
+                        return (relation.kind != modeling::RelationKind::Coincident &&
+                                relation.kind != modeling::RelationKind::Horizontal &&
+                                relation.kind != modeling::RelationKind::Vertical) ||
+                               touchesExternalReference(relation);
+                    }), legacy.relations.end());
                 validSketch(legacy);
                 if (!feature.sketch.projections.empty())
                 {
@@ -156,6 +171,7 @@ void PartDocument::apply(std::vector<Feature> features, bool validateDependencie
                         if (std::find(expected.begin(), expected.end(), link.sourceFeature) == expected.end())
                             expected.push_back(link.sourceFeature);
                 }
+                modeling::validateSketchModifiers(feature.sketch);
                 modeling::validateSketchConstraintReferences(feature.sketch);
                 modeling::attachDimensionAnnotations(feature.sketch);
                 feature.sketch=modeling::requireSolvedSketch(modeling::solvePlanarSketch(feature.sketch));
@@ -416,6 +432,45 @@ std::string PartDocument::addSketch(const modeling::Sketch& sketch)
     candidate.push_back(feature);
     apply(std::move(candidate));
     return feature.id;
+}
+
+void PartDocument::updateExternalSketchReferences(
+    const std::string& sketchFeatureId,
+    const std::vector<modeling::ExternalSketchProjectionUpdate>& updates)
+{
+    if (updates.empty()) return;
+    updateExternalSketchReferences({{sketchFeatureId, updates}});
+}
+
+void PartDocument::updateExternalSketchReferences(
+    const std::map<std::string, std::vector<modeling::ExternalSketchProjectionUpdate>>& updates)
+{
+    if (updates.empty()) return;
+    auto features = m_features;
+    for (const auto& [sketchFeatureId, featureUpdates] : updates)
+    {
+        const auto found = std::find_if(features.begin(), features.end(), [&](const auto& feature) {
+            return feature.id == sketchFeatureId && feature.kind == FeatureKind::Sketch;
+        });
+        if (found == features.end())
+            fail("The sketch containing an external reference is unavailable: " + q(sketchFeatureId));
+        modeling::updateExternalSketchProjections(found->sketch, featureUpdates);
+    }
+    apply(std::move(features));
+}
+
+void PartDocument::breakExternalSketchReference(const std::string& sketchFeatureId,
+                                                 const std::string& entityId)
+{
+    auto features = m_features;
+    const auto found = std::find_if(features.begin(), features.end(), [&](const auto& feature) {
+        return feature.id == sketchFeatureId && feature.kind == FeatureKind::Sketch;
+    });
+    if (found == features.end())
+        fail("The sketch containing the external reference is unavailable: " + q(sketchFeatureId));
+    if (!modeling::breakExternalSketchProjection(found->sketch, entityId))
+        fail("The external sketch reference is unavailable.");
+    apply(std::move(features));
 }
 
 std::string PartDocument::addExtrude(const std::string& sketchId, const std::vector<std::string>& contour, double length, modeling::Direction direction)

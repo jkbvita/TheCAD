@@ -302,6 +302,67 @@ modeling::SketchEntity readEntity(const QJsonValue& value, int version)
     fields(object, expected, "Sketch entity");
     return entity;
 }
+
+QString externalReferenceKindName(modeling::ExternalReferenceKind kind)
+{
+    switch (kind)
+    {
+    case modeling::ExternalReferenceKind::Origin: return "origin";
+    case modeling::ExternalReferenceKind::BasePlane: return "base-plane";
+    case modeling::ExternalReferenceKind::BaseAxis: return "base-axis";
+    case modeling::ExternalReferenceKind::Datum: return "datum";
+    case modeling::ExternalReferenceKind::SketchPoint: return "sketch-point";
+    case modeling::ExternalReferenceKind::SketchLine: return "sketch-line";
+    }
+    fail("Unsupported external reference kind.");
+}
+
+modeling::ExternalReferenceKind readExternalReferenceKind(const QJsonValue& value)
+{
+    const auto name = stringValue(value, "External reference kind");
+    if (name == "origin") return modeling::ExternalReferenceKind::Origin;
+    if (name == "base-plane") return modeling::ExternalReferenceKind::BasePlane;
+    if (name == "base-axis") return modeling::ExternalReferenceKind::BaseAxis;
+    if (name == "datum") return modeling::ExternalReferenceKind::Datum;
+    if (name == "sketch-point") return modeling::ExternalReferenceKind::SketchPoint;
+    if (name == "sketch-line") return modeling::ExternalReferenceKind::SketchLine;
+    fail("Unsupported external reference kind.");
+}
+
+QJsonObject writeExternalReference(const modeling::ExternalSketchReference& reference)
+{
+    return {{"entity", q(reference.entityId)}, {"assembly", q(reference.assemblyPath)},
+            {"component", q(reference.componentId)}, {"part", q(reference.sourcePartPath)},
+            {"digest", q(reference.sourceDigest)},
+            {"kind", externalReferenceKindName(reference.sourceKind)},
+            {"feature", q(reference.sourceFeatureId)}, {"sourceEntity", q(reference.sourceEntityId)},
+            {"role", int(reference.role)}, {"associative", reference.associative}};
+}
+
+modeling::ExternalSketchReference readExternalReference(const QJsonValue& value)
+{
+    if (!value.isObject()) fail("External sketch reference must be an object.");
+    const auto object = value.toObject();
+    fields(object, {"entity", "assembly", "component", "part", "digest", "kind", "feature",
+                    "sourceEntity", "role", "associative"}, "External sketch reference");
+    if (!object["associative"].isBool()) fail("External reference associativity must be boolean.");
+    const double role = number(object["role"], "External reference point role");
+    if (role < 0 || role > int(modeling::splinePointRole(125)) || role != std::floor(role))
+        fail("Invalid external reference point role.");
+    modeling::ExternalSketchReference reference;
+    reference.entityId = stringValue(object["entity"], "Projected entity ID").toStdString();
+    reference.assemblyPath = stringValue(object["assembly"], "Owner assembly path").toStdString();
+    reference.componentId = stringValue(object["component"], "Source component ID").toStdString();
+    reference.sourcePartPath = stringValue(object["part"], "Source part path").toStdString();
+    reference.sourceDigest = stringValue(object["digest"], "Source revision digest").toStdString();
+    reference.sourceKind = readExternalReferenceKind(object["kind"]);
+    reference.sourceFeatureId = stringValue(object["feature"], "Source feature ID").toStdString();
+    reference.sourceEntityId = stringValue(object["sourceEntity"], "Source sketch entity ID").toStdString();
+    reference.role = modeling::PointRole(int(role));
+    reference.associative = object["associative"].toBool();
+    return reference;
+}
+
 QJsonObject writePointRef(const modeling::SketchPointRef& ref)
 {
     if(modeling::isSplinePoint(ref.role))return {{"entity",q(ref.entityId)},{"point",QString("spline:%1").arg(int(ref.role)-int(modeling::PointRole::SplineInterior))}};
@@ -637,9 +698,9 @@ PartDocument PartFileStore::decode(const QByteArray& bytes)
     if (root.value("units") != QJsonValue("mm"))
         fail("Unsupported units; this prototype supports millimeters only.");
     const auto versionValue = root.value("version");
-    if (!versionValue.isDouble() || versionValue.toDouble() < 1 || versionValue.toDouble() > 27 ||
+    if (!versionValue.isDouble() || versionValue.toDouble() < 1 || versionValue.toDouble() > 28 ||
         versionValue.toDouble() != std::floor(versionValue.toDouble()))
-        fail("Unsupported part document version; expected versions 1 through 27.");
+        fail("Unsupported part document version; expected versions 1 through 28.");
     const int version = versionValue.toInt();
     if (!root.value("features").isArray())
         fail("Part features must be an ordered array.");
@@ -720,6 +781,8 @@ PartDocument PartFileStore::decode(const QByteArray& bytes)
                             expected.insert(key);
                 if (version >= 21 && object.contains("offsets"))
                     expected.insert("offsets");
+                if (version >= 28 && object.contains("externalReferences"))
+                    expected.insert("externalReferences");
                 fields(object, expected, "Sketch feature");
                 feature.kind = FeatureKind::Sketch;
                 feature.sketch.plane = readPlane(object.value("plane"));
@@ -802,6 +865,14 @@ PartDocument PartFileStore::decode(const QByteArray& bytes)
                             stringValue(link["edge"], "Projected edge").toStdString(),
                             link["startVertex"].toString().toStdString()});
                     }
+                }
+                if (object.contains("externalReferences"))
+                {
+                    const auto list = object["externalReferences"].toArray();
+                    if (!object["externalReferences"].isArray() || list.size() > int(maximumEntities))
+                        fail("Invalid external sketch reference list.");
+                    for (const auto& entry : list)
+                        feature.sketch.externalReferences.push_back(readExternalReference(entry));
                 }
                 if (object.contains("replications"))
                 {
@@ -1129,6 +1200,13 @@ QByteArray PartFileStore::encode(const PartDocument& document)
                                              {"edge", q(link.edgeName)}, {"startVertex", q(link.startVertex)}});
                 object["projections"] = links;
             }
+            if (!feature.sketch.externalReferences.empty())
+            {
+                QJsonArray links;
+                for (const auto& link : feature.sketch.externalReferences)
+                    links.append(writeExternalReference(link));
+                object["externalReferences"] = links;
+            }
             if (!feature.sketch.replications.empty())
             {
                 QJsonArray copies;
@@ -1292,6 +1370,10 @@ QByteArray PartFileStore::encode(const PartDocument& document)
     }
     for(const auto& feature:document.features())if(feature.kind==FeatureKind::Sketch &&
         std::any_of(feature.sketch.entities.begin(),feature.sketch.entities.end(),[](const auto& e){return e.kind==modeling::EntityKind::Spline;}))version=27;
+    if (std::any_of(document.features().begin(), document.features().end(), [](const auto& feature) {
+            return feature.kind == FeatureKind::Sketch && !feature.sketch.externalReferences.empty();
+        }))
+        version = 28;
     const QJsonObject root{{"format", "TheCAD.Part"},
                            {"version", version},
                            {"units", "mm"},

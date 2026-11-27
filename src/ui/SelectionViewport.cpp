@@ -2,7 +2,9 @@
 #include "presentation/SolidPresentation.h"
 #include "ui/CadViewport.h"
 #include <BRep_Tool.hxx>
+#include <BRepAdaptor_Curve.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
+#include <Geom_CartesianPoint.hxx>
 #include <Graphic3d_Camera.hxx>
 #include <Graphic3d_ZLayerId.hxx>
 #include <Prs3d_PointAspect.hxx>
@@ -10,6 +12,7 @@
 #include <SelectMgr_ViewerSelector.hxx>
 #include <StdSelect_BRepOwner.hxx>
 #include <TopExp.hxx>
+#include <TopAbs_ShapeEnum.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 #include <TopTools_ListIteratorOfListOfShape.hxx>
@@ -22,6 +25,7 @@
 #include <QScopedValueRollback>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace thecad::ui {
 using namespace presentation;
@@ -36,6 +40,200 @@ bool isMeasurementKind(SelectionKind kind)
 SelectionKind datumSelectionKind(modeling::DatumKind kind){return kind==modeling::DatumKind::Point?SelectionKind::ReferencePoint:kind==modeling::DatumKind::Axis?SelectionKind::ReferenceAxis:SelectionKind::ReferencePlane;}
 
 }
+
+void CadViewport::setExternalReferencePicking(bool active,
+                                               std::vector<ExternalReferencePickItem> candidates,
+                                               std::vector<std::string> selected)
+{
+    m_externalReferencePicking = active;
+    m_externalReferenceCandidates = active ? std::move(candidates)
+                                           : std::vector<ExternalReferencePickItem>{};
+    m_externalReferenceSelected = active ? std::move(selected) : std::vector<std::string>{};
+    m_externalPickClick = false;
+    m_externalReferenceHoverId.clear();
+    std::vector<viewport::PickableBRep> scene;
+    if (active)
+        for (const auto& candidate : m_externalReferenceCandidates)
+            if (candidate.kind == modeling::DatumKind::Plane && !candidate.shape.IsNull())
+                scene.push_back({candidate.id, candidate.shape, gp_Trsf(), true});
+    m_externalReferencePicker.setScene(std::move(scene));
+    renderExternalReferenceHighlights();
+    update();
+}
+
+int CadViewport::externalReferenceAt(const QPointF& position)
+{
+    if (!m_externalReferencePicking || !isReady())
+        return -1;
+    prepareBodyPicking();
+    const QPoint pixel = nativePosition(position);
+    const auto planeHit = m_externalReferencePicker.surfaceAt(m_graphics.view(), pixel);
+    const auto screenPoint = [&](const gp_Pnt& point) {
+        int x = 0, y = 0;
+        m_graphics.view()->Convert(point.X(), point.Y(), point.Z(), x, y);
+        return QPointF(x / devicePixelRatioF(), y / devicePixelRatioF());
+    };
+    const auto cursorSurface = m_scenePicker.surfaceAt(m_graphics.view(), pixel);
+    const double depthSlack = std::max(1e-6,
+        m_graphics.view()->Camera()->Scale() / std::max(1, height()));
+    const auto contextSurface = m_contextScenePicker.surfaceAt(m_graphics.view(), pixel);
+    const auto visibleAt = [&](const gp_Pnt& point) {
+        const auto camera = m_graphics.view()->Camera();
+        const double depth = gp_Vec(camera->Eye(), point).Dot(gp_Vec(camera->Direction()));
+        return (!cursorSurface || depth <= cursorSurface->depth + depthSlack) &&
+               (!contextSurface || depth <= contextSurface->depth + depthSlack);
+    };
+
+    struct Hit { int index = -1; double distance = std::numeric_limits<double>::infinity(); };
+    Hit best;
+    // Discrete reference points win over edges, which win over planes.
+    for (int i = 0; i < int(m_externalReferenceCandidates.size()); ++i)
+    {
+        const auto& candidate = m_externalReferenceCandidates[std::size_t(i)];
+        if (candidate.kind != modeling::DatumKind::Point || candidate.shape.IsNull())
+            continue;
+        TopTools_IndexedMapOfShape vertices;
+        TopExp::MapShapes(candidate.shape, TopAbs_VERTEX, vertices);
+        for (int vertex = 1; vertex <= vertices.Extent(); ++vertex)
+        {
+            const auto point = BRep_Tool::Pnt(TopoDS::Vertex(vertices(vertex)));
+            const double distance = QLineF(position, screenPoint(point)).length();
+            if (distance <= m_pickingTolerance && distance < best.distance && visibleAt(point))
+                best = {i, distance};
+        }
+    }
+    if (best.index >= 0)
+        return best.index;
+
+    for (int i = 0; i < int(m_externalReferenceCandidates.size()); ++i)
+    {
+        const auto& candidate = m_externalReferenceCandidates[std::size_t(i)];
+        if (candidate.kind != modeling::DatumKind::Axis || candidate.shape.IsNull())
+            continue;
+        TopTools_IndexedMapOfShape edges;
+        TopExp::MapShapes(candidate.shape, TopAbs_EDGE, edges);
+        for (int edgeIndex = 1; edgeIndex <= edges.Extent(); ++edgeIndex)
+        {
+            const auto edge = TopoDS::Edge(edges(edgeIndex));
+            BRepAdaptor_Curve curve(edge);
+            const double first = curve.FirstParameter(), last = curve.LastParameter();
+            if (!std::isfinite(first) || !std::isfinite(last) || last <= first)
+                continue;
+            constexpr int samples = 32;
+            auto previous = curve.Value(first);
+            auto previousScreen = screenPoint(previous);
+            for (int sample = 1; sample <= samples; ++sample)
+            {
+                const double t = double(sample) / samples;
+                const auto current = curve.Value(first + (last - first) * t);
+                const auto currentScreen = screenPoint(current);
+                const QLineF segment(previousScreen, currentScreen);
+                const double length2 = std::pow(segment.dx(), 2) + std::pow(segment.dy(), 2);
+                const double along = length2 > 1e-12
+                    ? std::clamp(((position.x() - previousScreen.x()) * segment.dx() +
+                                  (position.y() - previousScreen.y()) * segment.dy()) / length2, 0.0, 1.0)
+                    : 0.0;
+                const QPointF nearest(previousScreen.x() + along * segment.dx(),
+                                      previousScreen.y() + along * segment.dy());
+                const double distance = QLineF(position, nearest).length();
+                if (distance <= m_pickingTolerance && distance < best.distance)
+                {
+                    const auto hit = previous.Translated(gp_Vec(previous, current) * along);
+                    if (visibleAt(hit))
+                        best = {i, distance};
+                }
+                previous = current;
+                previousScreen = currentScreen;
+            }
+        }
+    }
+    if (best.index >= 0)
+        return best.index;
+
+    if (planeHit)
+    {
+        if ((cursorSurface && planeHit->depth > cursorSurface->depth + depthSlack) ||
+            (contextSurface && planeHit->depth > contextSurface->depth + depthSlack))
+            return -1;
+        for (int i = 0; i < int(m_externalReferenceCandidates.size()); ++i)
+            if (m_externalReferenceCandidates[std::size_t(i)].id == planeHit->id)
+                return i;
+    }
+    return -1;
+}
+
+void CadViewport::updateExternalReferenceHover(const QPointF& position)
+{
+    const int index = externalReferenceAt(position);
+    const auto next = index < 0 ? std::string{} : m_externalReferenceCandidates[std::size_t(index)].id;
+    if (next == m_externalReferenceHoverId)
+        return;
+    m_externalReferenceHoverId = next;
+    renderExternalReferenceHighlights();
+    emit externalReferenceHovered(QString::fromStdString(next));
+}
+
+void CadViewport::renderExternalReferenceHighlights()
+{
+    if (!isReady())
+        return;
+    for (const auto& presentation : m_externalReferenceHighlights)
+        if (!presentation.IsNull())
+            m_graphics.context()->Remove(presentation, Standard_False);
+    m_externalReferenceHighlights.clear();
+    const auto show = [&](const ExternalReferencePickItem& item, const Quantity_Color& color,
+                          bool selected) {
+        if (item.shape.IsNull())
+            return;
+        if (item.kind == modeling::DatumKind::Point)
+        {
+            TopTools_IndexedMapOfShape vertices;
+            TopExp::MapShapes(item.shape, TopAbs_VERTEX, vertices);
+            if (vertices.Extent() == 0)
+                return;
+            Handle(AIS_Point) marker = new AIS_Point(
+                new Geom_CartesianPoint(BRep_Tool::Pnt(TopoDS::Vertex(vertices(1)))));
+            marker->Attributes()->SetPointAspect(new Prs3d_PointAspect(
+                Aspect_TOM_POINT, color, (selected ? 10.0 : 9.0) * devicePixelRatioF()));
+            marker->SetZLayer(Graphic3d_ZLayerId_Topmost);
+            m_graphics.context()->Display(marker, 0, -1, Standard_False);
+            m_externalReferenceHighlights.push_back(marker);
+        }
+        else
+        {
+            Handle(AIS_Shape) overlay = new AIS_Shape(item.shape);
+            overlay->SetColor(color);
+            overlay->SetZLayer(Graphic3d_ZLayerId_Topmost);
+            if (item.kind == modeling::DatumKind::Plane)
+            {
+                overlay->SetTransparency(selected ? 0.56 : 0.68);
+                m_graphics.context()->Display(overlay, AIS_Shaded, -1, Standard_False);
+            }
+            else
+            {
+                overlay->SetWidth((selected ? 3.5 : 3.0) * devicePixelRatioF());
+                m_graphics.context()->Display(overlay, AIS_WireFrame, -1, Standard_False);
+            }
+            m_externalReferenceHighlights.push_back(overlay);
+        }
+    };
+    for (const auto& id : m_externalReferenceSelected)
+    {
+        const auto found = std::find_if(m_externalReferenceCandidates.begin(), m_externalReferenceCandidates.end(),
+                                        [&](const auto& item) { return item.id == id; });
+        if (found != m_externalReferenceCandidates.end())
+            show(*found, presentation::selectionBlue(), true);
+    }
+    if (std::find(m_externalReferenceSelected.begin(), m_externalReferenceSelected.end(),
+                  m_externalReferenceHoverId) == m_externalReferenceSelected.end())
+    {
+        const auto found = std::find_if(m_externalReferenceCandidates.begin(), m_externalReferenceCandidates.end(),
+                                        [&](const auto& item) { return item.id == m_externalReferenceHoverId; });
+        if (found != m_externalReferenceCandidates.end())
+            show(*found, presentation::hoverOrange(), false);
+    }
+}
+
 std::vector<SelectionRef> CadViewport::selection() const {
     if(m_measurePicking){std::vector<SelectionRef> refs;for(const auto& pick:m_measurePicks)refs.push_back(pick.ref);return refs;}
     if(!m_sketchEditing){

@@ -18,6 +18,7 @@
 #include <array>
 #include <AIS_TextLabel.hxx>
 #include <AIS_Point.hxx>
+#include <AIS_InteractiveObject.hxx>
 #include <AIS_Trihedron.hxx>
 #include <optional>
 #include <QMetaType>
@@ -42,6 +43,7 @@ namespace thecad::modeling { struct Measurement; }
 namespace thecad::ui {
 struct DatumVisual {std::string id,name;modeling::DatumGeometry geometry;bool visible=true;};
 struct ReferencePickItem {modeling::GeometryReference reference;modeling::DatumGeometry geometry;TopoDS_Shape shape;};
+struct ExternalReferencePickItem { std::string id; modeling::DatumKind kind; TopoDS_Shape shape; };
 
 class CadViewportTest;
 
@@ -56,6 +58,9 @@ public:
     bool setShape(const TopoDS_Shape& shape);
     // Non-pickable surrounding assembly geometry for Edit In Place.
     void setContextShapes(const std::vector<TopoDS_Shape>& shapes, double transparency = 0.76);
+    void setExternalReferencePicking(bool active,
+                                     std::vector<ExternalReferencePickItem> candidates = {},
+                                     std::vector<std::string> selected = {});
     void releaseGraphics();
     void beginPlaneSelection();
     void cancelPlaneSelection();
@@ -170,6 +175,8 @@ signals:
     void sketchChanged(const thecad::modeling::Sketch& sketch);
     void sketchEntitySelected(const QString& id);
     void sketchModifierEntityPicked(const QString& id);
+    void externalReferencePicked(const QString& id, bool toggle);
+    void externalReferenceHovered(const QString& id);
     void sketchPointSelected(const QString& entityId, int role);
     void sketchEntityCreated(const thecad::modeling::SketchEntity& entity);
     void sketchRegionClicked(thecad::modeling::Point2 point);
@@ -202,6 +209,9 @@ private:
     struct PickCandidate {modeling::SelectionCandidate value;TopoDS_Shape shape;Handle(SelectMgr_EntityOwner) owner;
         std::optional<gp_Pnt> hit;};
     std::vector<PickCandidate> selectionCandidates(const QPointF&,bool includeOccluded=false);
+    int externalReferenceAt(const QPointF&);
+    void updateExternalReferenceHover(const QPointF&);
+    void renderExternalReferenceHighlights();
     void selectCandidate(const PickCandidate&,bool toggle=false,bool directClick=false);
     void updateSelectionHover(const QPointF&);
     void previewCandidate(const std::optional<PickCandidate>&);
@@ -332,6 +342,14 @@ private:
     TopoDS_Shape m_shape;
     std::vector<TopoDS_Shape> m_contextShapes;
     std::vector<Handle(AIS_Shape)> m_contextPresentations;
+    bool m_externalReferencePicking = false, m_externalPickClick = false;
+    QPointF m_externalPickPress;
+    std::vector<ExternalReferencePickItem> m_externalReferenceCandidates;
+    std::vector<std::string> m_externalReferenceSelected;
+    std::string m_externalReferenceHoverId;
+    viewport::BRepScenePicker m_externalReferencePicker;
+    viewport::BRepScenePicker m_contextScenePicker;
+    std::vector<Handle(AIS_InteractiveObject)> m_externalReferenceHighlights;
     double m_contextTransparency = 0.76;
     Handle(AIS_Shape) m_presentation;
     Handle(AIS_Shape) m_sketchPresentation;

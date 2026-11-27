@@ -1348,6 +1348,20 @@ bool AssemblyWindow::openComponentPart(const std::string& id, bool editInPlace)
                 guard->refresh();
                 guard->raise();
                 guard->activateWindow();
+            }, id,
+            [guard, id](const std::string& sketchId, const document::PartDocument& activePart)
+            {
+                return guard ? guard->document().externalSketchReferenceOptions(id, activePart, sketchId)
+                             : std::vector<document::ExternalSketchReferenceOption>{};
+            },
+            [guard, id](const document::PartDocument& candidate, std::string* diagnostic)
+            {
+                return guard && guard->document().validateExternalReferenceGraph(id, candidate, diagnostic);
+            },
+            [guard]
+            {
+                return guard ? guard->document().externalReferenceDiagnostics()
+                             : std::vector<document::ExternalReferenceDiagnostic>{};
             });
         m_editInPlaceWindow = partWindow;
     }

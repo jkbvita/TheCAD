@@ -56,7 +56,7 @@ public:
             if(entity.id.empty())throw std::runtime_error("Solver entities require stable IDs.");
             const auto firstRole=entity.kind==EntityKind::Circle?PointRole::Center:PointRole::First;
             points.emplace(std::make_pair(entity.id,int(firstRole)),GCS::Point(&entity.first.x,&entity.first.y));
-            const bool linked = sketchProjection(sketch, entity.id) != nullptr;
+            const bool linked = isSketchProjection(sketch, entity.id);
             if (!linked) {unknowns.push_back(&entity.first.x);unknowns.push_back(&entity.first.y);}
             if (entity.kind == EntityKind::Arc) {
                 points.emplace(std::make_pair(entity.id,int(PointRole::Center)),
@@ -417,7 +417,7 @@ public:
     void addTargets(GCS::System& system,const SolveOptions& options) {
         for(const auto& target:options.lineTargets){
             finiteValue(target.parameter,"Line grab parameter");finiteValue(target.position.x,"Target X");finiteValue(target.position.y,"Target Y");
-            if(target.parameter<0||target.parameter>1||sketchProjection(sketch,target.entityId))throw std::runtime_error("Invalid line drag target.");
+            if(target.parameter<0||target.parameter>1||isSketchProjection(sketch,target.entityId))throw std::runtime_error("Invalid line drag target.");
             const auto& line=lines.at(target.entityId);const int id=tag("drag:"+target.entityId);
             for(const bool x:{true,false}){
                 double* first=x?line.p1.x:line.p1.y;double* last=x?line.p2.x:line.p2.y;
@@ -433,13 +433,13 @@ public:
         }
         for(const auto& target:options.pointTargets) {
             finiteValue(target.position.x,"Target X");finiteValue(target.position.y,"Target Y");
-            if(target.point.role==PointRole::Origin||sketchProjection(sketch,target.point.entityId))
+            if(target.point.role==PointRole::Origin||isSketchProjection(sketch,target.point.entityId))
                 throw std::runtime_error("The reference geometry is fixed.");
             auto& p=point(target.point);const int id=target.hard?tag("edit:"+target.point.entityId):-1;
             system.addConstraintCoordinateX(p,constant(target.position.x),id);system.addConstraintCoordinateY(p,constant(target.position.y),id);
         }
         for(const auto& target:options.radiusTargets) {
-            if(sketchProjection(sketch,target.first))throw std::runtime_error("Projected geometry follows its source edge.");
+            if(isSketchProjection(sketch,target.first))throw std::runtime_error("Projected geometry follows its source edge.");
             finiteValue(target.second,"Radius target");if(target.second<=1e-7)throw std::runtime_error("Radius must be above kernel tolerance.");
             system.addConstraintCircleRadius(circles.at(target.first),constant(target.second),tag("edit:"+target.first));
         }

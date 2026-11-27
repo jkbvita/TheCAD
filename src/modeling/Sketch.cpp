@@ -281,7 +281,7 @@ TopoDS_Face simpleProfileFace(const Sketch& sketch,TopologyNames* names=nullptr)
     if(std::any_of(sketch.entities.begin(),sketch.entities.end(),[](const auto& e){return e.construction || e.kind==EntityKind::Point;})){
         auto boundary=sketch;boundary.entities.erase(std::remove_if(boundary.entities.begin(),boundary.entities.end(),[](const auto& e){return e.construction || e.kind==EntityKind::Point;}),boundary.entities.end());
         boundary.relations.clear();boundary.dimensions.clear();boundary.polygons.clear();
-        boundary.projections.clear();boundary.replications.clear();boundary.offsets.clear();return profileFace(boundary);
+        boundary.projections.clear();boundary.externalReferences.clear();boundary.replications.clear();boundary.offsets.clear();return profileFace(boundary);
     }
     if (sketch.entities.empty()) {
         fail("The sketch is empty. Draw a closed profile before extruding.");
@@ -538,7 +538,7 @@ std::vector<Contour> closedContours(const Sketch& sketch)
             auto boundary=sketch;for(std::size_t i=0;i<boundary.entities.size();++i)if(boundary.entities[i].id.empty())boundary.entities[i].id="entity-"+std::to_string(i+1);
             boundary.entities.erase(std::remove_if(boundary.entities.begin(),boundary.entities.end(),[](const auto& e){return e.construction || e.kind==EntityKind::Point;}),boundary.entities.end());
             boundary.relations.clear();boundary.dimensions.clear();boundary.polygons.clear();
-            boundary.projections.clear();boundary.replications.clear();boundary.offsets.clear();
+            boundary.projections.clear();boundary.externalReferences.clear();boundary.replications.clear();boundary.offsets.clear();
             return closedContours(boundary);
         }
         std::vector<std::string> identifiers;
@@ -1150,9 +1150,10 @@ Sketch editSketchEntity(const Sketch& sketch, const SketchEntity& replacement)
     auto candidate = sketch;
     const auto old = std::find_if(sketch.entities.begin(), sketch.entities.end(), [&](const SketchEntity& entity) { return entity.id == replacement.id; });
     if (replacement.id.empty() || old == sketch.entities.end()) fail("Cannot edit a sketch entity without its existing stable ID.");
+    if (isSketchProjection(sketch, replacement.id)) fail("Break the reference before editing projected sketch geometry.");
     if (old->kind != replacement.kind) fail("Editing cannot change a sketch entity type.");
     const bool solverConstraints=std::any_of(sketch.entities.begin(),sketch.entities.end(),
-        [](const auto& e){return e.kind==EntityKind::Arc || e.kind==EntityKind::Spline;}) || !sketch.offsets.empty() || !sketch.projections.empty() || !sketch.replications.empty() || !sketch.polygons.empty() || !sketch.dimensions.empty() || std::any_of(sketch.relations.begin(),sketch.relations.end(),[](const auto& r){return int(r.kind)>=int(RelationKind::FixedPoint);});
+        [](const auto& e){return e.kind==EntityKind::Arc || e.kind==EntityKind::Spline;}) || !sketch.offsets.empty() || !sketch.projections.empty() || !sketch.externalReferences.empty() || !sketch.replications.empty() || !sketch.polygons.empty() || !sketch.dimensions.empty() || std::any_of(sketch.relations.begin(),sketch.relations.end(),[](const auto& r){return int(r.kind)>=int(RelationKind::FixedPoint);});
     if(solverConstraints) {
         SolveOptions options;
         holdMirrorAxes(sketch,replacement.id,options);
@@ -1224,7 +1225,7 @@ Sketch moveSketchPoint(const Sketch& sketch, const SketchPointRef& reference, Po
                       const std::optional<SketchPointRef>& target, bool preserveCircleRadius)
 {
     validate(sketch);
-    if(reference.role==PointRole::Origin || sketchProjection(sketch,reference.entityId))
+    if(reference.role==PointRole::Origin || isSketchProjection(sketch,reference.entityId))
         fail("Reference geometry is fixed and cannot be dragged.");
     (void)sketchPointValue(sketch,reference);
     if(target) {
@@ -1290,7 +1291,7 @@ Sketch moveSketchLine(const Sketch& sketch,const std::string& entityId,double pa
 {
     validate(sketch);
     const auto& entity=referencedEntity(sketch,{entityId,PointRole::First});
-    if(entity.kind!=EntityKind::Line||sketchProjection(sketch,entityId))fail("Select an editable sketch line.");
+    if(entity.kind!=EntityKind::Line||isSketchProjection(sketch,entityId))fail("Select an editable sketch line.");
     auto candidate=sketch;
     auto& seed=*std::find_if(candidate.entities.begin(),candidate.entities.end(),[&](const auto& e){return e.id==entityId;});
     const Point2 delta{position.x-(seed.first.x+(seed.second.x-seed.first.x)*parameter),position.y-(seed.first.y+(seed.second.y-seed.first.y)*parameter)};
@@ -1307,6 +1308,8 @@ Sketch removeSketchEntity(const Sketch& sketch, const std::string& entityId)
     candidate.entities.erase(found);
     candidate.projections.erase(std::remove_if(candidate.projections.begin(), candidate.projections.end(),
         [&](const auto& p) { return p.entityId == entityId; }), candidate.projections.end());
+    candidate.externalReferences.erase(std::remove_if(candidate.externalReferences.begin(), candidate.externalReferences.end(),
+        [&](const auto& p) { return p.entityId == entityId; }), candidate.externalReferences.end());
     candidate.replications.erase(std::remove_if(candidate.replications.begin(), candidate.replications.end(),
         [&](const auto& p) { return p.source == entityId || p.target == entityId || p.mirrorLine == entityId; }),
         candidate.replications.end());

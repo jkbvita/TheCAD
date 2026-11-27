@@ -2,6 +2,7 @@ add_library(thecad_document STATIC
     PartDocument.cpp
     AssemblyDocument.cpp
     AssemblyWorkflows.cpp
+    AssemblyExternalReferences.cpp
     storage/AssemblyFileStore.cpp
     storage/AssemblyMateData.cpp
     storage/AssemblyWorkflowStore.cpp
