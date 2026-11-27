@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="277 211 670 670">
+  <defs>
+    <linearGradient id="orange" x2="0" y2="1">
+      <stop stop-color="#ff9e33"/>
+      <stop offset="1" stop-color="#ff8715"/>
+    </linearGradient>
+    <linearGradient id="blue" x2="0" y2="1">
+      <stop stop-color="#1258ed"/>
+      <stop offset="1" stop-color="#0042cb"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#blue)" d="M307 606C307 707 446 785 614 785c117 0 230-45 302-109v71C841 813 735 856 609 856c-167 0-302-77-302-177Z"/>
+  <path fill="#0847d1" d="M441 593c0-51 75-98 174-98 68 0 126 24 158 57l129-34v49l-129 43c-35-36-96-55-161-55-72 0-142 30-159 72-8-13-12-24-12-34Z"/>
+  <path fill="url(#orange)" d="M902 518C837 449 729 414 614 414c-169 0-307 83-307 192 0 100 137 179 306 179 116 0 225-39 303-109l-143-37c-33 33-92 51-158 51-99 0-174-46-174-97s75-98 174-98c68 0 126 24 158 57Z"/>
+  <path fill="#0739a8" d="M657 380h47v297c-15 5-31 8-47 10Z"/>
+  <path fill="#0047d4" d="m805 286 70-49v91l-70 55Z"/>
+  <path fill="#ff9e33" d="m372 286 84-51 419 2-70 49Z"/>
+  <path fill="#ff8206" d="M372 286h433v96H657v305c-45 7-90 3-127-10V382H372Z"/>
+  <path fill="none" stroke="#ffd8a1" stroke-width="1.5" d="M373 286h431M309 609c3 99 139 176 304 176 116 0 225-39 302-109M453 628c29 37 91 62 162 62 66 0 125-18 158-51"/>
+</svg>

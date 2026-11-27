@@ -1,0 +1,62 @@
+{
+  "repository": "https://github.com/FreeCAD/FreeCAD",
+  "commit": "0cafef1e58284d08a244f9eba85aee0002e3e350",
+  "sourceDirectory": "src/Mod/Sketcher/App/planegcs",
+  "files": [
+    {
+      "name": "Constraints.cpp",
+      "gitBlob": "e35c3c90053d371093fc2345eaca488063737c43",
+      "originalSha256": "023f2f7753aff95ded246f41521527a07a1b82ba8815da327ad692e864156d7f"
+    },
+    {
+      "name": "Constraints.h",
+      "gitBlob": "01f8cd189e7ae0afaaee7729e92b6345154a2325",
+      "originalSha256": "e088865959562632c27ce5c29d67933f4f543dc716679e696d8473eb60a198d6"
+    },
+    {
+      "name": "GCS.cpp",
+      "gitBlob": "e6327c665bd33167b0bbefb86a2a6cee320dda9d",
+      "originalSha256": "d58d40b4914cda3253bfa6ee745db055b87e6eb06cbeb93628708c875714a196"
+    },
+    {
+      "name": "GCS.h",
+      "gitBlob": "ec1a1918c8644ea2bf3e3a7c9c871a02b0619a1f",
+      "originalSha256": "94f7da92e7d89d926a3e4a32a8e0dc9b2cd08b552e1065433469623424be88b8"
+    },
+    {
+      "name": "Geo.cpp",
+      "gitBlob": "4a7eaf503825d31db3290467f9e6530339b24c68",
+      "originalSha256": "169aad09829b81288d3a81d81cd00fdb5ce9723a4ee34450fb0ac8667b8e9e2b"
+    },
+    {
+      "name": "Geo.h",
+      "gitBlob": "ffe8aff698b9691645d04ca89e20965d240b7193",
+      "originalSha256": "20c2de0ed0b5b6e2aa6e7f7f302ec11ce798bcb653b051d44cf5de7b60590af5"
+    },
+    {
+      "name": "SubSystem.cpp",
+      "gitBlob": "d3cf35e3df89b77d55c51c48a1453cd38159e1ab",
+      "originalSha256": "28c94e84ff50187ec9b6060ac72e05fb6671a51fae2be40f479d2b4dd151e393"
+    },
+    {
+      "name": "SubSystem.h",
+      "gitBlob": "69fbd4ac3edee86d2ee6cf5cecf79f3f25359ee9",
+      "originalSha256": "99e1380a0a08d9fd7ee0fd69e26d3d9dcb46fdf033f4c397c9a05e8df8c53dc4"
+    },
+    {
+      "name": "Util.h",
+      "gitBlob": "c8ad58133ed76578066ecf3924eb6591f2b5c09a",
+      "originalSha256": "33aee54b020e565faf96629a6d4a57a75a3699acb2336aa96d3663cd70c7e53e"
+    },
+    {
+      "name": "qp_eq.cpp",
+      "gitBlob": "65e77605c0019dbf93bcaaeb7de88fb8c6af8773",
+      "originalSha256": "dc71350766c1a4edf7024d593cb5d55b0736a4f43d319d25a9c961e8342ca11c"
+    },
+    {
+      "name": "qp_eq.h",
+      "gitBlob": "8d3f9a43d4afccb0e5deb66aeb7cbbdc6e530344",
+      "originalSha256": "34e373d9b3b0f5938c849ea7489a8405617692a5062198e8ae0f0c6ac5e4d468"
+    }
+  ]
+}

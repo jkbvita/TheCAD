@@ -1,1 +1,349 @@
 # TheCAD
+
+TheCAD is a standalone, open-source mechanical CAD application under development,
+not a FreeCAD fork. The Windows prototype uses C++, Qt 6, Open CASCADE Technology
+(OCCT), and CMake as owner-approved provisional choices.
+
+## Architecture
+
+The code is divided into independently built modeling, document, application,
+presentation, graphics, widget and UI-shell modules. The engine and application
+services also build with `-DTHECAD_BUILD_GUI=OFF`. See the
+[architecture guide](docs/architecture.md) for component ownership, dependency
+rules, build options and extension guidelines.
+
+## Solid features
+
+The Features toolbar includes Extrude, Extruded Cut, Revolved Boss/Base, Revolved
+Cut, Swept Boss/Base, Swept Cut, constant-radius edge Fillet, equal-distance Chamfer,
+Linear Pattern, Circular Pattern and Mirror.
+Each opens a docked PropertyManager with selection, preview and Confirm/Cancel.
+New features support editing, ten-action undo/redo and .thepart persistence.
+See the [manual checklist](docs/testing/revolve-fillet-chamfer.md) for the initial
+feature limits and verification steps.
+See the [Linear Pattern and Mirror decision](docs/decisions/0032-linear-pattern-and-mirror.md)
+for supported seeds and references. Circular Pattern accepts an axis, circular
+edge or axial face and supports total-angle or per-instance spacing. See
+[Circular Pattern and modeling interactions](docs/decisions/0037-circular-pattern-modeling-interactions.md).
+
+## Assemblies
+
+Choose **File → New Assembly** from the part window, then **Insert Components**
+to link saved `.thepart` files. The first component is fixed by default. Float
+it or insert another component to move/rotate by dragging or precise placement
+fields. Tree checkboxes control visibility; right-click offers Fix/Float and
+Open Part.
+
+Ctrl/Shift-select two faces or Ctrl-select two tree planes/axes, then click
+**Mate** to prefill them. Two planes suggest Coincident; two axes/cylindrical
+faces suggest Concentric. The mate type and parameters remain editable.
+Alternatively, **Mate** opens a docked editor: pick two planar faces/planes or cylindrical
+faces/axes, choose the compatible Coincident, Concentric, Distance or Angle mate,
+inspect its preview and confirm. Component datum planes/axes are available in
+the tree. Double-click a mate to edit it. Status shows remaining degrees of
+freedom. Conflicting mates retain the previous assembly. Component deletion
+lists dependent mates before removing them and preserves external part files.
+
+Save as `.theasmb`; relative component links, placements, mates and visibility
+persist. Rebuild (**Ctrl+B**) reloads changed source parts through their persistent
+geometry names. Keep source parts with the assembly when moving folders. Assembly
+and part documents use separate windows. Ten-action undo/redo covers assembly
+edits. See [verification, manual checks and milestone limits](docs/verification/assembly-foundation.md).
+Reference lists and unchanged presentations are reused for responsive interaction;
+see the [preselection/performance checks](docs/decisions/0055-assembly-mate-preselection-performance.md).
+
+## Measure
+
+Open **Evaluate → Measure** and select a solid vertex, edge, or face. Select a
+second entity for minimum distance and, where applicable, angle or center
+spacing. Results appear beside the geometry and below the FeatureManager.
+Click empty space to clear the selection or press Esc to exit Measure.
+
+## Save and export
+
+Use **File → Save As** in the standard Windows dialog. Choose **TheCAD Part**,
+**STEP (.step/.stp)** or **STL Mesh (.stl)** in the file-type dropdown. STEP/STL
+export the final solid bodies; keep .thepart for editable features and constraints.
+Exporting preserves the current native file path and unsaved marker. STL uses
+millimeter coordinates; STEP includes millimeter units. See the
+[export checks and limitations](docs/testing/stl-step-export.md).
+
+## Current sketch-creation workflow
+
+On blank startup, click a labeled Front, Top, or Right plane in the viewport
+to start your first sketch. For later sketches, click **Sketch** in the SKETCH
+tab, then click a plane to enter normal-view sketch editing. Alternatively,
+select a visible plane or its reference in the part tree first, then click Sketch.
+Esc cancels a pending plane choice without creating a sketch. No plane-selection
+dropdown or confirmation dialog is used.
+
+Front = XY, Top = XZ, and Right = YZ, preserving the existing saved sketch frames.
+The finite reference graphics do not limit the infinite sketching plane. See the
+[coordinate mapping and interaction rules](docs/requirements/graphical-plane-selection.md).
+
+## Sketching and modeling
+
+- Empty parts, origin-plane sketches and sketches on selected planar solid faces.
+- Subtle translucent planes with blue/orange boundaries, dashed centerlines and plane-aligned labels.
+- Model-space origin points and axis arrowheads; filled blue/orange sketch endpoints.
+- Intersection-aware line/circle regions alongside dangling open lines.
+- Antialiased continuous lines, exact origin/endpoint snapping and always-visible endpoint markers.
+- Select-mode endpoint dragging, transactional joining and connected-geometry updates.
+- Rectangles made of four connected edges, and circles with snappable centers.
+- Persistent geometric relations, PlaneGCS solving, editable driving/reference Smart Dimensions and constrained dragging.
+- Multiple selected regions, shared line boundaries, nested loops/holes and multiple solid bodies per part.
+- Light Features, Sketch and Evaluate command tabs, native menus and actual feature history.
+- A compact part tree with Front, Top and Right planes, Origin, and modeling history.
+  Used sketches appear beneath every feature that references them; each entry edits
+  the same shared sketch and can be selected to create another feature.
+- Context entity properties and a docked Extrude/Cut PropertyManager with live previews.
+- Direct active-sketch Extrude/Cut with safe cancel/resume; unfinished tools stay disabled.
+- Explicit source-sketch and closed-contour selection, length/depth, direction,
+  preview, and confirmation for additive Extrude and Extruded Cut.
+- Specified-depth and through-all cuts using precise OCCT BRep operations.
+- Transactional regeneration after sketch or feature edits.
+- Versioned `.thepart` storage of the editable history and parameters.
+- Read-only legacy `.tcpart` import with conversion to a separate `.thepart` path.
+
+The window starts maximized with standard Windows controls. The full CAD viewport
+retains orbit, pan, zoom, Fit All, and Isometric navigation. Native File commands
+provide New, Open, Save, Save As, and Exit with unsaved-change handling.
+
+The short-term goal is to reproduce the fundamental SolidWorks modeling workflows
+as faithfully as possible before developing alternatives; redesigns require
+individual approval. This milestone improves fundamental sketch interactions,
+relations, the familiar desktop layout and independent Windows deployment.
+
+See [face sketching and contour checks](docs/verification/reference-faces-contours.md),
+the [attachment strategy](docs/decisions/0008-reference-face-attachments.md), and
+the [parametric constraint guide](docs/requirements/parametric-constraints.md).
+
+See [Windows build, run, and modeling tutorial](docs/build-windows.md).
+With dependencies installed, run from the repository root:
+
+```powershell
+.\scripts\build.ps1 -GuiTests
+.\scripts\run.ps1
+```
+
+## Launch from Windows Explorer
+
+Use the desktop **TheCAD** shortcut or
+`build/package/TheCAD-current/TheCAD.exe` in the consolidated checkout.
+The shortcut and repository launcher target this one current package.
+
+Drop one saved **.thepart** onto the desktop shortcut or `TheCAD.exe` to reopen
+that model. Launching with a file path also works from a shell, including paths
+with spaces or non-ASCII characters. Launching without a file starts a new part.
+Missing/damaged files report an error. See [startup file checks](docs/verification/saved-part-startup-open.md).
+
+Extrude/Cut selects the depth text automatically when opened and after selecting
+a region in the viewport. Type a depth immediately, including decimals; Enter
+confirms a valid preview and Esc cancels. Selected regions fill blue, added material
+shows amber and removed material red. Preview changes preserve the current view.
+See [feature-panel checks](docs/verification/feature-property-manager.md).
+
+Point, Line and Centerline can acquire line midpoints with a temporary hover cue.
+Clicking creates a persistent Midpoint relation, so the attachment follows later
+geometry changes. All three free corners of an origin-anchored rectangle can be
+dragged to resize its undimensioned coordinates. See the
+[midpoint and rectangle checks](docs/verification/midpoint-rectangle.md).
+
+Extrude and Cut can select bounded cells created by crossed lines, intersecting
+circles/rectangles and T-junctions. Click one or several regions; the source sketch
+and its constraints are retained. Construction geometry does not divide profiles.
+See the [intersection-region checks](docs/verification/intersection-regions.md).
+
+For a standard checkout, double-click **Launch TheCAD.cmd** in the repository root. To create an independent
+Release folder after building, run `.\scripts\package-windows.ps1`, then double-click
+`build/package/TheCAD-current/TheCAD.exe`.
+Keep its DLLs, plugins and resources together.
+See [Windows deployment](docs/windows-deployment.md) for the exact local path and details.
+
+## Sketch interaction
+
+In an active sketch, choose Line and click near the red local origin to start
+exactly at (0,0). Each next click finishes an edge and continues from its endpoint.
+Snap back to a starting point to close a contour. Near-horizontal/vertical edges
+show dashed guides and an H/V indicator, then receive the corresponding relation. Esc stops drawing and keeps all
+completed edges. Endpoints stay visible throughout sketch editing. In Select mode, drag a point
+to move connected geometry, or release near another endpoint/origin to create
+a persistent connection. Esc cancels a drag without changing the sketch. Rectangle uses two opposite corners; Circle uses a
+center and a radius point. The origin stays at its true position during pan/zoom.
+
+The property panel propagates supported relations when coordinates change. An
+edit that conflicts with the fixed origin or other equalities is rejected.
+The provisional standalone PlaneGCS adapter solves supported dimensions and relations,
+regenerating dependent features before accepting changes.
+
+Point places selectable, draggable, dimensionable points with persistent snapping.
+Centerline draws construction lines using the usual Line interaction; select
+lines or circles and use **For Construction** in the left properties or right-click
+menu to convert them in either direction. Mixed selections show a partial check.
+Conversion preserves geometry IDs, dimensions and constraints and supports Undo/Redo. Points and
+construction geometry are excluded from extrusion boundaries.
+
+Polygon creates a regular six-sided polygon: click the center, then set size and
+orientation. There is no side-count control or separate polygon editor. Use Line
+for other outlines. Edges/vertices support ordinary selection and constraints;
+driving dimensions preserve regularity. Existing saved polygons remain readable.
+See [basic sketch tool checks](docs/verification/basic-sketch-tools.md).
+
+**3 Point Arc** takes a start, end, and a point along the curve. **Straight Slot**
+takes two end centers and a width pick. Both show a live preview. A slot's four
+edges stay joined and tangent through sketch relations. Use Smart Dimension on a
+cap to drive the slot width by its diameter.
+
+Spline, Move Entities, Repair Sketch, Shaded Sketch Contours, Mass Properties,
+and Check Geometry are disabled until implemented.
+
+While editing a closed sketch, switch to Features and click Extrude or Extruded
+Cut. The active sketch is used automatically; select the intended regions in the
+viewport or left PropertyManager. Depth/reverse/Through All changes update the
+preview live. Confirm adds the feature; Cancel returns to sketch editing with
+completed geometry intact. Tab switching alone does not finish a sketch.
+
+## Sketch relations
+
+Hold **Shift** and click sketch entities to toggle a multiple selection. Release
+Shift for the toolbar of applicable relations beside the cursor, inside the viewport.
+Shift selection switches
+the active drawing/dimension command to Select. The toolbar stays until you choose
+a command, clear selection, press Esc or move sufficiently far away; it has no timer.
+One click applies the chosen relation and closes the bar. Shift release is handled
+throughout the sketch window, including after a focus change to the side panel.
+See the [popup verification checklist](docs/verification/sketch-relations-popup.md).
+Use its **For Construction / Normal Geometry** command to convert selected entities.
+The dedicated Centerline tool remains on the Sketch ribbon.
+
+Circle centers remain visible during sketch editing. In Select mode, drag a
+circle outline to move its center without changing its radius. Equal commands
+show one green symbol per member, including multi-selection equality groups.
+
+Green relation symbols support hover tooltips, selection and Delete without
+removing geometry. **View > Hide/Show > Sketch Relations** controls their visibility.
+**Display/Delete Relations** lists constraints associated with selected geometry
+and supports deleting or changing a compatible relation. See the
+[relation checks and supported types](docs/verification/sketch-relations-system.md).
+
+## Smart Dimension
+
+Activate Smart Dimension and select one line/circle, two points or two lines.
+Move to preview, then click empty space to place. Enter the value in the small
+Modify editor beside the annotation; Enter confirms and Escape/Cancel rejects.
+Placement chooses horizontal/vertical/aligned point distance or the angular
+sector. Parallel lines give perpendicular spacing; nonparallel lines give angle.
+A circle defaults to diameter; R chooses radius and D diameter before placement.
+The command stays active for repeated dimensions. Double-click an annotation to
+edit it. Display/Delete Relations remains available for relation management.
+
+Dimensions follow current geometry throughout endpoint dragging and numeric edits.
+In Select mode or idle Smart Dimension, drag text or dimension lines to reposition
+the annotation without changing its value. Circle dimensions use diametric/radial
+lines and circumference arrows; dragging rotates their placement. Placements survive
+save/reopen in `.thepart` schema 14; earlier supported files remain readable.
+Smart Dimension and drawing buttons stay visibly pressed while active; Esc exits.
+Geometry highlights on hover. Picking defaults to 8 logical pixels, adjustable for
+the session under **Tools > Picking Tolerance** or the Selection Filters toolbar.
+See the [manual checks and limits](docs/verification/dimension-graphics-selection.md).
+
+Part selection distinguishes solid bodies, planar/cylindrical faces, curved and
+circular edges and real vertices. Hover is orange; selection is light blue.
+Shift-click or Ctrl-click adds/removes entities. Click empty space or Escape to
+clear. **F5** shows Selection Filters; choose Faces, Edges, Vertices, Sketch
+geometry, Reference geometry, Solid bodies or Dimensions/relations. **F6** bypasses
+and restores the chosen filters. The toolbar also controls logical-pixel pick
+tolerance. Right-click → **Select Other** lists overlapping candidates; Tab cycles,
+Enter selects and Escape cancels. Deeper candidates are explicitly marked.
+Transient topology selections clear when the body regenerates, preserving the
+existing conservative persistent-reference checks.
+See [research](docs/research/solidworks-selection-construction-2026-11-05.md) and
+[selection/construction checks](docs/verification/selection-construction-reference.md).
+
+**Ctrl+Z / Ctrl+Y** undo and redo the last ten completed modeling edits, including
+geometry, dimensions and annotation placement. A new edit after Undo clears Redo;
+New/Open clears session history. In Select mode, selected geometry/annotations
+turn light blue. Press **Delete** or two consecutive **D** keys to remove them;
+Ctrl+click additional contour edges to delete them together. Geometry deletion
+also removes its attached dimensions; selecting/deleting only a dimension leaves
+its geometry intact. See [history and deletion checks](docs/verification/edit-history-sketch-deletion.md).
+
+See [current behavior and limits](docs/requirements/parametric-constraints.md) and
+[verification](docs/verification/parametric-constraints.md). Definition colors are
+per entity: curves turn black only when their size, position and direction are
+fully defined. Horizontal/Vertical alone leaves a line blue. Fixed points render
+black; movable points remain blue, even in a sketch containing defined geometry.
+Drawing and dragging in a body-face sketch preserve the current zoom and pan.
+Selected planar body faces fill light blue; click empty space to clear selection.
+See [definition and selection checks](docs/verification/definition-colors-face-selection.md).
+
+## Reference geometry in 3D
+
+Use **Features → Reference Geometry** or **Insert → Reference Geometry** to create
+a Point, Axis or Plane. Each command uses the left PropertyManager, with live
+reference preview, Confirm/Cancel and editable feature history. Both explicit XYZ
+position/direction and construction from existing references are supported.
+
+- Points: XYZ, an existing point/vertex, axis–plane or two-axis intersection, and
+  normal projection onto a plane.
+- Axes: XYZ/direction, a line/edge/axis or cylindrical/conical face, two points,
+  two planes, and a point with a plane normal.
+- Planes: XYZ/normal, signed offset, three points, rotation about an axis, and a
+  parallel plane through a point. A selected plane/planar face preselects Offset.
+
+Pick references in the viewport or choose them from filtered lists. New datums
+are selectable and named in the feature tree. Select a reference plane and click
+Sketch to draw/extrude/cut in its local frame. Editing defining geometry regenerates
+dependents. Undo/Redo and `.thepart` save/reopen preserve definitions and stable IDs.
+Use a reference feature's tree context menu or View menu to hide/show it. Visibility
+persists and is undoable; hidden references remain valid for dependent features.
+Compatible typed preselection fills simple reference-creation inputs automatically.
+Solid topology references keep the existing conservative signature validation.
+These are datum features; spatial sketch constraint solving remains future scope.
+See [supported workflows and manual checks](docs/verification/reference-geometry.md).
+
+## Source layout
+
+```text
+src/main.cpp       Application startup
+src/modeling/      Qt-independent sketch data and precise OCCT geometry operations
+src/document/      Ordered feature history, regeneration, validation, and file storage
+src/ui/            Qt windows, commands, dialogs, tree, and CAD viewport
+scripts/           Windows environment, build, and run helpers
+tests/             Geometry, history, serialization, viewport, and GUI workflow tests
+docs/requirements/ Owner-approved scope and project vision
+docs/decisions/    Approval records and unresolved decisions
+```
+
+## Project documentation
+
+- [Development rules](AGENTS.md)
+- [Documentation guide](docs/README.md)
+- [Project vision and principles](docs/requirements/project-vision.md)
+- [Sketcher and feature workflow requirements](docs/requirements/sketcher-feature-workflow.md)
+- [Sketcher/PropertyManager decision](docs/decisions/0007-sketcher-feature-workflow.md)
+- [Current verification](docs/verification/sketcher-feature-workflow.md)
+- [Sketch interaction and desktop requirements](docs/requirements/sketch-interactions-desktop.md)
+- [Foundational relations](docs/requirements/sketch-relations.md)
+- [Provisional relation representation](docs/decisions/0005-sketch-relations.md)
+- [Desktop layout and deployment approval](docs/decisions/0006-sketch-desktop-layout.md)
+- [Graphical sketch-plane requirements](docs/requirements/graphical-plane-selection.md)
+- [Graphical plane-selection decision](docs/decisions/0004-graphical-origin-planes.md)
+- [Parametric modeling requirements](docs/requirements/parametric-modeling.md)
+- [Provisional technology approval](docs/decisions/0001-provisional-windows-prototype.md)
+- [Current workflow and native-format approval](docs/decisions/0003-parametric-sketch-features.md)
+- [Dependencies and licenses](docs/dependencies.md)
+- [Native document structure and legacy compatibility](docs/file-formats.md)
+
+`.theasmb` and `.thedrw` are reserved names. Assemblies, drawings, spatial sketches,
+automatic dimensioning, resilient face reattachment, and permanent topology naming
+are outside this milestone. Independent simple closed contours are supported;
+strictly nested loops, multiple bodies and intersection-created cells are supported.
+Duplicate/coincident overlapping edges and invalid zero-thickness regions still
+require cleanup; an unavailable saved region requires explicit reselection.
+
+## License status
+
+The existing GPL v3 text in [LICENSE](LICENSE) is unchanged. Application license
+confirmation remains an owner decision. Dependency notices are documented
+separately; this milestone does not select or change the application license.
