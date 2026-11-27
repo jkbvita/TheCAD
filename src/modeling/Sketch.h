@@ -68,7 +68,7 @@ struct SketchRelation {
     std::string groupId; // One Equal command may own several pairwise solver equations.
 };
 enum class SketchSpace { Planar2D, Spatial3D }; // Spatial3D is reserved, not implemented.
-enum class DimensionKind { LineLength, HorizontalDistance, VerticalDistance, CircleRadius, CircleDiameter, PointDistance, LineDistance, LineAngle };
+enum class DimensionKind { LineLength, HorizontalDistance, VerticalDistance, CircleRadius, CircleDiameter, PointDistance, LineDistance, LineAngle, PointLineDistance };
 struct SketchDimension {
     std::string id;
     DimensionKind kind = DimensionKind::LineLength;

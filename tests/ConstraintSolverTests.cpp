@@ -1,4 +1,5 @@
 #include "modeling/DimensionInference.h"
+#include "modeling/DimensionAnnotation.h"
 #include "modeling/ConstraintSolver.h"
 #include <cmath>
 #include <iostream>
@@ -46,6 +47,9 @@ int main(){try{
  auto horizontal=inferDimension(diagonal,{}, {"line"},{15,-10});require(horizontal.kind==DimensionKind::HorizontalDistance,"Below slanted line infers horizontal distance");
  auto vertical=inferDimension(diagonal,{}, {"line"},{-10,20});require(vertical.kind==DimensionKind::VerticalDistance,"Beside slanted line infers vertical distance");
  auto aligned=inferDimension(diagonal,{{"line",PointRole::First},{"line",PointRole::Second}}, {},{50,60});require(aligned.kind==DimensionKind::PointDistance,"Diagonal point pair infers true distance");closeValue(aligned.value,50);
+ Sketch pointAxis;pointAxis.entities={{EntityKind::Line,{0,-20},{0,20},1,"axis",true},{EntityKind::Line,{20,5},{35,5},1,"vertex-edge"}};pointAxis.relations={fixed("axis-start",{"axis",PointRole::First},{0,-20}),fixed("axis-end",{"axis",PointRole::Second},{0,20})};
+ auto pointToAxis=inferDimension(pointAxis,{{"vertex-edge",PointRole::First}},{"axis"},{12,8});require(pointToAxis.kind==DimensionKind::PointLineDistance,"A sketch point and construction axis must infer a point-to-line dimension");closeValue(pointToAxis.value,20);require(pointToAxis.sense==-1,"Dimension must retain the selected point's side of the axis");pointToAxis.id="point-axis";pointToAxis.value=9;pointAxis.dimensions={pointToAxis};auto offsetPoint=solved(pointAxis);closeValue(offsetPoint.entities[1].first.x,9);closeValue(dimensionMeasurement(offsetPoint,pointToAxis),9);require(!dimensionGraphics(offsetPoint,pointToAxis,0.1).segments.empty(),"Point-to-line dimension annotation must render its extension and dimension lines");
+ pointAxis.dimensions[0].sense=1;pointAxis.dimensions[0].value=4;auto oppositePoint=solved(pointAxis);closeValue(oppositePoint.entities[1].first.x,-4);
  for(double tolerance:{1e-10,1e-6}){SolveOptions precision;precision.tolerance=tolerance;closeValue(solved(diagonal,precision).dimensions[0].value,50);}
  auto invalid=diagonal;invalid.dimensions[0].value=std::numeric_limits<double>::quiet_NaN();require(!solvePlanarSketch(invalid).success,"NaN dimension must reject");invalid=diagonal;invalid.dimensions[0].first.entityId="missing";require(!solvePlanarSketch(invalid).success,"Missing stable reference must reject");
  SolveOptions options;options.maximumIterations=0;require(!solvePlanarSketch(diagonal,options).success,"Invalid iteration limit");options={};options.tolerance=0;require(!solvePlanarSketch(diagonal,options).success,"Invalid tolerance");invalid=diagonal;invalid.space=SketchSpace::Spatial3D;require(solvePlanarSketch(invalid).diagnostics.state==SolveState::UnsupportedSpace,"Planar adapter must reject future spatial data");

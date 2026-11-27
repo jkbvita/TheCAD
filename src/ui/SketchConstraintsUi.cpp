@@ -23,7 +23,7 @@ namespace thecad::ui {
 namespace {
 std::string constraintId(){return QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();}
 bool same(const modeling::SketchPointRef& a,const modeling::SketchPointRef& b){return a.entityId==b.entityId && a.role==b.role;}
-const char* dimensionTitle(modeling::DimensionKind kind){switch(kind){case modeling::DimensionKind::LineLength:return "Line length";case modeling::DimensionKind::HorizontalDistance:return "Horizontal distance";case modeling::DimensionKind::VerticalDistance:return "Vertical distance";case modeling::DimensionKind::CircleRadius:return "Circle radius";case modeling::DimensionKind::CircleDiameter:return "Circle diameter";case modeling::DimensionKind::PointDistance:return "Point distance";case modeling::DimensionKind::LineDistance:return "Line spacing";default:return "Angle";}}
+const char* dimensionTitle(modeling::DimensionKind kind){switch(kind){case modeling::DimensionKind::LineLength:return "Line length";case modeling::DimensionKind::HorizontalDistance:return "Horizontal distance";case modeling::DimensionKind::VerticalDistance:return "Vertical distance";case modeling::DimensionKind::CircleRadius:return "Circle radius";case modeling::DimensionKind::CircleDiameter:return "Circle diameter";case modeling::DimensionKind::PointDistance:return "Point distance";case modeling::DimensionKind::LineDistance:return "Line spacing";case modeling::DimensionKind::PointLineDistance:return "Point-to-line distance";default:return "Angle";}}
 }
 void MainWindow::acceptConstrainedSketch(const modeling::Sketch& sketch) {
     if(!m_session.editingSketch())return;

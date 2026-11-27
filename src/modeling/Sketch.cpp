@@ -984,7 +984,14 @@ void validDimension(const Sketch& sketch,const SketchDimension& d) {
     } else {
         (void)sketchPointValue(sketch,d.second);
         if(pointKey(d.first)==pointKey(d.second))fail("A distance needs two distinct point references.");
-        if(d.kind==DimensionKind::LineDistance || d.kind==DimensionKind::LineAngle) {
+        if(d.kind==DimensionKind::PointLineDistance) {
+            const auto& axis=referencedEntity(sketch,d.second);
+            if(axis.kind!=EntityKind::Line || d.first.entityId==axis.id ||
+               d.first.role==PointRole::Origin ||
+               (d.second.role!=PointRole::First && d.second.role!=PointRole::Second))
+                fail("Point-to-line distance must reference a sketch point and a different sketch line.");
+            if(d.value<0)fail("Point-to-line distance must be nonnegative.");
+        } else if(d.kind==DimensionKind::LineDistance || d.kind==DimensionKind::LineAngle) {
             const auto& first=referencedEntity(sketch,d.first);const auto& second=referencedEntity(sketch,d.second);
             if(first.kind!=EntityKind::Line || second.kind!=EntityKind::Line || first.id==second.id ||
                (d.first.role!=PointRole::First && d.first.role!=PointRole::Second) || (d.second.role!=PointRole::First && d.second.role!=PointRole::Second))fail("A two-line dimension requires two distinct line references.");
@@ -1001,6 +1008,11 @@ void validDimension(const Sketch& sketch,const SketchDimension& d) {
 }
 }
 double dimensionMeasurement(const Sketch& sketch,const SketchDimension& d) {
+    if(d.kind==DimensionKind::PointLineDistance) {
+        const auto& line=referencedEntity(sketch,d.second);
+        const auto point=sketchPointValue(sketch,d.first);
+        return std::abs(cross(line.first,line.second,point))/distance(line.first,line.second);
+    }
     if(d.kind==DimensionKind::LineDistance || d.kind==DimensionKind::LineAngle) {
         const auto& a=referencedEntity(sketch,d.first);const auto& b=referencedEntity(sketch,d.second);
         if(d.kind==DimensionKind::LineDistance)return std::abs(cross(a.first,a.second,b.first))/distance(a.first,a.second);
@@ -1119,6 +1131,10 @@ void validateSketchRelations(const Sketch& sketch)
             Point2 u{a.second.x-a.first.x,a.second.y-a.first.y},v{b.second.x-b.first.x,b.second.y-b.first.y};
             if(d.first.role==PointRole::Second){u.x=-u.x;u.y=-u.y;}if(d.second.role==PointRole::Second){v.x=-v.x;v.y=-v.y;}
             actual=std::atan2(u.x*v.y-u.y*v.x,u.x*v.x+u.y*v.y)*180.0/3.14159265358979323846;expected*=d.sense;
+        } else if(d.kind==DimensionKind::PointLineDistance) {
+            const auto& axis=referencedEntity(sketch,d.second);
+            actual=cross(axis.first,axis.second,sketchPointValue(sketch,d.first))/distance(axis.first,axis.second);
+            expected*=d.sense;
         } else if(d.kind==DimensionKind::HorizontalDistance || d.kind==DimensionKind::VerticalDistance) {
             const auto a=sketchPointValue(sketch,d.first),b=sketchPointValue(sketch,d.second);actual=d.kind==DimensionKind::HorizontalDistance?b.x-a.x:b.y-a.y;expected*=d.sense;
         }

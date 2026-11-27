@@ -594,6 +594,8 @@ const char* dimensionName(modeling::DimensionKind kind)
         return "line-distance";
     case modeling::DimensionKind::LineAngle:
         return "angle";
+    case modeling::DimensionKind::PointLineDistance:
+        return "point-line-distance";
     }
     fail("Unsupported dimension type.");
 }
@@ -629,13 +631,18 @@ modeling::SketchDimension readDimension(const QJsonValue& value, int version)
          {modeling::DimensionKind::LineLength, modeling::DimensionKind::HorizontalDistance,
           modeling::DimensionKind::VerticalDistance, modeling::DimensionKind::CircleRadius,
           modeling::DimensionKind::CircleDiameter, modeling::DimensionKind::PointDistance,
-          modeling::DimensionKind::LineDistance, modeling::DimensionKind::LineAngle})
-        if (type == dimensionName(kind) &&
-            (version >= 6 || int(kind) <= int(modeling::DimensionKind::CircleDiameter)))
+          modeling::DimensionKind::LineDistance, modeling::DimensionKind::LineAngle,
+          modeling::DimensionKind::PointLineDistance}) {
+        const bool supportedInVersion = kind == modeling::DimensionKind::PointLineDistance
+                                            ? version >= 29
+                                            : version >= 6 ||
+                                                  int(kind) <= int(modeling::DimensionKind::CircleDiameter);
+        if (type == dimensionName(kind) && supportedInVersion)
         {
             d.kind = kind;
             found = true;
         }
+    }
     if (!found)
         fail("Unsupported dimension type.");
     d.first = readPointRef(o.value("first"));
@@ -698,9 +705,9 @@ PartDocument PartFileStore::decode(const QByteArray& bytes)
     if (root.value("units") != QJsonValue("mm"))
         fail("Unsupported units; this prototype supports millimeters only.");
     const auto versionValue = root.value("version");
-    if (!versionValue.isDouble() || versionValue.toDouble() < 1 || versionValue.toDouble() > 28 ||
+    if (!versionValue.isDouble() || versionValue.toDouble() < 1 || versionValue.toDouble() > 29 ||
         versionValue.toDouble() != std::floor(versionValue.toDouble()))
-        fail("Unsupported part document version; expected versions 1 through 28.");
+        fail("Unsupported part document version; expected versions 1 through 29.");
     const int version = versionValue.toInt();
     if (!root.value("features").isArray())
         fail("Part features must be an ordered array.");
@@ -1374,6 +1381,14 @@ QByteArray PartFileStore::encode(const PartDocument& document)
             return feature.kind == FeatureKind::Sketch && !feature.sketch.externalReferences.empty();
         }))
         version = 28;
+    if (std::any_of(document.features().begin(), document.features().end(), [](const auto& feature) {
+            return feature.kind == FeatureKind::Sketch &&
+                   std::any_of(feature.sketch.dimensions.begin(), feature.sketch.dimensions.end(),
+                               [](const auto& dimension) {
+                                   return dimension.kind == modeling::DimensionKind::PointLineDistance;
+                               });
+        }))
+        version = 29;
     const QJsonObject root{{"format", "TheCAD.Part"},
                            {"version", version},
                            {"units", "mm"},

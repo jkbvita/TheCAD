@@ -23,7 +23,8 @@ namespace {
 QString dimensionName(modeling::DimensionKind kind) {
     switch(kind){case modeling::DimensionKind::HorizontalDistance:return "Horizontal distance";case modeling::DimensionKind::VerticalDistance:return "Vertical distance";
     case modeling::DimensionKind::CircleRadius:return "Radius";case modeling::DimensionKind::CircleDiameter:return "Diameter";
-    case modeling::DimensionKind::LineDistance:return "Line spacing";case modeling::DimensionKind::LineAngle:return "Angle";default:return "Length";}
+    case modeling::DimensionKind::LineDistance:return "Line spacing";case modeling::DimensionKind::LineAngle:return "Angle";
+    case modeling::DimensionKind::PointLineDistance:return "Point-to-line distance";default:return "Length";}
 }
 bool modelReferenceDimension(const modeling::Sketch& sketch, const modeling::SketchDimension& dimension)
 {
@@ -47,7 +48,7 @@ void MainWindow::startSmartDimension() {
     }
     m_viewport->setSmartDimensionPicking(true);m_viewport->setDimensionSelection(m_smartDimension->entities,m_smartDimension->points);
     auto* action=findChild<QAction*>("actionSmartDimension");action->setCheckable(true);action->setChecked(true);
-    statusBar()->showMessage("Smart Dimension: select one line/circle, two lines or two points; move and click to place. Esc exits.");updateActions();
+    statusBar()->showMessage("Smart Dimension: select a line/circle, two lines, two points or a point and line; move and click to place. Esc exits.");updateActions();
 }
 void MainWindow::closeSmartDimension() {
     if(!m_smartDimension)return;
@@ -67,15 +68,17 @@ void MainWindow::resetSmartSelection() {
 void MainWindow::smartReferencePicked(const QString& id,int role) {
     if(!m_smartDimension || m_smartDimension->editor)return;auto& draft=*m_smartDimension;
     if(role>=0) {
-        draft.entities.clear();const modeling::SketchPointRef point{id.toStdString(),modeling::PointRole(role)};
+        const modeling::SketchPointRef point{id.toStdString(),modeling::PointRole(role)};
         const auto same=[&](const auto& p){return p.entityId==point.entityId && p.role==point.role;};
-        if(draft.points.size()==2)draft.points.clear();if(std::none_of(draft.points.begin(),draft.points.end(),same))draft.points.push_back(point);
+        if(draft.points.size()+draft.entities.size()==2){draft.points.clear();draft.entities.clear();}
+        if(std::none_of(draft.points.begin(),draft.points.end(),same))draft.points.push_back(point);
     } else {
-        draft.points.clear();const auto entity=id.toStdString();if(draft.entities.size()==2)draft.entities.clear();
+        const auto entity=id.toStdString();
+        if(draft.points.size()+draft.entities.size()==2){draft.points.clear();draft.entities.clear();}
         if(std::find(draft.entities.begin(),draft.entities.end(),entity)==draft.entities.end())draft.entities.push_back(entity);
     }
     draft.pending.reset();m_viewport->setDimensionPreview({});m_viewport->setDimensionSelection(draft.entities,draft.points);
-    statusBar()->showMessage(QString("Smart Dimension: %1 selected. Move to preview, click empty space to place; select another reference if needed. Circle: R radius / D diameter.").arg(draft.points.empty()?draft.entities.size():draft.points.size()));
+    statusBar()->showMessage(QString("Smart Dimension: %1 selected. Move to preview, click empty space to place; select another reference if needed. Circle: R radius / D diameter.").arg(draft.points.size()+draft.entities.size()));
 }
 const modeling::Sketch& MainWindow::smartDimensionSketch() const
 {

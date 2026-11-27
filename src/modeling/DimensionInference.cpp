@@ -22,7 +22,17 @@ void inferPointDistance(const Sketch& sketch,SketchDimension& d,bool line) {
 }
 SketchDimension inferDimension(const Sketch& sketch,const std::vector<SketchPointRef>& points,const std::vector<std::string>& entities,Point2 annotation,bool radius) {
     SketchDimension d;d.id="pending-dimension";d.annotation=annotation;
-    if(points.size()==2){d.first=points[0];d.second=points[1];inferPointDistance(sketch,d,false);}
+    if(points.size()==1 && entities.size()==1) {
+        const auto& axis=entity(sketch,entities.front());
+        if(axis.kind!=EntityKind::Line || points.front().entityId==axis.id)
+            throw std::runtime_error("Select a sketch point and a different sketch line or centerline.");
+        d.kind=DimensionKind::PointLineDistance;
+        d.first=points.front();
+        d.second={axis.id,PointRole::First};
+        const auto p=sketchPointValue(sketch,d.first);
+        d.sense=cross(vector(axis),{p.x-axis.first.x,p.y-axis.first.y})<0?-1:1;
+    }
+    else if(points.size()==2){d.first=points[0];d.second=points[1];inferPointDistance(sketch,d,false);}
     else if(!points.empty())throw std::runtime_error("Select a second point, then click to place the dimension.");
     else if(entities.size()==1) {
         const auto& e=entity(sketch,entities[0]);
@@ -45,9 +55,11 @@ SketchDimension inferDimension(const Sketch& sketch,const std::vector<SketchPoin
                 d.first.role=first.reverse?PointRole::Second:PointRole::First;d.second.role=second.reverse?PointRole::Second:PointRole::First;d.sense=lo.line==0?1:-1;break;
             }}
         }
-    } else throw std::runtime_error("Select one line/circle, two lines or two points.");
+    } else throw std::runtime_error("Select one line/circle, two lines, two points or a point and line.");
     d.value=dimensionMeasurement(sketch,d);
-    if(!std::isfinite(d.value) || d.value<=1e-7)throw std::runtime_error("The selected references have no measurable distance or angle.");
+    if(!std::isfinite(d.value) ||
+       (d.value<=1e-7 && d.kind!=DimensionKind::PointLineDistance))
+        throw std::runtime_error("The selected references have no measurable distance or angle.");
     placeDimensionAnnotation(sketch,d,annotation);
     return d;
 }

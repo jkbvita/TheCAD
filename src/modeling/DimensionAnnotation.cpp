@@ -23,6 +23,12 @@ Frame frame(const Sketch& s,const SketchDimension& d){
     const auto a=sketchPointValue(s,d.first);
     if(d.kind==DimensionKind::CircleRadius || d.kind==DimensionKind::CircleDiameter)
         return {a,{1,0},std::max(entity(s,d.first.entityId).radius,1e-9)};
+    if(d.kind==DimensionKind::PointLineDistance){
+        const auto& axis=entity(s,d.second.entityId);const auto u=unit(sub(axis.second,axis.first));
+        const auto foot=add(axis.first,mul(u,dot(sub(a,axis.first),u)));
+        auto direction=unit(sub(a,foot));if(length(sub(a,foot))<1e-9)direction=mul(normal(u),double(d.sense));
+        return {mul(add(a,foot),0.5),direction,std::max(length(sub(a,foot)),1.0)};
+    }
     const auto b=sketchPointValue(s,d.second);
     if(d.kind==DimensionKind::LineAngle || d.kind==DimensionKind::LineDistance){
         const auto& first=entity(s,d.first.entityId);const auto u=sub(first.second,first.first);
@@ -32,7 +38,8 @@ Frame frame(const Sketch& s,const SketchDimension& d){
         const auto center=std::abs(determinant)>1e-12?add(first.first,mul(u,cross(sub(second.first,first.first),v)/determinant)):a;
         return {center,unit(d.first.role==PointRole::Second?mul(u,-1):u)};
     }
-    const bool aligned=d.kind==DimensionKind::LineLength || d.kind==DimensionKind::PointDistance;
+    const bool aligned=d.kind==DimensionKind::LineLength || d.kind==DimensionKind::PointDistance ||
+                       d.kind==DimensionKind::PointLineDistance;
     return {mul(add(a,b),0.5),aligned?unit(sub(b,a)):Point2{1,0}};
 }
 }
@@ -84,7 +91,12 @@ DimensionGraphics dimensionGraphics(const Sketch& s,const SketchDimension& d,dou
         t=std::clamp(t,std::min(0.0,sweep),std::max(0.0,sweep));
         line(add(f.origin,{radius*std::cos(start+t),radius*std::sin(start+t)}),g.text);return g;
     }
-    const auto b=sketchPointValue(s,d.second);Point2 aa,bb;
+    Point2 b;
+    if(d.kind==DimensionKind::PointLineDistance){
+        const auto& axis=entity(s,d.second.entityId);const auto u=unit(sub(axis.second,axis.first));
+        b=add(axis.first,mul(u,dot(sub(a,axis.first),u)));
+    }else b=sketchPointValue(s,d.second);
+    Point2 aa,bb;
     if(d.kind==DimensionKind::HorizontalDistance){aa={a.x,g.text.y};bb={b.x,g.text.y};}
     else if(d.kind==DimensionKind::VerticalDistance){aa={g.text.x,a.y};bb={g.text.x,b.y};}
     else if(d.kind==DimensionKind::LineDistance){

@@ -371,6 +371,9 @@ public:
         for(const auto& d:sketch.dimensions)if(d.driving) {
             const int id=tag(d.id);auto& a=point(d.first);auto& b=point(d.second);
             switch(d.kind) {
+            case DimensionKind::PointLineDistance:
+                system.addConstraintP2LDistance(point(d.first),lines.at(d.second.entityId),
+                                                 constant(d.value),d.sense>0,id);break;
             case DimensionKind::LineDistance:
                 if(!parallelImplied(d))system.addConstraintParallel(lines.at(d.first.entityId),lines.at(d.second.entityId),id);
                 system.addConstraintP2LDistance(point(d.second),lines.at(d.first.entityId),constant(d.value),d.sense>0,id);break;
