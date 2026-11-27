@@ -1116,7 +1116,9 @@ bool AssemblyWindow::insertPartFile(const QString& path)
         m_insertCandidate = std::move(candidate);
         m_insertPage = new PropertyManagerPage(
             "Insert Components",
-            "Move the pointer over the viewport and click to place. Enter confirms, Esc cancels.",
+            document().components().empty()
+                ? "The first component is placed at the assembly origin. Click to confirm, Esc cancels."
+                : "Move the pointer over the viewport and click to place. Enter confirms, Esc cancels.",
             m_panels);
         auto* form = new QFormLayout;
         m_insertPage->settings->addLayout(form);
@@ -1127,6 +1129,10 @@ bool AssemblyWindow::insertPartFile(const QString& path)
             m_insertCoordinates[i] = field;
             field->setRange(-1e9, 1e9);
             field->setSuffix(" mm");
+            // The first assembly component establishes the assembly frame.
+            // Keep it at the origin instead of allowing a camera-depth point
+            // to become an accidental world-space offset.
+            field->setEnabled(!document().components().empty());
             field->setObjectName(QString("insertComponent%1").arg(QChar('X' + i)));
             form->addRow(QString(QChar('X' + i)), field);
             connect(field, &QDoubleSpinBox::valueChanged, this,
@@ -1410,7 +1416,7 @@ void AssemblyWindow::refreshLinkedPartSource(const QString& requestedPath)
 
 void AssemblyWindow::moveInsertion(const gp_Pnt& point)
 {
-    if (!m_insertCandidate)
+    if (!m_insertCandidate || document().components().empty())
         return;
     try
     {

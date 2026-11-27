@@ -1,5 +1,6 @@
 #include "ui/assembly/AssemblyViewport.h"
 #include "viewport/ComponentRotationDrag.h"
+#include "viewport/RayPlaneIntersection.h"
 #include "ui/Theme.h"
 #include "presentation/SolidPresentation.h"
 #include "presentation/SelectionAppearance.h"
@@ -444,14 +445,9 @@ gp_Pnt AssemblyViewport::cursorPointAtDepth(const QPointF& point, const gp_Pnt& 
     const gp_Pnt projected(x, y, z);
     const gp_Dir rayDirection(dx, dy, dz);
     const gp_Dir viewDirection = camera()->Direction();
-    const double eyeDepth = gp_Vec(camera()->Eye(), projected).Dot(gp_Vec(viewDirection));
-    const gp_Pnt rayOrigin = projected.Translated(-gp_Vec(viewDirection) * eyeDepth);
-    const gp_Vec ray(rayDirection);
-    const double denominator = ray.Dot(gp_Vec(viewDirection));
-    if (std::abs(denominator) < 1e-12)
-        return planePoint;
-    const double distance = gp_Vec(rayOrigin, planePoint).Dot(gp_Vec(viewDirection)) / denominator;
-    return rayOrigin.Translated(ray * distance);
+    const auto intersection = viewport::intersectRayWithPlane(
+        projected, rayDirection, planePoint, viewDirection);
+    return intersection.value_or(planePoint);
 }
 QPoint AssemblyViewport::project(const gp_Pnt& point) const
 {
@@ -469,7 +465,47 @@ void AssemblyViewport::fitAll()
         return;
     }
     m_fitPending = false;
-    fitScene(0.1);
+
+    // Reference selections can be far from the component cluster (most often
+    // the assembly origin). Exclude those temporary highlights from Fit All
+    // whenever there is visible component geometry, otherwise a selected base
+    // plane can make the actual assembly appear tiny and off-center.
+    const bool hasVisibleComponent = std::any_of(
+        m_visuals.begin(), m_visuals.end(),
+        [](const auto& visual) { return visual.visible && !visual.shape.IsNull(); });
+    std::vector<std::size_t> hiddenReferences;
+    if (hasVisibleComponent)
+    {
+        const auto context = m_graphics.context();
+        for (std::size_t i = 0; i < m_references.size(); ++i)
+            if (!m_references[i].IsNull() && context->IsDisplayed(m_references[i]))
+            {
+                context->Erase(m_references[i], false);
+                hiddenReferences.push_back(i);
+            }
+    }
+    const auto restoreReferences = [&]
+    {
+        if (hiddenReferences.empty())
+            return;
+        const auto context = m_graphics.context();
+        for (const auto i : hiddenReferences)
+            context->Display(m_references[i], m_referenceVisuals[i].filled ? AIS_Shaded
+                                                                           : AIS_WireFrame,
+                             -1, false);
+        context->UpdateCurrentViewer();
+        update();
+    };
+    try
+    {
+        fitScene(0.1);
+    }
+    catch (...)
+    {
+        restoreReferences();
+        throw;
+    }
+    restoreReferences();
 }
 void AssemblyViewport::standardView(int index)
 {
@@ -550,7 +586,11 @@ void AssemblyViewport::mouseMoveEvent(QMouseEvent* event)
     }
     if (m_inserting)
     {
-        emit insertionMoved(cursorPoint(event->position()));
+        // Place components on the camera's view plane through the current
+        // assembly focus. Convert() alone returns a point at the viewer's
+        // projection depth, which can be hundreds or thousands of millimeters
+        // away from the assembly origin.
+        emit insertionMoved(cursorPointAtDepth(event->position(), camera()->Center()));
         return;
     }
     if (!m_dragId.empty() && event->buttons().testFlag(m_dragButton))

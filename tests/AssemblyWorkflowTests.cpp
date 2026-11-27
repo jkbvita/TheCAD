@@ -129,6 +129,36 @@ class AssemblyWorkflowTest final : public QObject
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     }
 private slots:
+    void firstAssemblyComponentStaysAtOrigin()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const auto path = temp.filePath("Anchor.thepart");
+        document::PartDocument::createBox({20, 20, 20}).save(path);
+
+        AssemblyTestWindow window;
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        QTRY_VERIFY(window.m_viewport->isReady());
+        QVERIFY(window.insertPartFile(path));
+        QVERIFY(window.m_insertCandidate.has_value());
+        QCOMPARE(window.m_insertCoordinates[0]->isEnabled(), false);
+        QCOMPARE(window.m_insertCoordinates[1]->isEnabled(), false);
+        QCOMPARE(window.m_insertCoordinates[2]->isEnabled(), false);
+
+        // Even a cursor update from the old camera-depth path must not move
+        // the first fixed component away from the assembly coordinate frame.
+        window.moveInsertion(gp_Pnt(1700, 1800, 1900));
+        const auto& preview = window.m_insertCandidate->component(window.m_insertId);
+        QVERIFY(preview.placement.TranslationPart().SquareModulus() < 1e-20);
+        window.finishInsertion(true);
+        QVERIFY(!window.document().components().empty());
+        const auto& inserted = window.document().components().front();
+        QVERIFY(inserted.placement.TranslationPart().SquareModulus() < 1e-20);
+        QVERIFY(inserted.fixed);
+        QVERIFY(window.close());
+    }
+
     void newPartInAssemblyEditSaveOpenAndRefreshWorkflow()
     {
         QTemporaryDir temp;
