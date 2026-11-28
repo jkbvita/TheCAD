@@ -46,11 +46,24 @@ std::optional<SketchPicker::SnapHit> SketchPicker::selectionPointAt(const QPoint
     auto hit = pointAt(position);
     if (hit && hit->reference.role == modeling::PointRole::Origin)
     {
-        for (const auto& e : m_sketch.entities)
-            if (e.kind == modeling::EntityKind::Point &&
-                QLineF(position, screenPoint(e.first)).length() <=
-                    QLineF(position, screenPoint(hit->point)).length() + 0.1)
-                return SnapHit{{e.id, modeling::PointRole::First}, e.first};
+        // The origin is always a snap candidate and is enumerated before
+        // entities. When an entity endpoint is coincident with it, prefer the
+        // editable entity reference so the user can select and drag that point
+        // instead of getting a seemingly inert global-origin selection.
+        std::optional<SnapHit> coincidentEntityPoint;
+        for (const auto& candidate : modeling::sketchPoints(m_sketch))
+        {
+            if (candidate.first.role == modeling::PointRole::Origin)
+                continue;
+            if (std::hypot(candidate.second.x - hit->point.x,
+                           candidate.second.y - hit->point.y) <= 1e-7)
+            {
+                coincidentEntityPoint = SnapHit{candidate.first, candidate.second};
+                break;
+            }
+        }
+        if (coincidentEntityPoint)
+            return coincidentEntityPoint;
     }
     // A small circle's center tolerance must not swallow its circumference.
     // Exact center picks and the existing drawing/snapping policy are retained.

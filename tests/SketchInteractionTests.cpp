@@ -147,6 +147,28 @@ private slots:
         QVERIFY(viewport->selectedSketchEntity().empty());
         QVERIFY(viewport->m_selectedEntityPresentation.IsNull());
     }
+    void endpointAtOriginSelectsAndDragsTheSketchPoint() {
+        using namespace modeling;
+        Sketch sketch;
+        sketch.entities={{EntityKind::Line,{0,0},{35,10},1,"origin-line"}};
+        viewport->beginSketch(sketch);
+        viewport->selectSketchTool();
+        click({0,0});
+        QVERIFY(viewport->selectedSketchPoint());
+        QCOMPARE(viewport->selectedSketchPoint()->entityId,std::string("origin-line"));
+        QCOMPARE(viewport->selectedSketchPoint()->role,PointRole::First);
+        QVERIFY(viewport->selectedSketchEntities().empty());
+
+        QTest::mousePress(viewport,Qt::LeftButton,Qt::NoModifier,pixel({0,0}));
+        QVERIFY(viewport->m_pointDrag);
+        const auto target=pixel({15,12});
+        QMouseEvent motion(QEvent::MouseMove,target,viewport->mapToGlobal(target),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);
+        QApplication::sendEvent(viewport,&motion);
+        QVERIFY(viewport->m_pointDrag->candidate);
+        QTest::mouseRelease(viewport,Qt::LeftButton,Qt::NoModifier,target);
+        QVERIFY(std::hypot(viewport->m_sketch->entities[0].first.x-15,
+                           viewport->m_sketch->entities[0].first.y-12)<0.5);
+    }
     void centerlineAndPolygonCreationPreviewAndDrag() {
         using namespace modeling;viewport->setSketchTool(EntityKind::Line,true);click({-30,-20});hover({30,-20});click({30,-20});
         QCOMPARE(viewport->m_sketch->entities.size(),std::size_t(1));QVERIFY(viewport->m_sketch->entities[0].construction);QVERIFY(!viewport->m_constructionPresentation.IsNull());QVERIFY(closedContours(*viewport->m_sketch).empty());

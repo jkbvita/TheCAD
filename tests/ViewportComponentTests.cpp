@@ -42,6 +42,39 @@ int main(int argc, char** argv)
                 require(circle.size() == 1 && circle.front().reference.entityId == "circle",
                         "Circle picking changed");
             }
+
+        // Point hit areas retain priority over nearby sketch curves, and a
+        // real endpoint at the global origin must resolve to the endpoint
+        // rather than the non-draggable origin reference.
+        modeling::Sketch pointSketch;
+        pointSketch.entities = {{modeling::EntityKind::Line, {10, 0}, {10, 50}, 1, "endpoint-line"}};
+        modeling::SelectionPolicy selectionPolicy;
+        viewport::SketchPicker pointPicker(pointSketch, selectionPolicy, "sketch", 1.0, 8.0, 1.0,
+                                           [](modeling::Point2 p) { return QPointF(p.x, p.y); });
+        const auto nearEndpoint = pointPicker.selectionPointAt({15, 4});
+        require(nearEndpoint && nearEndpoint->reference.entityId == "endpoint-line" &&
+                    nearEndpoint->reference.role == modeling::PointRole::First,
+                "Nearby line won over a point inside its hit area");
+
+        pointSketch.entities.front().first = {0, 0};
+        viewport::SketchPicker originEndpointPicker(
+            pointSketch, selectionPolicy, "sketch", 1.0, 8.0, 1.0,
+            [](modeling::Point2 p) { return QPointF(p.x, p.y); });
+        const auto originEndpoint = originEndpointPicker.selectionPointAt({0, 0});
+        require(originEndpoint && originEndpoint->reference.entityId == "endpoint-line" &&
+                    originEndpoint->reference.role == modeling::PointRole::First,
+                "Coincident endpoint was hidden by the global origin snap point");
+        modeling::Sketch distinctPointSketch;
+        distinctPointSketch.entities = {
+            {modeling::EntityKind::Line, {10, 0}, {10, 50}, 1, "distinct-endpoint"}};
+        viewport::SketchPicker distinctPointPicker(
+            distinctPointSketch, selectionPolicy, "sketch", 1.0, 8.0, 1.0,
+            [](modeling::Point2 p) { return QPointF(p.x, p.y); });
+        const auto betweenOriginAndEndpoint = distinctPointPicker.selectionPointAt({5, 0});
+        require(betweenOriginAndEndpoint && betweenOriginAndEndpoint->reference.role ==
+                    modeling::PointRole::Origin,
+                "Distinct endpoint at the same cursor distance replaced the origin");
+
         modeling::SketchDimension radius;
         radius.kind = modeling::DimensionKind::CircleRadius;
         radius.first = {"circle", modeling::PointRole::Center};
